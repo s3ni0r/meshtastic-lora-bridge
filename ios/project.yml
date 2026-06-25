@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.s3ni0r
   deploymentTarget:
     iOS: "17.0"
+    watchOS: "10.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -11,7 +12,6 @@ settings:
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
-    TARGETED_DEVICE_FAMILY: "1"
 targets:
   MeshTracker:
     type: application
@@ -21,7 +21,33 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "com.s3ni0r.meshtracker"
+        TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: "YES"
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Connects to the Meshtastic tracker over Bluetooth to display its live GPS position."
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+  MeshTrackerWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: MeshTrackerWatch
+    info:
+      path: MeshTrackerWatch/Info.plist
+      properties:
+        WKApplication: true
+        WKWatchOnly: true
+        CFBundleDisplayName: MeshTracker
+        WKBackgroundModes: [workout-processing]
+        NSBluetoothAlwaysUsageDescription: "Connects to the tracker over Bluetooth to relay your location."
+        NSLocationWhenInUseUsageDescription: "Streams your live location to the tracker over Bluetooth and LoRa."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "Streams your live location to the tracker, including in the background."
+        NSHealthShareUsageDescription: "Runs a workout session to keep GPS and Bluetooth active while tracking."
+        NSHealthUpdateUsageDescription: "Runs a workout session to keep GPS and Bluetooth active while tracking."
+    entitlements:
+      path: MeshTrackerWatch/MeshTrackerWatch.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "com.s3ni0r.meshtrackerwatch"
+        TARGETED_DEVICE_FAMILY: "4"

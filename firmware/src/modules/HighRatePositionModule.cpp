@@ -19,6 +19,12 @@
 #define HIGHRATE_FRESH_MS 2500
 #endif
 
+// With no fresh fix, send only a slow heartbeat instead of flooding at the full rate — this frees
+// LoRa airtime/TX-queue for an external source (e.g. the Apple Watch) injecting position via BLE.
+#ifndef HIGHRATE_HEARTBEAT_MS
+#define HIGHRATE_HEARTBEAT_MS 2000
+#endif
+
 // Payload v2 — 18 bytes, little-endian (must match tools/m2_stream_poc.py + ios MeshProto.swift):
 //   0  lat      int32  deg*1e7
 //   4  lon      int32  deg*1e7
@@ -108,5 +114,6 @@ int32_t HighRatePositionModule::runOnce()
         LOG_INFO("HighRate: seq=%u lat=%d lon=%d spd=%ukmh hdg=%u sats=%u batt=%u lock=%d",
                  seq, lat, lon, spdK, deg, satN, batt, hasLock);
     seq++;
-    return HIGHRATE_POSITION_INTERVAL_MS;
+    // Full rate only with a fresh lock; otherwise a slow heartbeat so we don't starve the watch.
+    return hasLock ? HIGHRATE_POSITION_INTERVAL_MS : HIGHRATE_HEARTBEAT_MS;
 }
