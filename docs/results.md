@@ -137,4 +137,19 @@ Re-measured with Tag locked on the balcony (45 s / 127 packets, `tools/freshness
 - Also confirmed: the GPS is ~1 Hz at the chip (`$PAIR050` 4 Hz not effective on this AG3335); not a
   Meshtastic publish throttle (`shouldPublish` fires per fix when always-on).
 
+## GPS rate ceiling — DEFINITIVE (2026-06-25)
+
+Tested a lean **position-only** (12-byte) payload with `$PAIR050` at **both 250 ms (4 Hz) and 100 ms
+(10 Hz)**. Measured **novelty** (genuinely-new positions/sec, shown live on the iPhone): **max ~1.1 Hz
+in every case.**
+
+- **The AG3335 is hard-capped at ~1 Hz** — it ignores the `$PAIR050` fix-rate command at any value.
+- **The payload is not a factor** (position-only still 1.1 Hz). The earlier ">1 Hz" reading of
+  `m5_realgps.csv` was the ~2.8 Hz *packet* rate over a *fixed* position, not new fixes.
+- The Apple Watch GPS is also ~1 Hz. The LoRa link + BLE bridge proved 4 Hz (counter test), but **no
+  GPS source feeds it faster**.
+- **Conclusion: ~1 Hz is the genuine position-novelty ceiling.** A faster-*feeling* track requires
+  **display interpolation** (animate the dot at 60 fps between 1 Hz fixes via dead-reckoning), not
+  faster GPS — same approach Maps/Strava use.
+
 
