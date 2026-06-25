@@ -33,9 +33,23 @@ PAYLOAD_LEN = struct.calcsize(PAYLOAD_FMT)  # 12
 WARMUP_S = 4.0  # let the receiver's serial interface connect before streaming
 
 
+def to_port(value):
+    """Accept a /dev path OR a role name ('tag'/'base') resolved via nodes.py (USB serial)."""
+    if value and value.lower() in ("tag", "base"):
+        try:
+            import nodes
+        except ImportError:
+            sys.exit("nodes.py not found — run from the tools/ dir or repo root")
+        port = nodes.resolve(value)
+        if not port:
+            sys.exit(f"node '{value}' not connected")
+        return port
+    return value
+
+
 def open_iface(port):
     import meshtastic.serial_interface
-    return meshtastic.serial_interface.SerialInterface(devPath=port)
+    return meshtastic.serial_interface.SerialInterface(devPath=to_port(port))
 
 
 def pack(lat, lon, seq):

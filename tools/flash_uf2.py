@@ -51,6 +51,16 @@ def main():
         print(__doc__)
         sys.exit(2)
     port, uf2 = args
+    if port.lower() in ("tag", "base"):  # resolve a role name to its port via nodes.py (USB serial)
+        try:
+            import nodes
+            resolved = nodes.resolve(port)
+        except ImportError:
+            resolved = None
+        if not resolved:
+            sys.exit(f"node '{port}' not connected (or nodes.py missing)")
+        print(f"resolved {port} -> {resolved}")
+        port = resolved
     if not os.path.isfile(uf2):
         print("ERROR: uf2 not found:", uf2)
         sys.exit(2)

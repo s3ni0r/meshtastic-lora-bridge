@@ -69,6 +69,23 @@ python tools/m2_stream_poc.py both --send-port <a> --recv-port <b> --rate 2 --co
 python tools/m2_stream_poc.py recv --port <base-port> --duration 60 --csv run.csv
 ```
 
+## Identifying the two nodes
+
+Port names (`usbmodemXXXX`) can shuffle on replug, so address boards by **role**, resolved from the
+stable nRF52 **USB serial** (survives reboot/reflash/DFU) via `tools/nodes.py`:
+
+| Role | USB serial (physical ID) | Node ID | Node num |
+|---|---|---|---|
+| **Tag** (mover) | `92EBF6B5B6C9AC37` | `!b4dbb54c` | 3034297676 |
+| **Base** (receiver, visually tagged) | `4A8693CC387EBD66` | `!b0bb9cda` | 2965085402 |
+
+```bash
+python tools/nodes.py               # show which port is Tag / Base right now
+python tools/nodes.py --port base   # -> /dev/cu.usbmodemXXXX (for scripting)
+```
+`flash_uf2.py` and `m2_stream_poc.py` accept `tag`/`base` anywhere a port is expected, e.g.
+`python tools/m2_stream_poc.py recv --port base` or `python tools/flash_uf2.py tag firmware.uf2`.
+
 ## Constraints (EU868) — see [PLAN.md](PLAN.md)
 - **2 Hz sustained** is the legal EU868 target (ShortFast); 3–4 Hz sustained exceeds the 10% duty
   cycle (bench-only). **ShortTurbo is unusable in EU868** (firmware reverts it to LongFast).
