@@ -115,4 +115,26 @@ heading / sats are 0 without a GPS lock — they populate on an outdoor moving t
 work + on-body testing (live sensor access has init-timing / I2C-contention risk), so kept out of
 this change to protect the working firmware.
 
+## Freshness fix — verified (2026-06-25)
+
+After the stale-as-live bug surfaced on a walk (position frozen 66 s while reported `lock=1`), added a
+**freshness gate** (coords unchanged >2.5 s → `lock=0`) + a **heartbeat** (always stream, even pre-lock).
+Re-measured with Tag locked on the balcony (45 s / 127 packets, `tools/freshness_analyze.py`):
+
+| Metric | Value |
+|---|---|
+| Packet rate | 2.80 Hz |
+| **Novelty rate** | **~1.02 Hz** (the AG3335's real fix rate) |
+| **Staleness age / packet** | median 0.34 s, p95 0.77 s, **max 1.23 s** |
+| Longest frozen run | ~1.1 s (one 1 Hz gap) |
+| **lock=1 (fresh)** | **100%** |
+| Coord jitter | ~70 m lat / ~10 m lon (7 sats — multipath drift) |
+
+- **Freshness CONFIRMED:** every reported position is ≤1.23 s old and never stale-frozen (was 66 s).
+  The novelty is the GPS chip's honest ~1 Hz.
+- Residual **~70 m drift = multipath / limited sky view** (only 7 sats) — a *fix-quality* issue, not
+  freshness. This (plus faster TTFF) motivates **Phase 2: the Apple Watch as a better GPS source**.
+- Also confirmed: the GPS is ~1 Hz at the chip (`$PAIR050` 4 Hz not effective on this AG3335); not a
+  Meshtastic publish throttle (`shouldPublish` fires per fix when always-on).
+
 
