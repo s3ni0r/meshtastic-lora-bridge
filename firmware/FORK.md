@@ -39,28 +39,58 @@ Inside `setupModules()`, alongside the other `new XxxModule()` lines:
 #endif
 ```
 
-## 3. (Optional) Raise the GNSS fix rate — `src/gps/GPS.cpp`
+## 3. GNSS fix rate — DO NOT use the $PAIR050 persist dance (it bricks this module)
 
-In `GPS::setup()`, in the `IS_ONE_OF(gnssModel, GNSS_MODEL_AG3335, GNSS_MODEL_AG3352)` branch, the
-tail currently reads:
-```cpp
-            delay(250);
-            _serial_gps->write("$PAIR513*3D\r\n"); // save configuration
+⚠️ **Hard-won lesson.** Raising the AG3335 fix rate above 1 Hz requires *persisting* it, and the
+documented persist sequence **bricks GPS detection on the T1000-E**:
+
 ```
-Insert the fix-rate command just before it (guarded so only the sender build gets fast GPS):
+$PAIR050,100   (10 Hz)
+$PAIR382,1     (stop engine / enter backup)   ← the culprit
+$PAIR003       (power off GNSS subsystem)
+$PAIR513       (save)
+$PAIR002 / $PAIR004 (re-power / hot-start)
+```
+
+`$PAIR382,1` puts the AG3335 into a **VRTC-backed backup sleep**. On the T1000-E `GPS_VRTC_EN`
+(P0.8) stays HIGH across reboots, so the sleep **survives every reboot and a plain hardware reset**,
+and the module stops answering the `$PAIR021` probe → `No GNSS Module` forever. A bare `$PAIR513`
+(the only save valid at 1 Hz) does **not** persist >1 Hz, so this dance is the *only* documented way —
+and it's a trap on this hardware.
+
+**Net: the onboard AG3335 is treated as a fixed ~1 Hz source.** `position.gps_update_interval=1`,
+no `$PAIR050`. For a faster-*feeling* track, interpolate on the client (60 fps dead-reckoning between
+1 Hz fixes) — not faster GPS. See `../docs/results.md` "GPS rate ceiling".
+
+### Recovery safety-net (keep this — it un-bricks a slept GNSS)
+
+If a module is already stuck asleep, the wake is the **`GPS_RTC_INT` pin going HIGH** (variant:
+"normal LOW, wake by HIGH") — UART can't wake it. In `createGps()` (just after `new_gps->up();`,
+before the stock `PIN_GPS_RESET` pulse):
+```cpp
+#if defined(HIGHRATE_POSITION_SENDER) && defined(GPS_RTC_INT)
+    pinMode(GPS_RTC_INT, OUTPUT);
+    digitalWrite(GPS_RTC_INT, HIGH); delay(300);          // wake from backup sleep
+#ifdef PIN_GPS_RESET
+    pinMode(PIN_GPS_RESET, OUTPUT);
+    digitalWrite(PIN_GPS_RESET, GPS_RESET_MODE); delay(60);
+    digitalWrite(PIN_GPS_RESET, !GPS_RESET_MODE);
+#endif
+    delay(400); digitalWrite(GPS_RTC_INT, LOW); delay(200);
+#endif
+```
+And in `probe()`'s Airoha case (before the `$PAIR021` probe), keep it awake + at 1 Hz:
 ```cpp
 #ifdef HIGHRATE_POSITION_SENDER
-            _serial_gps->write("$PAIR050,250*24\r\n"); // 4 Hz fix rate (bench/test)
+    _serial_gps->write("$PAIR002*38\r\n");      delay(200); // power on
+    _serial_gps->write("$PAIR382,0*2F\r\n");    delay(200); // DISABLE backup sleep
+    _serial_gps->write("$PAIR050,1000*12\r\n"); delay(200); // 1 Hz
+    _serial_gps->write("$PAIR513*3D\r\n");      delay(300); // save (valid at 1 Hz)
 #endif
-            delay(250);
-            _serial_gps->write("$PAIR513*3D\r\n"); // save configuration
 ```
-Checksums: `250ms=*24` (4 Hz), `200ms=*21` (5 Hz), `100ms=*22` (10 Hz), `500ms=*26` (2 Hz).
-**Validate acceptance first (M1, `../tools/m1_gps_rate_check.md`)** — some AG3335 revisions reject
-250 ms. If so, use `$PAIR050,100*22` (10 Hz) and the module will decimate naturally to its send rate.
 
-> The module's TX cadence is independent of the GNSS fix rate, so you can test the LoRa rate/PDR
-> path (Step 6) **before** confirming the GPS rate — it'll just repeat stale fixes until §3 lands.
+> The module's TX cadence is independent of the GNSS fix rate, so the LoRa rate/PDR path (Step 6) was
+> validated to 4 Hz on a counter regardless — the GPS is what's pinned at 1 Hz, not the link.
 
 ## 4. Build
 
