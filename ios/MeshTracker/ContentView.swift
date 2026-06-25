@@ -6,11 +6,16 @@ struct ContentView: View {
     @State private var ble: BLEManager
     @State private var camera: MapCameraPosition = .automatic
     @State private var centered = false
+    @State private var phone = PhoneLocation()
 
     init() {
         let m = PositionModel()
         _model = State(initialValue: m)
         _ble = State(initialValue: BLEManager(model: m))
+    }
+
+    private func distanceString(_ m: Double) -> String {
+        m < 1000 ? "\(Int(m)) m" : String(format: "%.2f km", m / 1000)
     }
 
     private var lockText: String {
@@ -75,6 +80,23 @@ struct ContentView: View {
                 Text(String(format: "%.6f, %.6f", c.latitude, c.longitude))
                     .font(.caption.monospaced())
             }
+
+            if let d = phone.distance(to: model.current) {
+                Label(distanceString(d) + " from you", systemImage: "ruler")
+                    .font(.subheadline).bold()
+            }
+
+            HStack(spacing: 14) {
+                Label("\(model.speedKmh) km/h", systemImage: "speedometer")
+                HStack(spacing: 2) {
+                    Image(systemName: "location.north.fill").rotationEffect(.degrees(model.heading))
+                    Text("\(Int(model.heading))°")
+                }
+                Label("\(model.altitude) m", systemImage: "mountain.2.fill")
+                Spacer()
+                Text(model.hacc > 0 ? "±\(model.hacc) m" : "±— m")
+            }
+            .font(.caption).foregroundStyle(.secondary)
 
             HStack {
                 Text("pkts \(model.packetCount)")
