@@ -24,6 +24,8 @@ final class WatchBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegat
     @ObservationIgnored private var seq: UInt8 = 0
     @ObservationIgnored private let healthStore = HKHealthStore()
     @ObservationIgnored private var session: HKWorkoutSession?
+    @ObservationIgnored private var testTimer: Timer?
+    var testing = false
 
     override init() {
         super.init()
@@ -80,11 +82,22 @@ final class WatchBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegat
 
     func centralManager(_ c: CBCentralManager, didDiscover p: CBPeripheral,
                         advertisementData: [String: Any], rssi: NSNumber) {
+        // Connect ONLY to Tag (the bridge), never Base — match its name or node-id suffix (!b4dbb54c).
+        let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? p.name ?? ""
+        let n = name.lowercased()
+        guard n.contains("tag") || n.contains("b54c") else {
+            status = "Looking for Tag… (skip \(name.isEmpty ? "?" : name))"
+            return
+        }
         tag = p
         p.delegate = self
         c.stopScan()
         status = "Connecting to Tag…"
         c.connect(p)
+    }
+
+    func peripheral(_ p: CBPeripheral, didWriteValueFor ch: CBCharacteristic, error: Error?) {
+        if let e = error { status = "Write error: \(e.localizedDescription)" }
     }
 
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) {
@@ -114,12 +127,38 @@ final class WatchBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegat
     func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
         guard let l = locs.last else { return }
         lastFix = l
+        if !testing { sendPacket(l) }
+    }
+
+    private func sendPacket(_ loc: CLLocation) {
         guard let p = tag, let ch = toRadio else { return }
         let batt = Int(max(0, WKInterfaceDevice.current().batteryLevel) * 100)
-        let payload = MeshEncode.payload(l, seq: seq, sats: 0, batteryPct: batt)
+        let payload = MeshEncode.payload(loc, seq: seq, sats: 0, batteryPct: batt)
         seq = seq &+ 1
         p.writeValue(MeshEncode.toRadio(payload: payload), for: ch, type: .withResponse)
         sent += 1
+    }
+
+    // MARK: - Diagnostic: fixed-rate counter (factors out GPS to measure bridge throughput)
+
+    func startTest(hz: Double) {
+        testing = true
+        running = true
+        sent = 0
+        seq = 0
+        status = "Connecting (test \(Int(hz)) Hz)…"
+        if central.state == .poweredOn { scan() }
+        testTimer?.invalidate()
+        testTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / hz, repeats: true) { [weak self] _ in
+            self?.sendPacket(CLLocation(latitude: 43.4832, longitude: -1.5068))  // dummy fix; seq = counter
+        }
+    }
+
+    func stopTest() {
+        testTimer?.invalidate()
+        testTimer = nil
+        testing = false
+        stop()
     }
 
     func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {

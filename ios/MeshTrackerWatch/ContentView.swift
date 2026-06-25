@@ -25,10 +25,21 @@ struct ContentView: View {
                     .font(.caption2).foregroundStyle(.secondary)
             }
 
-            Button(bridge.running ? "Stop" : "Start tracking") {
-                if bridge.running { bridge.stop() } else { bridge.start() }
+            if bridge.running {
+                Button("Stop") {
+                    if bridge.testing { bridge.stopTest() } else { bridge.stop() }
+                }
+                .tint(.red)
+            } else {
+                Button("Start tracking") { bridge.start() }
+                    .tint(.green)
+                HStack(spacing: 6) {
+                    Button("Test 4Hz") { bridge.startTest(hz: 4) }
+                    Button("10Hz") { bridge.startTest(hz: 10) }
+                }
+                .font(.caption2)
+                .buttonStyle(.bordered)
             }
-            .tint(bridge.running ? .red : .green)
         }
         .padding(.horizontal, 4)
     }
