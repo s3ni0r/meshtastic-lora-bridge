@@ -15,8 +15,8 @@ struct ContentView: View {
 
     private var lockText: String {
         if model.hasLock { return "GPS lock" }
-        if model.current != nil { return "GPS stale" }       // have a position, but it's not fresh
-        if model.packetCount > 0 { return "searching… \(model.sats) sats" }
+        if model.current != nil { return "GPS stale" }
+        if model.packetCount > 0 { return "searching…" }
         return "no signal"
     }
 
@@ -56,34 +56,29 @@ struct ContentView: View {
                 } label: { Image(systemName: "scope") }
                 .disabled(model.current == nil)
             }
-            HStack(spacing: 12) {
-                Label(lockText,
-                      systemImage: model.hasLock ? "location.fill" : "location.slash")
+
+            HStack(alignment: .firstTextBaseline) {
+                Label(lockText, systemImage: model.hasLock ? "location.fill" : "location.slash")
                     .foregroundStyle(model.hasLock ? .green : .orange)
+                    .font(.subheadline)
                 Spacer()
-                Text(String(format: "%.1f Hz", model.rateHz)).monospacedDigit()
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(String(format: "%.1f Hz", model.noveltyHz)).font(.title3).bold().monospacedDigit()
+                    Text("GPS refresh").font(.caption2).foregroundStyle(.secondary)
+                }
             }
-            .font(.subheadline)
+
             if let c = model.current {
                 Text(String(format: "%.6f, %.6f", c.latitude, c.longitude))
                     .font(.caption.monospaced())
             }
-            HStack(spacing: 14) {
-                Label("\(model.speedKmh) km/h", systemImage: "speedometer")
-                Image(systemName: "location.north.fill")
-                    .imageScale(.small)
-                    .rotationEffect(.degrees(model.heading))
-                Text("\(model.altitude) m")
-                Spacer()
-                Label("\(model.sats)", systemImage: "antenna.radiowaves.left.and.right")
-                Label(model.battery > 100 ? "—%" : "\(model.battery)%",
-                      systemImage: model.charging ? "bolt.fill" : "battery.50")
-            }
-            .font(.caption).foregroundStyle(.secondary)
+
             HStack {
                 Text("pkts \(model.packetCount)")
                 Spacer()
-                Text(String(format: "SNR %.1f   RSSI %d", model.lastSnr, model.lastRssi))
+                Text(String(format: "stream %.1f Hz", model.rateHz))
+                Spacer()
+                Text(String(format: "SNR %.0f  RSSI %d", model.lastSnr, model.lastRssi))
             }
             .font(.caption).foregroundStyle(.secondary)
         }
