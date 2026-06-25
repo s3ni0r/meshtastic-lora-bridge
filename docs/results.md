@@ -152,4 +152,35 @@ in every case.**
   **display interpolation** (animate the dot at 60 fps between 1 Hz fixes via dead-reckoning), not
   faster GPS — same approach Maps/Strava use.
 
+## GPS rate — exhaustive root-cause + the brick (2026-06-25)
+
+Follow-up deep dive (with a hardware un-brick in hand, so we could probe aggressively). Measured the
+**raw GPS NMEA output rate on-device** via `-DGPS_DEBUG` (count `$G?RMC`/sec — needs no fix). The RMC
+UTC field steps by **exactly 1.000 s** in every configuration → a true, hard **1.00 Hz**.
+
+**This AG3335's firmware locks the fix rate at 1 Hz — it refuses every rate command:**
+
+| Command (family) | Method | Result |
+|---|---|---|
+| `$PAIR050,100` (Airoha) | RAM only | no `$PAIR001` ACK, stays 1 Hz |
+| `$PAIR050,100` + `$PAIR513` | save + reboot | stays 1 Hz |
+| `$PAIR050,100` + `$PAIR513` | save + **hardware RESETB** | stays 1 Hz |
+| `$PMTK220,100` + `$PMTK300,100` (MediaTek) | RAM | no ACK, stays 1 Hz |
+
+Yet the **command interface works**: the module answers `$PAIR021` (detected as `AG3335`) and honors
+`$PAIR062` sentence config (output is GGA+RMC only). So it's not a wiring/baud/checksum issue — **the
+rate command specifically is locked.** (Checksums independently verified: `$PAIR050,100*22`,
+`$PMTK220,100*2F`.)
+
+**The brick + recovery.** The *only* documented way to make `$PAIR050` "take" is to stop the engine
+first with `$PAIR382,1` — which on this hardware enters a **VRTC-backed backup sleep that survives
+reboots and hardware resets**, killing the `$PAIR021` probe (`No GNSS Module`) permanently. Recovery
+is **not** possible over UART; it requires pulsing the **`GPS_RTC_INT` line HIGH** (variant: "normal
+LOW, wake by HIGH") + a hardware reset. That wake is now a permanent safety-net in `createGps()`
+(gated on `HIGHRATE_POSITION_SENDER`); see `firmware/FORK.md §3`.
+
+**Final answer: 1 Hz is a hard firmware limit on this T1000-E's AG3335.** No UART command raises it,
+and the one documented override bricks the chip. The productive path to real-time *feel* is **client
+display interpolation**, not faster GPS.
+
 

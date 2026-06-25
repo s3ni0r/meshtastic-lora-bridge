@@ -39,10 +39,19 @@ Inside `setupModules()`, alongside the other `new XxxModule()` lines:
 #endif
 ```
 
-## 3. GNSS fix rate — DO NOT use the $PAIR050 persist dance (it bricks this module)
+## 3. GNSS fix rate — this AG3335 is LOCKED at 1 Hz (verified exhaustively)
 
-⚠️ **Hard-won lesson.** Raising the AG3335 fix rate above 1 Hz requires *persisting* it, and the
-documented persist sequence **bricks GPS detection on the T1000-E**:
+⚠️ **Bottom line:** on this T1000-E the AG3335 firmware **refuses all fix-rate commands** and there is
+**no working way to raise it above 1 Hz.** Measured on-device with `-DGPS_DEBUG` (RMC steps by exactly
+1.000 s every time): `$PAIR050,100` (Airoha) gets no `$PAIR001` ACK and no effect via RAM, save+reboot,
+*and* save+hardware-RESETB; `$PMTK220,100`/`$PMTK300,100` (MediaTek) likewise. The interface itself
+works — it answers `$PAIR021` and honors `$PAIR062` sentence config — so the rate is specifically
+locked. Full table in `../docs/results.md` "GPS rate — exhaustive root-cause". **Leave it at 1 Hz; do
+client-side interpolation for a real-time feel.**
+
+⚠️ **And do NOT try to force it via the persist dance — it bricks the module.** Raising the rate above
+1 Hz "officially" requires *persisting* it, and the documented persist sequence **bricks GPS detection
+on the T1000-E**:
 
 ```
 $PAIR050,100   (10 Hz)
