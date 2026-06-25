@@ -19,6 +19,16 @@ struct StreamPacket {
     var msInSec: UInt16 = 0
     var seq: UInt8 = 0
     var flags: UInt8 = 0
+    // payload v2 extras (0 if a 12-byte v1 packet)
+    var altitude: Int = 0   // metres
+    var speedKmh: Int = 0
+    var heading: Double = 0 // degrees
+    var sats: Int = 0
+    var battery: Int = 0    // %, 101 = unknown
+
+    var hasLock: Bool { flags & 0x01 != 0 }
+    var moving: Bool { flags & 0x02 != 0 }
+    var charging: Bool { flags & 0x04 != 0 }
 }
 
 private struct ProtoReader {
@@ -123,6 +133,13 @@ private func parseData(_ bytes: ArraySlice<UInt8>, into sp: inout StreamPacket) 
     sp.msInSec = UInt16(p[8]) | (UInt16(p[9]) << 8)
     sp.seq = p[10]
     sp.flags = p[11]
+    if p.count >= 18 { // payload v2 extras
+        sp.altitude = Int(Int16(bitPattern: UInt16(p[12]) | (UInt16(p[13]) << 8)))
+        sp.speedKmh = Int(p[14])
+        sp.heading = Double(p[15]) * 360.0 / 256.0
+        sp.sats = Int(p[16])
+        sp.battery = Int(p[17])
+    }
     return true
 }
 

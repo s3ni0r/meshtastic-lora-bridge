@@ -28,8 +28,11 @@ import sys
 import time
 
 PRIVATE_APP = 256
-PAYLOAD_FMT = "<iiHBB"
-PAYLOAD_LEN = struct.calcsize(PAYLOAD_FMT)  # 12
+# Payload formats (little-endian). v2 adds alt/speed/heading/sats/battery; v1 = lat/lon/ms/seq/flags.
+PAYLOAD_FMT_V1 = "<iiHBB"
+PAYLOAD_FMT_V2 = "<iiHBBhBBBB"
+V1_LEN = struct.calcsize(PAYLOAD_FMT_V1)  # 12
+V2_LEN = struct.calcsize(PAYLOAD_FMT_V2)  # 18
 WARMUP_S = 4.0  # let the receiver's serial interface connect before streaming
 
 
@@ -54,7 +57,9 @@ def open_iface(port):
 
 def pack(lat, lon, seq):
     ms_in_sec = int((time.time() % 1.0) * 1000) & 0xFFFF
-    return struct.pack(PAYLOAD_FMT, int(lat * 1e7), int(lon * 1e7), ms_in_sec, seq & 0xFF, 0x01)
+    # v2 payload; metrics are simulated for host-injection tests
+    return struct.pack(PAYLOAD_FMT_V2, int(lat * 1e7), int(lon * 1e7), ms_in_sec, seq & 0xFF, 0x01,
+                       12, 5, 64, 9, 87)  # alt=12m speed=5km/h heading=64(->90deg) sats=9 batt=87%
 
 
 class Receiver:
@@ -70,7 +75,7 @@ class Receiver:
         self.rssis = []
         self.csv = open(csv_path, "w") if csv_path else None
         if self.csv:
-            self.csv.write("host_time,from,seq,lat,lon,ms_in_sec,flags,rx_snr,rx_rssi,rx_time,hop_start\n")
+            self.csv.write("host_time,from,seq,lat,lon,alt_m,speed_kmh,heading,sats,battery,ms_in_sec,flags,rx_snr,rx_rssi\n")
 
     def on_receive(self, packet, interface=None):
         if self.only_iface is not None and interface is not self.only_iface:
@@ -79,9 +84,15 @@ class Receiver:
         if d.get("portnum") not in ("PRIVATE_APP", PRIVATE_APP):
             return
         payload = d.get("payload")
-        if not payload or len(payload) < PAYLOAD_LEN:
+        if not payload or len(payload) < V1_LEN:
             return
-        lat_i, lon_i, off, seq, flags = struct.unpack(PAYLOAD_FMT, payload[:PAYLOAD_LEN])
+        alt = spd = sats = batt = 0
+        heading = 0.0
+        if len(payload) >= V2_LEN:
+            lat_i, lon_i, off, seq, flags, alt, spd, hdg, sats, batt = struct.unpack(PAYLOAD_FMT_V2, payload[:V2_LEN])
+            heading = hdg * 360.0 / 256.0
+        else:
+            lat_i, lon_i, off, seq, flags = struct.unpack(PAYLOAD_FMT_V1, payload[:V1_LEN])
         lat, lon = lat_i / 1e7, lon_i / 1e7
         now = time.monotonic()
         if self.first_t is None:
@@ -94,10 +105,11 @@ class Receiver:
             self.snrs.append(snr)
         if rssi is not None:
             self.rssis.append(rssi)
-        print(f"  rx seq={seq:3d} lat={lat:.6f} lon={lon:.6f} off={off:4d}ms snr={snr} rssi={rssi}")
+        print(f"  rx seq={seq:3d} lat={lat:.6f} lon={lon:.6f} spd={spd}km/h hdg={heading:3.0f} "
+              f"sats={sats} batt={batt}% snr={snr} rssi={rssi}")
         if self.csv:
             self.csv.write(f"{time.time():.3f},{packet.get('from')},{seq},{lat:.7f},{lon:.7f},"
-                           f"{off},{flags},{snr},{rssi},{packet.get('rxTime')},{packet.get('hopStart')}\n")
+                           f"{alt},{spd},{heading:.0f},{sats},{batt},{off},{flags},{snr},{rssi}\n")
             self.csv.flush()
 
     def summary(self, sent=None):

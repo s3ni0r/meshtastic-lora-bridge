@@ -61,6 +61,18 @@ struct ContentView: View {
                 Text(String(format: "%.6f, %.6f", c.latitude, c.longitude))
                     .font(.caption.monospaced())
             }
+            HStack(spacing: 14) {
+                Label("\(model.speedKmh) km/h", systemImage: "speedometer")
+                Image(systemName: "location.north.fill")
+                    .imageScale(.small)
+                    .rotationEffect(.degrees(model.heading))
+                Text("\(model.altitude) m")
+                Spacer()
+                Label("\(model.sats)", systemImage: "antenna.radiowaves.left.and.right")
+                Label(model.battery > 100 ? "—%" : "\(model.battery)%",
+                      systemImage: model.charging ? "bolt.fill" : "battery.50")
+            }
+            .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Text("pkts \(model.packetCount)")
                 Spacer()

@@ -95,4 +95,24 @@ Tag (fork, real GPS) ──LoRa──▶ Base ──BLE──▶ iPhone (live ma
 Remaining: 1 km range/PDR-vs-distance sweep (M7), rate tuning toward a clean 4 Hz, and the optional
 Phase 2 Apple Watch GPS bridge.
 
+## Extended telemetry — payload v2 (2026-06-25)
+
+Grew the `PRIVATE_APP` payload **12 → 18 bytes**, adding **altitude, ground speed (km/h), heading,
+satellites, and battery %**, plus moving/charging flags. All sourced from existing Meshtastic state
+(`localPosition`, `powerStatus`) — negligible extra airtime at ~2.9 Hz (18 B ≪ budget).
+Backward-compatible: 12-byte v1 clients still decode position.
+
+- **Firmware:** `HighRatePositionModule` packs `alt(i16,m) speed(u8,km/h) heading(u8,×256/360)
+  sats(u8) battery(u8,%)` + flags `bit0 lock / bit1 moving / bit2 charging`.
+- **iOS:** `MeshProto` decodes the extras; `ContentView` shows a metrics row (speed, rotating heading
+  arrow, altitude, sats, battery); CSV logs all fields.
+- **Tools:** `m2_stream_poc.py` parses v2 (graceful for 12-byte) + new CSV columns.
+
+Validated indoors (Tag fixed position): **battery reads live (82%)**, structure correct. Speed /
+heading / sats are 0 without a GPS lock — they populate on an outdoor moving test (overlaps M7).
+
+**Deferred — accelerometer fall/impact detection (QMA6100P):** flag bits reserved; needs dedicated
+work + on-body testing (live sensor access has init-timing / I2C-contention risk), so kept out of
+this change to protect the working firmware.
+
 
