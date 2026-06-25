@@ -27,7 +27,7 @@ struct ContentView: View {
                     MapPolyline(coordinates: model.trail).stroke(.blue, lineWidth: 3)
                 }
                 if let c = model.current {
-                    Marker("Tag", systemImage: "location.fill", coordinate: c)
+                    Marker("Dronetag", systemImage: "paperplane.fill", coordinate: c)
                         .tint(model.hasLock ? .green : .orange)
                 }
             }
@@ -46,7 +46,10 @@ struct ContentView: View {
     private var statsPanel: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(ble.status).font(.headline)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(ble.status).font(.headline)
+                    Text("Dronetag · Remote ID → LoRa").font(.caption2).foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button {
                     if let c = model.current {

@@ -183,4 +183,30 @@ LOW, wake by HIGH") + a hardware reset. That wake is now a permanent safety-net 
 and the one documented override bricks the chip. The productive path to real-time *feel* is **client
 display interpolation**, not faster GPS.
 
+## Dronetag Remote ID → LoRa bridge — BREAKTHROUGH (2026-06-26)
+
+Sidesteps the locked GPS entirely: the T1000-E **nRF52840 sniffs a Dronetag's Remote ID BLE
+advertisements** and re-broadcasts the position over LoRa — using the Dronetag's faster GPS instead of
+the AG3335. The nRF BLE radio and the LR1110 LoRa chip are independent, so scan + TX don't contend.
+
+```
+Dronetag (RID, GNSS 10Hz / DRI 4Hz)  ──BLE adv (ASTM F3411, legacy 1M)──▶
+  T1000-E Tag: BLE observer → decode ODID Location → PRIVATE_APP(256) ──LoRa──▶ Base ──BLE──▶ iPhone
+```
+
+- **Firmware:** `NRF52Bluetooth.cpp` adds a BLE observer (`Bluefruit.begin(1,1)` + continuous Scanner)
+  that filters Service Data UUID `0xFFFA` / app `0x0D`, decodes the 25-byte ODID Location message
+  (lat/lon int32 deg*1e7 — same as our payload), and hands the fix to `HighRatePositionModule` via
+  `g_odidLat/g_odidLon/g_odidMs`. Gated behind `-DODID_SNIFFER`. **The `Scanner.resume()` after every
+  report is mandatory** (S140 auto-pauses). `odidLastMs`-based freshness drives the lock flag.
+- **Validated end-to-end:** Tag decodes the Dronetag fix (43.4831, −1.5068, coords tracking live),
+  transmits over LoRa, **Base receives it at 2.86 Hz** (`tools/m2_stream_poc.py recv`), iPhone shows it.
+- **Refresh rate:** novelty is the Dronetag's GNSS rate, **>1 Hz** (vs the locked 1 Hz onboard). In the
+  bench test the *measured* novelty was capped by BLE packet loss (Dronetag on the balcony, Tag at the
+  desk, RSSI −78 → ~1.3 Hz). **Co-located** (the real rig — both ride together, RSSI ~−20) the catch
+  rate is full; the held-fix ODID-timestamp cadence read ~2.1 Hz with continuous scan.
+- **Tool:** `tools/odid_sniff.py` parses the sniffer log → advert rate, RSSI, position-novelty Hz.
+- **Pending:** field test (Dronetag + Tag co-located outdoors + moving, Base/iPhone at home) to confirm
+  the full 2–4 Hz moving track at LoRa range. EU868 duty cycle still applies (>2.4 Hz = bench only).
+
 
