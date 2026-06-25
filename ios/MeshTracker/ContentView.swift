@@ -13,6 +13,13 @@ struct ContentView: View {
         _ble = State(initialValue: BLEManager(model: m))
     }
 
+    private var lockText: String {
+        if model.hasLock { return "GPS lock" }
+        if model.current != nil { return "GPS stale" }       // have a position, but it's not fresh
+        if model.packetCount > 0 { return "searching… \(model.sats) sats" }
+        return "no signal"
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             Map(position: $camera) {
@@ -50,7 +57,7 @@ struct ContentView: View {
                 .disabled(model.current == nil)
             }
             HStack(spacing: 12) {
-                Label(model.hasLock ? "GPS lock" : "no lock",
+                Label(lockText,
                       systemImage: model.hasLock ? "location.fill" : "location.slash")
                     .foregroundStyle(model.hasLock ? .green : .orange)
                 Spacer()

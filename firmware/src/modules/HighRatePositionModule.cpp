@@ -13,6 +13,12 @@
 #define HIGHRATE_POSITION_INTERVAL_MS 250
 #endif
 
+// A fix whose coordinates haven't changed within this window is treated as stale (reported lock=0),
+// so a stalled/lost GPS never masquerades as a live position.
+#ifndef HIGHRATE_FRESH_MS
+#define HIGHRATE_FRESH_MS 2500
+#endif
+
 // Payload v2 — 18 bytes, little-endian (must match tools/m2_stream_poc.py + ios MeshProto.swift):
 //   0  lat      int32  deg*1e7
 //   4  lon      int32  deg*1e7
@@ -36,7 +42,6 @@ HighRatePositionModule::HighRatePositionModule()
 int32_t HighRatePositionModule::runOnce()
 {
     // Best-available position: freshest live GPS fix, else the node's stored / fixed position.
-    bool hasLock = gpsStatus && gpsStatus->getHasLock();
     int32_t lat = localPosition.latitude_i;
     int32_t lon = localPosition.longitude_i;
     if (lat == 0 && lon == 0) {
@@ -46,8 +51,20 @@ int32_t HighRatePositionModule::runOnce()
             lon = node->position.longitude_i;
         }
     }
-    if (lat == 0 && lon == 0)
-        return HIGHRATE_POSITION_INTERVAL_MS; // no position available yet
+    // Heartbeat: ALWAYS send, even with no fix (lat/lon may be 0). The receiver/phone treats 0,0 as
+    // "no fix yet" but still sees Tag is alive and can watch GPS acquisition (sats climbing, lock
+    // flag) instead of dead silence.
+
+    // Freshness gate: real GPS jitters every fix, so coordinates that stop changing mean a
+    // stalled/lost GPS — report lock=0 so stale data never looks like a live fix.
+    uint32_t nowMs = millis();
+    if (lat != lastLat || lon != lastLon) {
+        lastLat = lat;
+        lastLon = lon;
+        lastChangedMs = nowMs;
+    }
+    bool hasLock = (gpsStatus && gpsStatus->getHasLock()) && lastChangedMs != 0 &&
+                   (nowMs - lastChangedMs) < HIGHRATE_FRESH_MS;
 
     // --- extra metrics (cheap; sourced from existing Meshtastic state) ---
     int32_t alt = localPosition.altitude;             // metres

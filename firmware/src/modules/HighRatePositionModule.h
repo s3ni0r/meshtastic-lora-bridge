@@ -25,6 +25,9 @@ class HighRatePositionModule : public SinglePortModule, private concurrency::OST
 
   private:
     uint8_t seq = 0;
+    int32_t lastLat = 0;       // for staleness detection (position that stops changing == stale)
+    int32_t lastLon = 0;
+    uint32_t lastChangedMs = 0;
 };
 
 extern HighRatePositionModule *highRatePositionModule;

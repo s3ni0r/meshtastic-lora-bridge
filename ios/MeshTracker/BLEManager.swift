@@ -38,7 +38,13 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
 
     func centralManager(_ c: CBCentralManager, didDiscover p: CBPeripheral,
                         advertisementData: [String: Any], rssi: NSNumber) {
-        let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? p.name ?? "node"
+        let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? p.name ?? ""
+        // Connect ONLY to Base (the receiver) — never Tag. Match its name or node-id suffix (!b0bb9cda).
+        let n = name.lowercased()
+        guard n.contains("base") || n.contains("9cda") else {
+            status = "Looking for Base… (ignoring \(name.isEmpty ? "unnamed node" : name))"
+            return
+        }
         peripheral = p
         p.delegate = self
         nodeName = name
