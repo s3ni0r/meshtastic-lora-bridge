@@ -105,10 +105,10 @@ index e477574..115f238 100644
      waypointModule = new WaypointModule();
  #endif
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 4f7fb47..7b0fb4c 100644
+index 4f7fb47..ef68d0c 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
-@@ -240,13 +240,145 @@ int NRF52Bluetooth::getRssi()
+@@ -240,13 +240,146 @@ int NRF52Bluetooth::getRssi()
  {
      return 0; // FIXME figure out where to source this
  }
@@ -128,7 +128,8 @@ index 4f7fb47..7b0fb4c 100644
 +volatile uint32_t g_odidMs = 0;     // millis() of the last valid decode (0 = none yet)
 +
 +// ODID horizontal-accuracy enum (low nibble of byte 19) -> meters upper bound (0 = unknown / coarse).
-+static const uint8_t odidHaccMeters[16] = {0, 0, 0, 0, 0, 0, 0, 0, 185, 93, 30, 10, 3, 1, 0, 0};
++// Per ASTM F3411 / opendroneid: 8=<92.6m, 9=<30m, 10=<10m, 11=<3m, 12=<1m; 0-7 + 13-15 coarse/unknown.
++static const uint8_t odidHaccMeters[16] = {0, 0, 0, 0, 0, 0, 0, 0, 93, 30, 10, 3, 1, 0, 0, 0};
 +
 +static uint32_t odidLastMs = 0;
 +// Benchmark instrumentation: scan-callback load + extended/Location split, logged every 5 s.
@@ -254,7 +255,7 @@ index 4f7fb47..7b0fb4c 100644
      // Clear existing data.
      Bluefruit.Advertising.stop();
      Bluefruit.Advertising.clearData();
-@@ -292,10 +424,19 @@ void NRF52Bluetooth::setup()
+@@ -292,10 +425,19 @@ void NRF52Bluetooth::setup()
      // BLEService and BLECharacteristic classes
      LOG_INFO("Init the Mesh bluetooth service");
      setupMeshService();
