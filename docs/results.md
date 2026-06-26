@@ -222,12 +222,23 @@ Branch `feat/odid-sniffer-rate`. Tuned the Tag as a dedicated BLE observer:
   scan buffer is 31 B, extended PDUs need 255 B).
 
 **Why the iOS "GPS refresh" drops during the indoor sim (investigated, not a bug):** the Dronetag's
-flight **simulator** emits fresh fixes at only **~1 Hz and stalls for multi-second stretches**. Proven
-by logging the ODID fix timestamp: across frozen-position runs of 33–89 adverts the timestamp advanced
-by **0** (one run = ~17 s with no new fix). Meanwhile adverts kept arriving at ~5 Hz (re-broadcasts), so
-the *stream* rate stayed steady while *novelty* correctly collapsed. The sim's cadence is independent of
-the GNSS 10 Hz / dynamic 4 Hz setting (those govern the real receiver) — a real moving flight feeds the
-full rate, which the bridge has ample headroom to carry.
+flight **simulator runs at a VARIABLE rate** — it swings between ~4.5 Hz fresh fixes and ~1 Hz with
+multi-second stalls, and stops broadcasting entirely between runs. Proven by logging the ODID fix
+timestamp: during slow phases, frozen-position runs of 33–89 adverts showed the timestamp advance by
+**0** (one run = ~17 s with no new fix); during fast phases it advanced at ~4.5 Hz. Adverts kept arriving
+at ~5 Hz (re-broadcasts) throughout, so the *stream* rate stayed steady while *novelty* faithfully
+tracked the sim's real cadence. Not a bridge/app bug. A real moving GPS feeds a steady rate, which the
+bridge has ample headroom to carry.
+
+**BT4 vs BT5 — validated, but ranking inconclusive on this device.** BT5 extended scanning **works** on
+the T1000-E (`-DODID_PHY_EXT` + `patch-bluefruit-ext.sh` to grow Bluefruit's 31 B scan buffer to 255 B):
+it receives the Dronetag's BT5 message-pack PDU and decoded Location at **4.54 Hz**. But BT4 legacy
+**also** reached **4.57 Hz** on the same Dronetag — legacy is *not* throttled here, so the two PHYs are
+**equivalent for refresh**. The sim's variable rate makes a clean sequential A/B impossible (each capture
+lands in a different phase — an early BT4-slow vs BT5-fast comparison briefly looked like a 4.5× BT5 win,
+then BT4 also hit 4.5 Hz). A definitive PHY ranking needs a constant-rate source (a real flight). **Default
+stays BT4** (simpler — no out-of-repo lib patch); BT5 is implemented + validated for RID devices that *do*
+throttle legacy.
 
 > Metric note: the app's "GPS refresh" measures position-*change* (novelty), so it reads ~0 when the
 > target is stationary even with a live GPS. A fix-timestamp-based "fresh-fix rate" would be a truer
