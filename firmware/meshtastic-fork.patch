@@ -274,3 +274,19 @@ index 4f7fb47..7b0fb4c 100644
  }
  void NRF52Bluetooth::resumeAdvertising()
  {
+diff --git a/variants/nrf52840/tracker-t1000-e/platformio.ini b/variants/nrf52840/tracker-t1000-e/platformio.ini
+index 905d751..b719605 100644
+--- a/variants/nrf52840/tracker-t1000-e/platformio.ini
++++ b/variants/nrf52840/tracker-t1000-e/platformio.ini
+@@ -13,6 +13,11 @@ build_flags = ${nrf52840_base.build_flags}
+   -DMESHTASTIC_EXCLUDE_DETECTIONSENSOR=1
+   -DMESHTASTIC_EXCLUDE_WIFI=1
+ board_build.ldscript = src/platform/nrf52/nrf52840_s140_v7.ld
++; Keep the base hook (UF2 gen etc.) AND auto-apply the Bluefruit 255B scan-buffer patch for the BT5
++; (-DODID_PHY_EXT) ODID sniffer, so extended builds need no manual patch step.
++extra_scripts =
++  bin/platformio-custom.py
++  pre:patch_bluefruit_ext.py
+ build_src_filter = ${nrf52_base.build_src_filter} +<../variants/nrf52840/tracker-t1000-e>
+ lib_deps = 
+   ${nrf52840_base.lib_deps}

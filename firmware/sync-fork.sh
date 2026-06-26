@@ -13,9 +13,10 @@ cd "$(dirname "$0")"
 CLONE=meshtastic-firmware
 [ -d "$CLONE" ] || { echo "clone not found: $CLONE"; exit 1; }
 
-# Project-owned module: clean full drop-in copies.
+# Project-owned files: clean full drop-in copies.
 cp "$CLONE/src/modules/HighRatePositionModule.h"   src/modules/HighRatePositionModule.h
 cp "$CLONE/src/modules/HighRatePositionModule.cpp" src/modules/HighRatePositionModule.cpp
+cp "$CLONE/patch_bluefruit_ext.py"                 patch_bluefruit_ext.py
 
 # Vendor-file edits: one reviewable patch vs the build tag (v2.7.15.567b8ea).
 git -C "$CLONE" diff -- \
@@ -23,6 +24,7 @@ git -C "$CLONE" diff -- \
     src/gps/GPS.cpp \
     src/modules/Modules.cpp \
     src/platform/nrf52/NRF52Bluetooth.cpp \
+    variants/nrf52840/tracker-t1000-e/platformio.ini \
     > meshtastic-fork.patch
 
 echo "synced: firmware/src/modules/HighRatePositionModule.* + firmware/meshtastic-fork.patch"
