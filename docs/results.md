@@ -209,4 +209,50 @@ Dronetag (RID, GNSS 10Hz / DRI 4Hz)  ──BLE adv (ASTM F3411, legacy 1M)──
 - **Pending:** field test (Dronetag + Tag co-located outdoors + moving, Base/iPhone at home) to confirm
   the full 2–4 Hz moving track at LoRa range. EU868 duty cycle still applies (>2.4 Hz = bench only).
 
+## Sniffer rate optimization + simulated-flight finding (2026-06-26)
+
+Branch `feat/odid-sniffer-rate`. Tuned the Tag as a dedicated BLE observer:
+- **Onboard AG3335 GPS disabled** — `createGps()` gated behind `!ODID_SNIFFER` in `main.cpp`, so the
+  locked-1Hz chip is never created/powered/probed (no thread, `PIN_GPS_EN` stays low).
+- **Scan-only** — keep `Bluefruit.begin(1,1)` but stop advertising (no phone link needed on the Tag),
+  so the observer gets ~100% radio time. (Not `begin(0,1)` — that skips per-peripheral CONN_CFG setup.)
+- **Result: Location advert catch rate 2.9 Hz → ~5 Hz** (continuous scan). The scanner is no longer the
+  bottleneck — refresh is now bound by the Dronetag, not by us.
+- BT4/BT5 PHY selectable via `-DODID_PHY_EXT` (BT5 needs `firmware/patch-bluefruit-ext.sh` — Bluefruit's
+  scan buffer is 31 B, extended PDUs need 255 B).
+
+**Why the iOS "GPS refresh" drops during the indoor sim (investigated, not a bug):** the Dronetag's
+flight **simulator runs at a VARIABLE rate** — it swings between ~4.5 Hz fresh fixes and ~1 Hz with
+multi-second stalls, and stops broadcasting entirely between runs. Proven by logging the ODID fix
+timestamp: during slow phases, frozen-position runs of 33–89 adverts showed the timestamp advance by
+**0** (one run = ~17 s with no new fix); during fast phases it advanced at ~4.5 Hz. Adverts kept arriving
+at ~5 Hz (re-broadcasts) throughout, so the *stream* rate stayed steady while *novelty* faithfully
+tracked the sim's real cadence. Not a bridge/app bug. A real moving GPS feeds a steady rate, which the
+bridge has ample headroom to carry.
+
+**BT4 vs BT5 (Coded) — BT5 wins decisively on efficiency (long benchmark, `tools/odid_bench.py`).**
+First gotcha: BT5 must be scanned on the **right PHY**. The Dronetag's "BT5 Long Range" is **Coded PHY**,
+not 1M-extended — scanning `scan_phys=1M` saw **zero** extended adverts (the earlier "BT5 4.54 Hz" was
+actually *legacy* leaking through, since `extended=1` also reports legacy). Scanning `scan_phys=CODED`
+with an extended-only callback filter, 90 s each:
+
+| Metric | BT4 legacy | BT5 Coded |
+|---|---|---|
+| Scan callbacks | 60.6 /s | **6.7 /s** |
+| …legacy (discarded noise) | 60.6 /s | **0 /s** |
+| Packets parsed | 60.6 /s | **6.7 /s** |
+| Location adverts | 5.23 Hz | 5.26 Hz |
+| Locations decoded | 5.3 /s | 5.5 /s |
+
+**BT5 Coded does the same Location delivery with ~9× fewer packets to process and ZERO 1M-legacy
+noise.** Coded-only scanning ignores all BT4 (the Dronetag's 4 other message types *and* every nearby
+BLE4 device) — so the sniffer only ever touches the one clean ODID message-pack. Refresh is equivalent
+(advert rate identical; fresh-fix variance is the sim's pauses). **Recommended bridge mode: BT5 Coded.**
+Build: `firmware/patch-bluefruit-ext.sh` (grows Bluefruit's 31 B scan buffer → 255 B) + `-DODID_PHY_EXT`
+(scans Coded + filters extended-only). BT4 legacy remains the no-patch fallback.
+
+> Metric note: the app's "GPS refresh" measures position-*change* (novelty), so it reads ~0 when the
+> target is stationary even with a live GPS. A fix-timestamp-based "fresh-fix rate" would be a truer
+> "is the data fresh?" indicator (deferred — bundles with a future app update).
+
 
