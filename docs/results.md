@@ -230,15 +230,26 @@ at ~5 Hz (re-broadcasts) throughout, so the *stream* rate stayed steady while *n
 tracked the sim's real cadence. Not a bridge/app bug. A real moving GPS feeds a steady rate, which the
 bridge has ample headroom to carry.
 
-**BT4 vs BT5 — validated, but ranking inconclusive on this device.** BT5 extended scanning **works** on
-the T1000-E (`-DODID_PHY_EXT` + `patch-bluefruit-ext.sh` to grow Bluefruit's 31 B scan buffer to 255 B):
-it receives the Dronetag's BT5 message-pack PDU and decoded Location at **4.54 Hz**. But BT4 legacy
-**also** reached **4.57 Hz** on the same Dronetag — legacy is *not* throttled here, so the two PHYs are
-**equivalent for refresh**. The sim's variable rate makes a clean sequential A/B impossible (each capture
-lands in a different phase — an early BT4-slow vs BT5-fast comparison briefly looked like a 4.5× BT5 win,
-then BT4 also hit 4.5 Hz). A definitive PHY ranking needs a constant-rate source (a real flight). **Default
-stays BT4** (simpler — no out-of-repo lib patch); BT5 is implemented + validated for RID devices that *do*
-throttle legacy.
+**BT4 vs BT5 (Coded) — BT5 wins decisively on efficiency (long benchmark, `tools/odid_bench.py`).**
+First gotcha: BT5 must be scanned on the **right PHY**. The Dronetag's "BT5 Long Range" is **Coded PHY**,
+not 1M-extended — scanning `scan_phys=1M` saw **zero** extended adverts (the earlier "BT5 4.54 Hz" was
+actually *legacy* leaking through, since `extended=1` also reports legacy). Scanning `scan_phys=CODED`
+with an extended-only callback filter, 90 s each:
+
+| Metric | BT4 legacy | BT5 Coded |
+|---|---|---|
+| Scan callbacks | 60.6 /s | **6.7 /s** |
+| …legacy (discarded noise) | 60.6 /s | **0 /s** |
+| Packets parsed | 60.6 /s | **6.7 /s** |
+| Location adverts | 5.23 Hz | 5.26 Hz |
+| Locations decoded | 5.3 /s | 5.5 /s |
+
+**BT5 Coded does the same Location delivery with ~9× fewer packets to process and ZERO 1M-legacy
+noise.** Coded-only scanning ignores all BT4 (the Dronetag's 4 other message types *and* every nearby
+BLE4 device) — so the sniffer only ever touches the one clean ODID message-pack. Refresh is equivalent
+(advert rate identical; fresh-fix variance is the sim's pauses). **Recommended bridge mode: BT5 Coded.**
+Build: `firmware/patch-bluefruit-ext.sh` (grows Bluefruit's 31 B scan buffer → 255 B) + `-DODID_PHY_EXT`
+(scans Coded + filters extended-only). BT4 legacy remains the no-patch fallback.
 
 > Metric note: the app's "GPS refresh" measures position-*change* (novelty), so it reads ~0 when the
 > target is stationary even with a live GPS. A fix-timestamp-based "fresh-fix rate" would be a truer

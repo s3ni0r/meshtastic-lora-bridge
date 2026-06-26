@@ -105,10 +105,10 @@ index e477574..115f238 100644
      waypointModule = new WaypointModule();
  #endif
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 4f7fb47..40de786 100644
+index 4f7fb47..7b0fb4c 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
-@@ -240,13 +240,121 @@ int NRF52Bluetooth::getRssi()
+@@ -240,13 +240,145 @@ int NRF52Bluetooth::getRssi()
  {
      return 0; // FIXME figure out where to source this
  }
@@ -131,9 +131,12 @@ index 4f7fb47..40de786 100644
 +static const uint8_t odidHaccMeters[16] = {0, 0, 0, 0, 0, 0, 0, 0, 185, 93, 30, 10, 3, 1, 0, 0};
 +
 +static uint32_t odidLastMs = 0;
++// Benchmark instrumentation: scan-callback load + extended/Location split, logged every 5 s.
++static uint32_t sCb = 0, sExt = 0, sLoc = 0, sStatsMs = 0;
 +
 +static void odidDecodeLocation(const uint8_t *m, uint8_t counter, int8_t rssi)
 +{
++    sLoc++;
 +    int32_t lat = (int32_t)((uint32_t)m[5] | (uint32_t)m[6] << 8 | (uint32_t)m[7] << 16 | (uint32_t)m[8] << 24);
 +    int32_t lon = (int32_t)((uint32_t)m[9] | (uint32_t)m[10] << 8 | (uint32_t)m[11] << 16 | (uint32_t)m[12] << 24);
 +    // Vector fields. byte1 = [SpeedMult:1][EWDir:1][HeightType:1][Rsvd:1][Status:4].
@@ -164,6 +167,25 @@ index 4f7fb47..40de786 100644
 +
 +static void odidScanCb(ble_gap_evt_adv_report_t *report)
 +{
++    sCb++;
++    if (report->type.extended_pdu)
++        sExt++;
++    uint32_t nowS = millis();
++    if (sStatsMs == 0)
++        sStatsMs = nowS;
++    if (nowS - sStatsMs >= 5000) {
++        LOG_INFO("SNIFF cb=%u ext=%u loc=%u in %lums", sCb, sExt, sLoc, (unsigned long)(nowS - sStatsMs));
++        sCb = sExt = sLoc = 0;
++        sStatsMs = nowS;
++    }
++#if defined(ODID_PHY_EXT)
++    // BT5 mode: decode ONLY extended packs — skip every legacy PDU (the Dronetag's own 4-5 legacy
++    // adverts AND nearby BLE4 noise) so the data is one clean pack per cycle.
++    if (!report->type.extended_pdu) {
++        Bluefruit.Scanner.resume();
++        return;
++    }
++#endif
 +    uint8_t buf[255]; // a BT5 extended ODID message pack can be ~250 B; BT4 legacy uses <= 31
 +    uint8_t len = Bluefruit.Scanner.parseReportByType(report, BLE_GAP_AD_TYPE_SERVICE_DATA, buf, sizeof(buf));
 +    // Expect: [0xFA][0xFF] (UUID 0xFFFA) [0x0D] (app) [counter] [ODID message(s)]
@@ -204,9 +226,11 @@ index 4f7fb47..40de786 100644
 +    // BT5: accept EXTENDED advertising on the 1M secondary channel — the Dronetag's BT5 path packs all
 +    // ODID messages into one PDU. REQUIRES the 255-byte scan buffer (firmware/patch-bluefruit-ext.sh).
 +    sp->extended = 1;
-+    sp->scan_phys = BLE_GAP_PHY_1MBPS;
++    // Dronetag "BT5 Long Range" = CODED PHY (not 1M extended). Scanning Coded also rejects ALL 1M
++    // legacy outright (the Dronetag's own + nearby BLE4 noise) — only the Coded message-pack is seen.
++    sp->scan_phys = BLE_GAP_PHY_CODED;
 +    sp->report_incomplete_evts = 0;
-+    LOG_INFO("ODID sniffer: BT5 EXTENDED scan on 1M secondary (needs Bluefruit 255B buffer patch)");
++    LOG_INFO("ODID sniffer: BT5 EXTENDED scan on CODED PHY / Long Range (255B buffer)");
 +#else
 +    sp->extended = 0;                           // BT4 legacy 1M (default; best Location refresh)
 +    sp->scan_phys = BLE_GAP_PHY_AUTO;
@@ -230,7 +254,7 @@ index 4f7fb47..40de786 100644
      // Clear existing data.
      Bluefruit.Advertising.stop();
      Bluefruit.Advertising.clearData();
-@@ -292,10 +400,19 @@ void NRF52Bluetooth::setup()
+@@ -292,10 +424,19 @@ void NRF52Bluetooth::setup()
      // BLEService and BLECharacteristic classes
      LOG_INFO("Init the Mesh bluetooth service");
      setupMeshService();
