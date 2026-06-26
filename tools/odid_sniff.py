@@ -19,8 +19,8 @@ if arg in ("tag", "base"):
     py = os.path.expanduser("~/.local/pipx/venvs/meshtastic/bin/python")
     port = subprocess.check_output([py, os.path.join(here, "nodes.py"), "--port", arg]).decode().strip()
 
-pat = re.compile(r"ODID LOC cnt=(\d+) dt=(\d+)ms lat=(-?\d+) lon=(-?\d+) ts=([\d.]+)s .*rssi=(-?\d+)")
-rows = []
+pat = re.compile(r"ODID LOC cnt=(\d+) dt=(\d+)ms lat=(-?\d+) lon=(-?\d+).*rssi=(-?\d+)")
+rows = []  # (arrival_time, cnt, lat_i, lon_i, rssi)
 t0 = time.time()
 try:
     s = serial.Serial(port, 115200, timeout=0.2)
@@ -34,7 +34,7 @@ while time.time() - t0 < dur:
     for line in d.decode("utf-8", "replace").splitlines():
         m = pat.search(line)
         if m:
-            rows.append((now, int(m.group(1)), int(m.group(3)), int(m.group(4)), float(m.group(5)), int(m.group(6))))
+            rows.append((now, int(m.group(1)), int(m.group(3)), int(m.group(4)), int(m.group(5))))
 
 n = len(rows)
 print(f"port {port} | LOC adverts: {n} in {dur}s")
@@ -43,7 +43,7 @@ if n < 2:
     sys.exit()
 span = rows[-1][0] - rows[0][0] or 1e-9
 print(f"  advert arrival rate : {(n-1)/span:.1f} Hz")
-rssis = [r[5] for r in rows]
+rssis = [r[4] for r in rows]
 print(f"  BLE RSSI            : min {min(rssis)}  max {max(rssis)}  avg {sum(rssis)/len(rssis):.0f} dBm")
 fix = any(r[2] != 0 or r[3] != 0 for r in rows)
 print(f"  GPS fix acquired    : {fix}")
@@ -54,10 +54,6 @@ def novelty(vals, times):
         if not dv or v != dv[-1]:
             dv.append(v); dt.append(t)
     return dv, dt
-
-ts_d, _ = novelty([r[4] for r in rows], [r[0] for r in rows])
-if len(ts_d) >= 2:
-    print(f"  ODID-timestamp rate : {len(ts_d)} distinct = {(len(ts_d)-1)/span:.2f} Hz")
 
 if fix:
     coords = [(r[2], r[3]) for r in rows if r[2] or r[3]]

@@ -54,6 +54,31 @@ index 6c6cdba..5ec76b8 100644
  #ifdef PIN_GPS_RESET
      pinMode(PIN_GPS_RESET, OUTPUT);
      digitalWrite(PIN_GPS_RESET, GPS_RESET_MODE); // assert for 10ms
+diff --git a/src/main.cpp b/src/main.cpp
+index c654822..4c59a64 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -913,6 +913,12 @@ void setup()
+ #ifdef SENSOR_GPS_CONFLICT
+     if (sensor_detected == false) {
+ #endif
++#ifdef ODID_SNIFFER
++        // ODID sniffer bridge: the onboard AG3335 is firmware-locked at 1 Hz and unused — never
++        // create/power/probe it. Position comes from the sniffed Dronetag Remote ID. Skipping
++        // createGps() means no `new GPS`, no Serial1, no up()/PIN_GPS_EN — the GNSS stays unpowered.
++        LOG_INFO("ODID_SNIFFER build: onboard GPS disabled (Dronetag RID is the position source)");
++#else
+         if (HAS_GPS) {
+             if (config.position.gps_mode != meshtastic_Config_PositionConfig_GpsMode_NOT_PRESENT) {
+                 gps = GPS::createGps();
+@@ -923,6 +929,7 @@ void setup()
+                 }
+             }
+         }
++#endif
+ #ifdef SENSOR_GPS_CONFLICT
+     }
+ #endif
 diff --git a/src/modules/Modules.cpp b/src/modules/Modules.cpp
 index e477574..115f238 100644
 --- a/src/modules/Modules.cpp
@@ -80,10 +105,10 @@ index e477574..115f238 100644
      waypointModule = new WaypointModule();
  #endif
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 4f7fb47..eb84a4f 100644
+index 4f7fb47..d1e4edc 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
-@@ -240,13 +240,107 @@ int NRF52Bluetooth::getRssi()
+@@ -240,13 +240,120 @@ int NRF52Bluetooth::getRssi()
  {
      return 0; // FIXME figure out where to source this
  }
@@ -138,29 +163,29 @@ index 4f7fb47..eb84a4f 100644
 +
 +static void odidScanCb(ble_gap_evt_adv_report_t *report)
 +{
-+    uint8_t buf[31];
++    uint8_t buf[255]; // a BT5 extended ODID message pack can be ~250 B; BT4 legacy uses <= 31
 +    uint8_t len = Bluefruit.Scanner.parseReportByType(report, BLE_GAP_AD_TYPE_SERVICE_DATA, buf, sizeof(buf));
-+    // Expect: [0xFA][0xFF] (UUID 0xFFFA) [0x0D] (app) [counter] [<=25B ODID message]
++    // Expect: [0xFA][0xFF] (UUID 0xFFFA) [0x0D] (app) [counter] [ODID message(s)]
 +    if (len >= 5 && buf[0] == 0xFA && buf[1] == 0xFF && buf[2] == 0x0D) {
 +        uint8_t counter = buf[3];
 +        const uint8_t *odid = &buf[4];
 +        uint8_t odidLen = len - 4;
 +        uint8_t type = (odid[0] >> 4) & 0x0F;
-+        if (type == 0x1 && odidLen >= 23) { // single Location message
++        if (type == 0x1 && odidLen >= 23) { // single Location message (BT4 legacy)
 +            odidDecodeLocation(odid, counter, report->rssi);
-+        } else if (type == 0xF && odidLen >= 3) { // message pack: [0xF.][msgSize][qty][msgs..]
++        } else if (type == 0xF && odidLen >= 3 && odid[1] == 25) { // BT5 message pack of 25-byte msgs
 +            uint8_t qty = odid[2];
++            if (qty > 9) // ODID_PACK_MAX_MESSAGES
++                qty = 9;
 +            for (uint8_t i = 0; i < qty; i++) {
 +                const uint8_t *m = odid + 3 + i * 25;
-+                if ((uint8_t)(m - buf) + 23 > len)
++                if ((uint32_t)((m + 25) - odid) > odidLen) // require a full 25-byte message in-bounds
 +                    break;
 +                if (((m[0] >> 4) & 0x0F) == 0x1) {
 +                    odidDecodeLocation(m, counter, report->rssi);
 +                    break;
 +                }
 +            }
-+        } else {
-+            LOG_INFO("ODID adv type=%u cnt=%u len=%u rssi=%d", type, counter, odidLen, report->rssi);
 +        }
 +    }
 +    Bluefruit.Scanner.resume(); // MANDATORY: S140 auto-pauses scanning after each delivered report
@@ -168,11 +193,24 @@ index 4f7fb47..eb84a4f 100644
 +
 +static void startOdidScanner(void)
 +{
-+    LOG_INFO("ODID sniffer: BLE observer scanning for Remote ID (Service Data UUID 0xFFFA)");
 +    Bluefruit.Scanner.setRxCallback(odidScanCb);
-+    Bluefruit.Scanner.useActiveScan(false);     // ODID Location is in the primary advert
++    Bluefruit.Scanner.useActiveScan(false);     // ODID is in the primary/extended advert, not scan-rsp
 +    Bluefruit.Scanner.setInterval(160, 160);    // CONTINUOUS scan (window==interval) — catch every advert
 +    Bluefruit.Scanner.restartOnDisconnect(true);
++    // PHY/extended selection on the live scan-params pointer (Bluefruit exposes no setter for these).
++    ble_gap_scan_params_t *sp = Bluefruit.Scanner.getParams();
++#if defined(ODID_PHY_EXT)
++    // BT5: accept EXTENDED advertising on the 1M secondary channel — the Dronetag's BT5 path packs all
++    // ODID messages into one PDU. REQUIRES the 255-byte scan buffer (firmware/patch-bluefruit-ext.sh).
++    sp->extended = 1;
++    sp->scan_phys = BLE_GAP_PHY_1MBPS;
++    sp->report_incomplete_evts = 0;
++    LOG_INFO("ODID sniffer: BT5 EXTENDED scan on 1M secondary (needs Bluefruit 255B buffer patch)");
++#else
++    sp->extended = 0;                           // BT4 legacy 1M (default; best Location refresh)
++    sp->scan_phys = BLE_GAP_PHY_AUTO;
++    LOG_INFO("ODID sniffer: BT4 legacy continuous scan (scan-only, GPS off)");
++#endif
 +    Bluefruit.Scanner.start(0);                 // 0 = scan forever
 +}
 +#endif // ODID_SNIFFER
@@ -191,12 +229,22 @@ index 4f7fb47..eb84a4f 100644
      // Clear existing data.
      Bluefruit.Advertising.stop();
      Bluefruit.Advertising.clearData();
-@@ -296,6 +390,9 @@ void NRF52Bluetooth::setup()
+@@ -292,10 +399,19 @@ void NRF52Bluetooth::setup()
+     // BLEService and BLECharacteristic classes
+     LOG_INFO("Init the Mesh bluetooth service");
+     setupMeshService();
++#ifdef ODID_SNIFFER
++    // Scan-only bridge: do NOT advertise. With no advertising and no phone connection the SoftDevice
++    // gives the BLE observer ~100% radio time. Configure the Tag over USB. (Keeping begin(1,1) and just
++    // skipping startAdv is safer than begin(0,1), which skips per-peripheral CONN_CFG setup.)
++    Bluefruit.Advertising.stop();
++    LOG_INFO("ODID_SNIFFER: scan-only, advertising disabled");
++    startOdidScanner();
++#else
+     // Setup the advertising packet(s)
      LOG_INFO("Set up the advertising payload(s)");
      startAdv();
      LOG_INFO("Advertise");
-+#ifdef ODID_SNIFFER
-+    startOdidScanner();
 +#endif
  }
  void NRF52Bluetooth::resumeAdvertising()

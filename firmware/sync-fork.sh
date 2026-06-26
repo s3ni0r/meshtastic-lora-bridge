@@ -19,6 +19,7 @@ cp "$CLONE/src/modules/HighRatePositionModule.cpp" src/modules/HighRatePositionM
 
 # Vendor-file edits: one reviewable patch vs the build tag (v2.7.15.567b8ea).
 git -C "$CLONE" diff -- \
+    src/main.cpp \
     src/gps/GPS.cpp \
     src/modules/Modules.cpp \
     src/platform/nrf52/NRF52Bluetooth.cpp \
