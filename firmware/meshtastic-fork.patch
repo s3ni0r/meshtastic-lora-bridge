@@ -1,0 +1,203 @@
+diff --git a/src/gps/GPS.cpp b/src/gps/GPS.cpp
+index 6c6cdba..5ec76b8 100644
+--- a/src/gps/GPS.cpp
++++ b/src/gps/GPS.cpp
+@@ -652,6 +652,10 @@ bool GPS::setup()
+ 
+             delay(250);
+             _serial_gps->write("$PAIR513*3D\r\n"); // save configuration
++            // NOTE: this AG3335 firmware LOCKS the fix rate at 1 Hz. Verified on-device: $PAIR050
++            // (Airoha) and $PMTK220/$PMTK300 (MediaTek) rate commands get no ACK and no effect (RAM,
++            // save, and save+RESETB all stay 1 Hz), while $PAIR062 sentence config works. The only
++            // documented unlock ($PAIR382,1 engine-stop) bricks it into backup sleep. See FORK.md §3.
+         } else if (gnssModel == GNSS_MODEL_UBLOX6) {
+             clearBuffer();
+             SEND_UBX_PACKET(0x06, 0x02, _message_DISABLE_TXT_INFO, "disable text info messages", 500);
+@@ -1313,6 +1317,14 @@ GnssModel_t GPS::probe(int serialSpeed)
+     }
+     case 3: {
+         /* Airoha (Mediatek) AG3335A/M/S, A3352Q, Quectel L89 2.0, SimCom SIM65M */
++#ifdef HIGHRATE_POSITION_SENDER
++        // Keep the module awake + out of backup sleep before probing (anti-brick; see FORK.md).
++        // NOTE: never send $PAIR382,1 — it enters a VRTC-backed backup sleep that bricks detection.
++        _serial_gps->write("$PAIR002*38\r\n"); // GNSS power ON
++        delay(200);
++        _serial_gps->write("$PAIR382,0*2F\r\n"); // ensure backup sleep is disabled
++        delay(200);
++#endif
+         _serial_gps->write("$PAIR062,2,0*3C\r\n"); // GSA OFF to reduce volume
+         _serial_gps->write("$PAIR062,3,0*3D\r\n"); // GSV OFF to reduce volume
+         _serial_gps->write("$PAIR513*3D\r\n");     // save configuration
+@@ -1570,6 +1582,25 @@ GPS *GPS::createGps()
+     // Make sure the GPS is awake before performing any init.
+     new_gps->up();
+ 
++#if defined(HIGHRATE_POSITION_SENDER) && defined(GPS_RTC_INT)
++    // GNSS hard-recovery (project fork): an earlier build sent $PAIR382,1 + $PAIR003 and left the
++    // AG3335 in a VRTC-backed backup sleep that survives reboots and ignores UART (so $PAIR021 probes
++    // get no reply). The wake is the GPS_RTC_INT line going HIGH (variant: "normal LOW, wake by HIGH").
++    // Pulse it awake, hold a longer hardware reset, then return to normal before probing.
++    pinMode(GPS_RTC_INT, OUTPUT);
++    digitalWrite(GPS_RTC_INT, HIGH); // wake from backup sleep
++    delay(300);
++#ifdef PIN_GPS_RESET
++    pinMode(PIN_GPS_RESET, OUTPUT);
++    digitalWrite(PIN_GPS_RESET, GPS_RESET_MODE);
++    delay(60);
++    digitalWrite(PIN_GPS_RESET, !GPS_RESET_MODE);
++#endif
++    delay(400);
++    digitalWrite(GPS_RTC_INT, LOW); // back to normal level
++    delay(200);
++#endif
++
+ #ifdef PIN_GPS_RESET
+     pinMode(PIN_GPS_RESET, OUTPUT);
+     digitalWrite(PIN_GPS_RESET, GPS_RESET_MODE); // assert for 10ms
+diff --git a/src/modules/Modules.cpp b/src/modules/Modules.cpp
+index e477574..115f238 100644
+--- a/src/modules/Modules.cpp
++++ b/src/modules/Modules.cpp
+@@ -107,6 +107,10 @@
+ #include "modules/DropzoneModule.h"
+ #endif
+ 
++#ifdef HIGHRATE_POSITION_SENDER
++#include "modules/HighRatePositionModule.h"
++#endif
++
+ /**
+  * Create module instances here.  If you are adding a new module, you must 'new' it here (or somewhere else)
+  */
+@@ -128,6 +132,9 @@ void setupModules()
+ #if !MESHTASTIC_EXCLUDE_GPS
+     positionModule = new PositionModule();
+ #endif
++#ifdef HIGHRATE_POSITION_SENDER
++    highRatePositionModule = new HighRatePositionModule();
++#endif
+ #if !MESHTASTIC_EXCLUDE_WAYPOINT
+     waypointModule = new WaypointModule();
+ #endif
+diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
+index 4f7fb47..eb84a4f 100644
+--- a/src/platform/nrf52/NRF52Bluetooth.cpp
++++ b/src/platform/nrf52/NRF52Bluetooth.cpp
+@@ -240,13 +240,107 @@ int NRF52Bluetooth::getRssi()
+ {
+     return 0; // FIXME figure out where to source this
+ }
++#ifdef ODID_SNIFFER
++// --- Open Drone ID (ASTM F3411 Remote ID) advertisement sniffer ----------------------------------
++// A co-located Dronetag broadcasts legacy 1M adverts: Service Data (AD 0x16), UUID 0xFFFA, app code
++// 0x0D, a 1-byte rolling counter, then a 25-byte ODID message (or a 0xF "message pack"). We decode
++// the Location message (type 0x1) — lat/lon are int32 LE deg*1e7 (same as our LoRa payload) — and the
++// 0.1s TimeStamp, logging inter-arrival dt so we can measure the TRUE position-novelty rate.
++// Latest sniffed Dronetag fix, handed off to the LoRa sender (HighRatePositionModule reads these).
++volatile int32_t g_odidLat = 0;     // deg*1e7
++volatile int32_t g_odidLon = 0;
++volatile int16_t g_odidAlt = 0;     // geo altitude, m
++volatile uint8_t g_odidSpeed = 0;   // ground speed, km/h (capped 255)
++volatile uint8_t g_odidHeading = 0; // heading, deg * 256/360
++volatile uint8_t g_odidHacc = 0;    // horizontal accuracy, m (0 = unknown / coarse > 185 m)
++volatile uint32_t g_odidMs = 0;     // millis() of the last valid decode (0 = none yet)
++
++// ODID horizontal-accuracy enum (low nibble of byte 19) -> meters upper bound (0 = unknown / coarse).
++static const uint8_t odidHaccMeters[16] = {0, 0, 0, 0, 0, 0, 0, 0, 185, 93, 30, 10, 3, 1, 0, 0};
++
++static uint32_t odidLastMs = 0;
++
++static void odidDecodeLocation(const uint8_t *m, uint8_t counter, int8_t rssi)
++{
++    int32_t lat = (int32_t)((uint32_t)m[5] | (uint32_t)m[6] << 8 | (uint32_t)m[7] << 16 | (uint32_t)m[8] << 24);
++    int32_t lon = (int32_t)((uint32_t)m[9] | (uint32_t)m[10] << 8 | (uint32_t)m[11] << 16 | (uint32_t)m[12] << 24);
++    // Vector fields. byte1 = [SpeedMult:1][EWDir:1][HeightType:1][Rsvd:1][Status:4].
++    bool speedMult = m[1] & 0x01;
++    bool ewDir = (m[1] >> 1) & 0x01;
++    int hdgDeg = (m[2] <= 179) ? (m[2] + (ewDir ? 180 : 0)) : 0;                         // 0..359
++    float spdMps = (m[3] == 0xFF) ? 0.0f : (speedMult ? (m[3] * 0.75f + 63.75f) : (m[3] * 0.25f));
++    int spdKmh = (int)(spdMps * 3.6f + 0.5f);
++    int16_t altM = (int16_t)((int)((uint16_t)(m[15] | (m[16] << 8))) / 2 - 1000);        // 0.5 m/LSB, -1000
++    uint8_t hAcc = odidHaccMeters[m[19] & 0x0F];
++
++    uint32_t now = millis();
++    if (lat != 0 || lon != 0) { // valid fix -> hand off to the LoRa sender
++        g_odidLat = lat;
++        g_odidLon = lon;
++        g_odidAlt = altM;
++        g_odidSpeed = (uint8_t)(spdKmh > 255 ? 255 : spdKmh);
++        g_odidHeading = (uint8_t)((hdgDeg * 256) / 360);
++        g_odidHacc = hAcc;
++        g_odidMs = now;
++    }
++    uint32_t dt = odidLastMs ? (now - odidLastMs) : 0;
++    odidLastMs = now;
++    LOG_INFO("ODID LOC cnt=%u dt=%lums lat=%d lon=%d alt=%dm spd=%dkmh hdg=%d hacc=%um rssi=%d", counter,
++             (unsigned long)dt, lat, lon, altM, spdKmh, hdgDeg, hAcc, rssi);
++}
++
++static void odidScanCb(ble_gap_evt_adv_report_t *report)
++{
++    uint8_t buf[31];
++    uint8_t len = Bluefruit.Scanner.parseReportByType(report, BLE_GAP_AD_TYPE_SERVICE_DATA, buf, sizeof(buf));
++    // Expect: [0xFA][0xFF] (UUID 0xFFFA) [0x0D] (app) [counter] [<=25B ODID message]
++    if (len >= 5 && buf[0] == 0xFA && buf[1] == 0xFF && buf[2] == 0x0D) {
++        uint8_t counter = buf[3];
++        const uint8_t *odid = &buf[4];
++        uint8_t odidLen = len - 4;
++        uint8_t type = (odid[0] >> 4) & 0x0F;
++        if (type == 0x1 && odidLen >= 23) { // single Location message
++            odidDecodeLocation(odid, counter, report->rssi);
++        } else if (type == 0xF && odidLen >= 3) { // message pack: [0xF.][msgSize][qty][msgs..]
++            uint8_t qty = odid[2];
++            for (uint8_t i = 0; i < qty; i++) {
++                const uint8_t *m = odid + 3 + i * 25;
++                if ((uint8_t)(m - buf) + 23 > len)
++                    break;
++                if (((m[0] >> 4) & 0x0F) == 0x1) {
++                    odidDecodeLocation(m, counter, report->rssi);
++                    break;
++                }
++            }
++        } else {
++            LOG_INFO("ODID adv type=%u cnt=%u len=%u rssi=%d", type, counter, odidLen, report->rssi);
++        }
++    }
++    Bluefruit.Scanner.resume(); // MANDATORY: S140 auto-pauses scanning after each delivered report
++}
++
++static void startOdidScanner(void)
++{
++    LOG_INFO("ODID sniffer: BLE observer scanning for Remote ID (Service Data UUID 0xFFFA)");
++    Bluefruit.Scanner.setRxCallback(odidScanCb);
++    Bluefruit.Scanner.useActiveScan(false);     // ODID Location is in the primary advert
++    Bluefruit.Scanner.setInterval(160, 160);    // CONTINUOUS scan (window==interval) — catch every advert
++    Bluefruit.Scanner.restartOnDisconnect(true);
++    Bluefruit.Scanner.start(0);                 // 0 = scan forever
++}
++#endif // ODID_SNIFFER
++
+ void NRF52Bluetooth::setup()
+ {
+     // Initialise the Bluefruit module
+     LOG_INFO("Init the Bluefruit nRF52 module");
+     Bluefruit.autoConnLed(false);
+     Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
++#ifdef ODID_SNIFFER
++    Bluefruit.begin(1, 1); // 1 peripheral (phone) + 1 observer (Remote ID sniffer)
++#else
+     Bluefruit.begin();
++#endif
+     // Clear existing data.
+     Bluefruit.Advertising.stop();
+     Bluefruit.Advertising.clearData();
+@@ -296,6 +390,9 @@ void NRF52Bluetooth::setup()
+     LOG_INFO("Set up the advertising payload(s)");
+     startAdv();
+     LOG_INFO("Advertise");
++#ifdef ODID_SNIFFER
++    startOdidScanner();
++#endif
+ }
+ void NRF52Bluetooth::resumeAdvertising()
+ {

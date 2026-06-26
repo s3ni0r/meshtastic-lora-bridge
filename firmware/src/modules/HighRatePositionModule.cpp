@@ -33,6 +33,17 @@ HighRatePositionModule::HighRatePositionModule()
 
 int32_t HighRatePositionModule::runOnce()
 {
+    uint32_t nowMs = millis();
+#ifdef ODID_SNIFFER
+    // Position source is the sniffed Dronetag Remote ID fix (NRF52Bluetooth.cpp), bypassing the
+    // onboard AG3335 (which is firmware-locked at 1 Hz). Fresh while RID adverts keep arriving.
+    extern volatile int32_t g_odidLat;
+    extern volatile int32_t g_odidLon;
+    extern volatile uint32_t g_odidMs;
+    int32_t lat = g_odidLat;
+    int32_t lon = g_odidLon;
+    bool hasLock = (g_odidMs != 0) && (nowMs - g_odidMs) < HIGHRATE_FRESH_MS && (lat != 0 || lon != 0);
+#else
     int32_t lat = localPosition.latitude_i;
     int32_t lon = localPosition.longitude_i;
     if (lat == 0 && lon == 0) {
@@ -44,7 +55,6 @@ int32_t HighRatePositionModule::runOnce()
     }
 
     // Freshness gate: coordinates that stop changing mean a stalled/lost GPS — report lock=0.
-    uint32_t nowMs = millis();
     if (lat != lastLat || lon != lastLon) {
         lastLat = lat;
         lastLon = lon;
@@ -52,24 +62,41 @@ int32_t HighRatePositionModule::runOnce()
     }
     bool hasLock = (gpsStatus && gpsStatus->getHasLock()) && lastChangedMs != 0 &&
                    (nowMs - lastChangedMs) < HIGHRATE_FRESH_MS;
+#endif
 
     uint16_t offsetMs = (uint16_t)(nowMs % 1000);
     uint8_t flags = hasLock ? 0x01 : 0x00;
 
-    uint8_t buf[12];
+    uint8_t buf[17];
     memcpy(&buf[0], &lat, 4);
     memcpy(&buf[4], &lon, 4);
     memcpy(&buf[8], &offsetMs, 2);
     buf[10] = seq;
     buf[11] = flags;
+    uint8_t len = 12;
+#ifdef ODID_SNIFFER
+    // Extended telemetry from the Dronetag ODID Location: alt(i16,m) speed(u8,km/h)
+    // heading(u8,*256/360) hacc(u8,m). Receivers decode these when payload >= 17; 12-byte clients
+    // still get position.
+    extern volatile int16_t g_odidAlt;
+    extern volatile uint8_t g_odidSpeed;
+    extern volatile uint8_t g_odidHeading;
+    extern volatile uint8_t g_odidHacc;
+    int16_t alt = g_odidAlt;
+    memcpy(&buf[12], &alt, 2);
+    buf[14] = g_odidSpeed;
+    buf[15] = g_odidHeading;
+    buf[16] = g_odidHacc;
+    len = 17;
+#endif
 
     meshtastic_MeshPacket *p = allocDataPacket(); // stamps decoded.portnum = PRIVATE_APP, to = BROADCAST
     if (!p)
         return HIGHRATE_POSITION_INTERVAL_MS;
     p->want_ack = false;
     p->hop_limit = 1;
-    p->decoded.payload.size = sizeof(buf);
-    memcpy(p->decoded.payload.bytes, buf, sizeof(buf));
+    p->decoded.payload.size = len;
+    memcpy(p->decoded.payload.bytes, buf, len);
     service->sendToMesh(p);
 
     if ((seq % 20) == 0)
