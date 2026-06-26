@@ -209,4 +209,28 @@ Dronetag (RID, GNSS 10Hz / DRI 4Hz)  ──BLE adv (ASTM F3411, legacy 1M)──
 - **Pending:** field test (Dronetag + Tag co-located outdoors + moving, Base/iPhone at home) to confirm
   the full 2–4 Hz moving track at LoRa range. EU868 duty cycle still applies (>2.4 Hz = bench only).
 
+## Sniffer rate optimization + simulated-flight finding (2026-06-26)
+
+Branch `feat/odid-sniffer-rate`. Tuned the Tag as a dedicated BLE observer:
+- **Onboard AG3335 GPS disabled** — `createGps()` gated behind `!ODID_SNIFFER` in `main.cpp`, so the
+  locked-1Hz chip is never created/powered/probed (no thread, `PIN_GPS_EN` stays low).
+- **Scan-only** — keep `Bluefruit.begin(1,1)` but stop advertising (no phone link needed on the Tag),
+  so the observer gets ~100% radio time. (Not `begin(0,1)` — that skips per-peripheral CONN_CFG setup.)
+- **Result: Location advert catch rate 2.9 Hz → ~5 Hz** (continuous scan). The scanner is no longer the
+  bottleneck — refresh is now bound by the Dronetag, not by us.
+- BT4/BT5 PHY selectable via `-DODID_PHY_EXT` (BT5 needs `firmware/patch-bluefruit-ext.sh` — Bluefruit's
+  scan buffer is 31 B, extended PDUs need 255 B).
+
+**Why the iOS "GPS refresh" drops during the indoor sim (investigated, not a bug):** the Dronetag's
+flight **simulator** emits fresh fixes at only **~1 Hz and stalls for multi-second stretches**. Proven
+by logging the ODID fix timestamp: across frozen-position runs of 33–89 adverts the timestamp advanced
+by **0** (one run = ~17 s with no new fix). Meanwhile adverts kept arriving at ~5 Hz (re-broadcasts), so
+the *stream* rate stayed steady while *novelty* correctly collapsed. The sim's cadence is independent of
+the GNSS 10 Hz / dynamic 4 Hz setting (those govern the real receiver) — a real moving flight feeds the
+full rate, which the bridge has ample headroom to carry.
+
+> Metric note: the app's "GPS refresh" measures position-*change* (novelty), so it reads ~0 when the
+> target is stationary even with a live GPS. A fix-timestamp-based "fresh-fix rate" would be a truer
+> "is the data fresh?" indicator (deferred — bundles with a future app update).
+
 

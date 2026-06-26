@@ -105,10 +105,10 @@ index e477574..115f238 100644
      waypointModule = new WaypointModule();
  #endif
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 4f7fb47..d1e4edc 100644
+index 4f7fb47..40de786 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
-@@ -240,13 +240,120 @@ int NRF52Bluetooth::getRssi()
+@@ -240,13 +240,121 @@ int NRF52Bluetooth::getRssi()
  {
      return 0; // FIXME figure out where to source this
  }
@@ -144,6 +144,7 @@ index 4f7fb47..d1e4edc 100644
 +    int spdKmh = (int)(spdMps * 3.6f + 0.5f);
 +    int16_t altM = (int16_t)((int)((uint16_t)(m[15] | (m[16] << 8))) / 2 - 1000);        // 0.5 m/LSB, -1000
 +    uint8_t hAcc = odidHaccMeters[m[19] & 0x0F];
++    uint16_t ts = (uint16_t)(m[21] | (m[22] << 8)); // ODID fix timestamp, tenths of sec since top-of-hour
 +
 +    uint32_t now = millis();
 +    if (lat != 0 || lon != 0) { // valid fix -> hand off to the LoRa sender
@@ -157,8 +158,8 @@ index 4f7fb47..d1e4edc 100644
 +    }
 +    uint32_t dt = odidLastMs ? (now - odidLastMs) : 0;
 +    odidLastMs = now;
-+    LOG_INFO("ODID LOC cnt=%u dt=%lums lat=%d lon=%d alt=%dm spd=%dkmh hdg=%d hacc=%um rssi=%d", counter,
-+             (unsigned long)dt, lat, lon, altM, spdKmh, hdgDeg, hAcc, rssi);
++    LOG_INFO("ODID LOC cnt=%u dt=%lums ts=%u lat=%d lon=%d alt=%dm spd=%dkmh hdg=%d hacc=%um rssi=%d",
++             counter, (unsigned long)dt, ts, lat, lon, altM, spdKmh, hdgDeg, hAcc, rssi);
 +}
 +
 +static void odidScanCb(ble_gap_evt_adv_report_t *report)
@@ -229,7 +230,7 @@ index 4f7fb47..d1e4edc 100644
      // Clear existing data.
      Bluefruit.Advertising.stop();
      Bluefruit.Advertising.clearData();
-@@ -292,10 +399,19 @@ void NRF52Bluetooth::setup()
+@@ -292,10 +400,19 @@ void NRF52Bluetooth::setup()
      // BLEService and BLECharacteristic classes
      LOG_INFO("Init the Mesh bluetooth service");
      setupMeshService();
