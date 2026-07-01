@@ -3,12 +3,21 @@
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "configuration.h"
+#include "main.h" // concurrency::mainDelay — woken from wakeFreshFix()
 #include <string.h>
 
-// TX cadence in ms. 250 = 4 Hz. Overridable at build time. This is the SEND rate; the GNSS fix rate
-// is set separately by $PAIR050 in GPS.cpp.
+// Poll/fallback tick in ms. With ODID_SNIFFER the send is EVENT-DRIVEN (the sniffer wakes us per novel
+// fix); this is only the safety-net poll, so a (rare) missed cross-task wake costs at most one tick.
+// Without the sniffer it remains the fixed TX cadence (250 = 4 Hz).
 #ifndef HIGHRATE_POSITION_INTERVAL_MS
 #define HIGHRATE_POSITION_INTERVAL_MS 250
+#endif
+
+// Minimum spacing between event-driven sends (caps the TX rate if the fix source bursts).
+// ~150 ms ≈ 6.7 Hz ceiling — above the Dronetag's ~4.5 Hz max novelty. EU868 note: at 10% duty use
+// >= 500 (2 Hz) for deployment; bench setup is region US (no duty limit).
+#ifndef HIGHRATE_MIN_SPACING_MS
+#define HIGHRATE_MIN_SPACING_MS 150
 #endif
 
 // A fix whose coordinates haven't changed within this window is reported stale (lock=0).
@@ -31,6 +40,12 @@ HighRatePositionModule::HighRatePositionModule()
 {
 }
 
+void HighRatePositionModule::wakeFreshFix()
+{
+    setIntervalFromNow(0);                // run me on the next main-loop pass
+    concurrency::mainDelay.interrupt();   // ...and end the main loop's sleep now (task-safe give)
+}
+
 int32_t HighRatePositionModule::runOnce()
 {
     uint32_t nowMs = millis();
@@ -40,9 +55,30 @@ int32_t HighRatePositionModule::runOnce()
     extern volatile int32_t g_odidLat;
     extern volatile int32_t g_odidLon;
     extern volatile uint32_t g_odidMs;
+    extern volatile uint16_t g_odidTs;
     int32_t lat = g_odidLat;
     int32_t lon = g_odidLon;
-    bool hasLock = (g_odidMs != 0) && (nowMs - g_odidMs) < HIGHRATE_FRESH_MS && (lat != 0 || lon != 0);
+    uint16_t fixTs = g_odidTs;
+    uint32_t fixMs = g_odidMs;
+    bool hasLock = (fixMs != 0) && (nowMs - fixMs) < HIGHRATE_FRESH_MS && (lat != 0 || lon != 0);
+
+    // Event-driven TX: send when the fix is NOVEL (the sniffer wakes us per new fix), spacing-guarded;
+    // otherwise just a slow heartbeat. Duplicate re-adverts (~5 Hz) no longer burn airtime, and a fresh
+    // fix goes out in ~ms instead of aging up to a full poll interval.
+    bool novel = hasLock && (fixTs != lastSentTs || lat != lastSentLat || lon != lastSentLon);
+    uint32_t sinceSend = nowMs - lastSendMs;
+    if (lastSendMs != 0) {
+        if (novel) {
+            if (sinceSend < HIGHRATE_MIN_SPACING_MS)
+                return HIGHRATE_MIN_SPACING_MS - sinceSend; // re-run exactly when spacing allows
+        } else {
+            if (sinceSend < HIGHRATE_HEARTBEAT_MS) { // nothing new — sleep toward the heartbeat...
+                uint32_t wait = HIGHRATE_HEARTBEAT_MS - sinceSend;
+                // ...capped at one poll tick so a missed cross-task wake degrades to old behavior
+                return wait < HIGHRATE_POSITION_INTERVAL_MS ? wait : HIGHRATE_POSITION_INTERVAL_MS;
+            }
+        }
+    }
 #else
     int32_t lat = localPosition.latitude_i;
     int32_t lon = localPosition.longitude_i;
@@ -90,6 +126,11 @@ int32_t HighRatePositionModule::runOnce()
     len = 17;
 #endif
 
+    // Latest-wins (stock PositionModule pattern): if the previous position is still queued (channel
+    // was busy), drop it — a stale fix must not transmit ahead of this one.
+    if (prevPacketId)
+        service->cancelSending(prevPacketId);
+
     meshtastic_MeshPacket *p = allocDataPacket(); // stamps decoded.portnum = PRIVATE_APP, to = BROADCAST
     if (!p)
         return HIGHRATE_POSITION_INTERVAL_MS;
@@ -97,10 +138,20 @@ int32_t HighRatePositionModule::runOnce()
     p->hop_limit = 1;
     p->decoded.payload.size = len;
     memcpy(p->decoded.payload.bytes, buf, len);
+    prevPacketId = p->id;
     service->sendToMesh(p);
-
+    lastSendMs = nowMs;
+#ifdef ODID_SNIFFER
+    lastSentTs = fixTs;
+    lastSentLat = lat;
+    lastSentLon = lon;
+    if ((seq % 20) == 0) // dec2send = sniffer-decode -> LoRa-enqueue latency (the P1 metric)
+        LOG_INFO("HighRate: seq=%u lat=%d lon=%d lock=%d dec2send=%lums", seq, lat, lon, hasLock,
+                 (unsigned long)(fixMs ? (nowMs - fixMs) : 0));
+#else
     if ((seq % 20) == 0)
         LOG_INFO("HighRate: seq=%u lat=%d lon=%d lock=%d", seq, lat, lon, hasLock);
+#endif
     seq++;
     return hasLock ? HIGHRATE_POSITION_INTERVAL_MS : HIGHRATE_HEARTBEAT_MS;
 }

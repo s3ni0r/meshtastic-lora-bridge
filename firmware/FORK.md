@@ -142,3 +142,25 @@ After flashing, confirm via serial log the active preset is **ShortFast** (not L
 - Confirm the effective rate at the receiver matches the send cadence and log RSSI/SNR vs distance.
 - Compliance check: read `AirTime::utilizationTXPercent()` (device metrics) — at 2 Hz it should sit
   ~8% (deployment-legal); at 4 Hz ~16% (bench-only, why `override_duty_cycle` is set).
+
+## 8. Low-latency event-driven sender (`feat/low-latency-bridge`)
+
+The ODID-sniffer build no longer polls: a fresh fix is sent in ~ms instead of aging up to a full
+250 ms tick (mean ~125 ms — the dominant Tag-side latency before this branch).
+
+- **Event-driven TX** — `odidDecodeLocation` detects fix **novelty** (ODID `ts`/lat/lon change vs the
+  last decode, stored in `g_odidTs`) and wakes the sender:
+  `highRatePositionModule->wakeFreshFix()` = `setIntervalFromNow(0)` + `mainDelay.interrupt()` — the
+  same cross-task pattern NimbleBluetooth uses for the phone API.
+- **Novelty dedupe** — `HighRatePositionModule` sends only when the fix actually changed
+  (`lastSentTs/Lat/Lon`), paced by `HIGHRATE_MIN_SPACING_MS` (default 150 ms ≈ 6.7 Hz cap; use ≥500 for
+  EU868 duty). Duplicate re-adverts (~5 Hz) no longer burn airtime; a 2 s heartbeat keeps liveness when
+  the fix is frozen or lost. `HIGHRATE_POSITION_INTERVAL_MS` is now just the fallback poll (a missed
+  cross-task wake degrades to the old polling latency, never worse).
+- **Scanner resume-first** — `odidScanCb` copies the report out (`parseReportByType`) and calls
+  `Scanner.resume()` BEFORE decode/logging: S140 pauses scanning from report delivery until resume, so
+  work done before it = adverts silently missed.
+- **Latest-wins queue** — stock-PositionModule `prevPacketId` + `service->cancelSending()` before each
+  send, so a stale queued position never transmits ahead of a fresh one.
+- **Validation metric** — the every-20th send log prints `dec2send=<ms>` (sniffer-decode → LoRa-enqueue);
+  expect single-digit-to-low-tens ms vs ~125 ms mean on `main`.

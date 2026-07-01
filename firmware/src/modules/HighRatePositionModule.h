@@ -20,6 +20,12 @@ class HighRatePositionModule : public SinglePortModule, private concurrency::OST
   public:
     HighRatePositionModule();
 
+    /// Event-driven send: called by the ODID sniffer (from the Bluefruit callback task) when a NOVEL
+    /// fix lands, so runOnce fires now instead of aging the fix up to a full poll interval. Same
+    /// cross-task wake pattern as NimbleBluetooth's phone API (setIntervalFromNow is a 32-bit write;
+    /// a torn-write race costs at most one poll cycle, never corruption).
+    void wakeFreshFix();
+
   protected:
     virtual int32_t runOnce() override;
 
@@ -28,6 +34,12 @@ class HighRatePositionModule : public SinglePortModule, private concurrency::OST
     int32_t lastLat = 0;       // for staleness detection (position that stops changing == stale)
     int32_t lastLon = 0;
     uint32_t lastChangedMs = 0;
+    // Novelty dedupe + pacing (ODID_SNIFFER): what we last actually sent, and when.
+    uint16_t lastSentTs = 0;
+    int32_t lastSentLat = 0;
+    int32_t lastSentLon = 0;
+    uint32_t lastSendMs = 0;
+    PacketId prevPacketId = 0; // latest-wins: cancel the previous un-sent packet before each send
 };
 
 extern HighRatePositionModule *highRatePositionModule;

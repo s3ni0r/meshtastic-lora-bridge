@@ -105,10 +105,10 @@ index e477574..115f238 100644
      waypointModule = new WaypointModule();
  #endif
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 4f7fb47..ef68d0c 100644
+index 4f7fb47..c22c41f 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
-@@ -240,13 +240,146 @@ int NRF52Bluetooth::getRssi()
+@@ -240,13 +240,169 @@ int NRF52Bluetooth::getRssi()
  {
      return 0; // FIXME figure out where to source this
  }
@@ -126,6 +126,11 @@ index 4f7fb47..ef68d0c 100644
 +volatile uint8_t g_odidHeading = 0; // heading, deg * 256/360
 +volatile uint8_t g_odidHacc = 0;    // horizontal accuracy, m (0 = unknown / coarse > 185 m)
 +volatile uint32_t g_odidMs = 0;     // millis() of the last valid decode (0 = none yet)
++volatile uint16_t g_odidTs = 0;     // ODID fix timestamp (0.1 s since top-of-hour) — novelty detection
++
++#if defined(HIGHRATE_POSITION_SENDER)
++#include "modules/HighRatePositionModule.h" // wakeFreshFix(): event-driven send on novel fixes
++#endif
 +
 +// ODID horizontal-accuracy enum (low nibble of byte 19) -> meters upper bound (0 = unknown / coarse).
 +// Per ASTM F3411 / opendroneid: 8=<92.6m, 9=<30m, 10=<10m, 11=<3m, 12=<1m; 0-7 + 13-15 coarse/unknown.
@@ -152,18 +157,30 @@ index 4f7fb47..ef68d0c 100644
 +
 +    uint32_t now = millis();
 +    if (lat != 0 || lon != 0) { // valid fix -> hand off to the LoRa sender
++        // NOVEL = the Dronetag produced a new fix (vs a re-advert of the same one, ~5 Hz). Only novelty
++        // is worth a LoRa send, a log line, or a main-loop wake.
++        bool novel = (ts != g_odidTs) || (lat != g_odidLat) || (lon != g_odidLon);
 +        g_odidLat = lat;
 +        g_odidLon = lon;
 +        g_odidAlt = altM;
 +        g_odidSpeed = (uint8_t)(spdKmh > 255 ? 255 : spdKmh);
 +        g_odidHeading = (uint8_t)((hdgDeg * 256) / 360);
 +        g_odidHacc = hAcc;
++        g_odidTs = ts;
 +        g_odidMs = now;
++        if (novel) {
++            uint32_t dt = odidLastMs ? (now - odidLastMs) : 0; // novelty inter-arrival (true fix rate)
++            odidLastMs = now;
++            LOG_INFO("ODID LOC cnt=%u dt=%lums ts=%u lat=%d lon=%d alt=%dm spd=%dkmh hdg=%d hacc=%um rssi=%d",
++                     counter, (unsigned long)dt, ts, lat, lon, altM, spdKmh, hdgDeg, hAcc, rssi);
++#if defined(HIGHRATE_POSITION_SENDER)
++            // Event-driven send: schedule the sender NOW instead of letting the fix age up to a full
++            // poll interval (was 0-250 ms, mean ~125 ms — the dominant Tag-side latency term).
++            if (highRatePositionModule)
++                highRatePositionModule->wakeFreshFix();
++#endif
++        }
 +    }
-+    uint32_t dt = odidLastMs ? (now - odidLastMs) : 0;
-+    odidLastMs = now;
-+    LOG_INFO("ODID LOC cnt=%u dt=%lums ts=%u lat=%d lon=%d alt=%dm spd=%dkmh hdg=%d hacc=%um rssi=%d",
-+             counter, (unsigned long)dt, ts, lat, lon, altM, spdKmh, hdgDeg, hAcc, rssi);
 +}
 +
 +static void odidScanCb(ble_gap_evt_adv_report_t *report)
@@ -171,14 +188,6 @@ index 4f7fb47..ef68d0c 100644
 +    sCb++;
 +    if (report->type.extended_pdu)
 +        sExt++;
-+    uint32_t nowS = millis();
-+    if (sStatsMs == 0)
-+        sStatsMs = nowS;
-+    if (nowS - sStatsMs >= 5000) {
-+        LOG_INFO("SNIFF cb=%u ext=%u loc=%u in %lums", sCb, sExt, sLoc, (unsigned long)(nowS - sStatsMs));
-+        sCb = sExt = sLoc = 0;
-+        sStatsMs = nowS;
-+    }
 +#if defined(ODID_PHY_EXT)
 +    // BT5 mode: decode ONLY extended packs — skip every legacy PDU (the Dronetag's own 4-5 legacy
 +    // adverts AND nearby BLE4 noise) so the data is one clean pack per cycle.
@@ -188,7 +197,21 @@ index 4f7fb47..ef68d0c 100644
 +    }
 +#endif
 +    uint8_t buf[255]; // a BT5 extended ODID message pack can be ~250 B; BT4 legacy uses <= 31
++    int8_t rssi = report->rssi;
 +    uint8_t len = Bluefruit.Scanner.parseReportByType(report, BLE_GAP_AD_TYPE_SERVICE_DATA, buf, sizeof(buf));
++    // Resume IMMEDIATELY after copying the report out: S140 pauses scanning from report delivery until
++    // resume(), so every ms of decode/log work done first = adverts silently missed. Everything below
++    // works on our copy (`buf`) — `report` must not be touched past this point.
++    Bluefruit.Scanner.resume();
++
++    uint32_t nowS = millis();
++    if (sStatsMs == 0)
++        sStatsMs = nowS;
++    if (nowS - sStatsMs >= 5000) {
++        LOG_INFO("SNIFF cb=%u ext=%u loc=%u in %lums", sCb, sExt, sLoc, (unsigned long)(nowS - sStatsMs));
++        sCb = sExt = sLoc = 0;
++        sStatsMs = nowS;
++    }
 +    // Expect: [0xFA][0xFF] (UUID 0xFFFA) [0x0D] (app) [counter] [ODID message(s)]
 +    if (len >= 5 && buf[0] == 0xFA && buf[1] == 0xFF && buf[2] == 0x0D) {
 +        uint8_t counter = buf[3];
@@ -196,7 +219,7 @@ index 4f7fb47..ef68d0c 100644
 +        uint8_t odidLen = len - 4;
 +        uint8_t type = (odid[0] >> 4) & 0x0F;
 +        if (type == 0x1 && odidLen >= 23) { // single Location message (BT4 legacy)
-+            odidDecodeLocation(odid, counter, report->rssi);
++            odidDecodeLocation(odid, counter, rssi);
 +        } else if (type == 0xF && odidLen >= 3 && odid[1] == 25) { // BT5 message pack of 25-byte msgs
 +            uint8_t qty = odid[2];
 +            if (qty > 9) // ODID_PACK_MAX_MESSAGES
@@ -206,13 +229,13 @@ index 4f7fb47..ef68d0c 100644
 +                if ((uint32_t)((m + 25) - odid) > odidLen) // require a full 25-byte message in-bounds
 +                    break;
 +                if (((m[0] >> 4) & 0x0F) == 0x1) {
-+                    odidDecodeLocation(m, counter, report->rssi);
++                    odidDecodeLocation(m, counter, rssi);
 +                    break;
 +                }
 +            }
 +        }
 +    }
-+    Bluefruit.Scanner.resume(); // MANDATORY: S140 auto-pauses scanning after each delivered report
++    // (Scanner already resumed above, right after the report copy-out.)
 +}
 +
 +static void startOdidScanner(void)
@@ -255,7 +278,7 @@ index 4f7fb47..ef68d0c 100644
      // Clear existing data.
      Bluefruit.Advertising.stop();
      Bluefruit.Advertising.clearData();
-@@ -292,10 +425,19 @@ void NRF52Bluetooth::setup()
+@@ -292,10 +448,19 @@ void NRF52Bluetooth::setup()
      // BLEService and BLECharacteristic classes
      LOG_INFO("Init the Mesh bluetooth service");
      setupMeshService();
