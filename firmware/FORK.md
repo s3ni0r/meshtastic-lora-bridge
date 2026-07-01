@@ -164,3 +164,21 @@ The ODID-sniffer build no longer polls: a fresh fix is sent in ~ms instead of ag
   send, so a stale queued position never transmits ahead of a fresh one.
 - **Validation metric** — the every-20th send log prints `dec2send=<ms>` (sniffer-decode → LoRa-enqueue);
   expect single-digit-to-low-tens ms vs ~125 ms mean on `main`.
+- **TX-only radio** (`-DHIGHRATE_TX_ONLY`) — the Tag's role is relay-only, so `LR11x0Interface::
+  startReceive()` idles the LR1110 in **standby instead of RX**: an in-progress foreign RX can never
+  defer a TX (LoRa is half-duplex), no received packet is ever processed, and standby draws µA vs mA in
+  continuous RX. CAD still runs pre-TX and the TX-done IRQ is wired in `startSend()`, so the transmit
+  path is untouched. Trade-off: the Tag is deaf to the mesh — remote admin over LoRa and any future
+  reverse channel (e.g. buzzer paging) need this flag dropped. **The Base must run a PLAIN build** (no
+  `HIGHRATE_POSITION_SENDER`) — a sender-build Base emits pointless 0.5 Hz lock=0 heartbeats, which was
+  the only regular traffic the Tag ever received.
+
+**Measured on-device (Dronetag live, hacc 3 m):** `dec2send = 2–3 ms` (was 0–250 ms poll, mean
+~125 ms); Tag `rxGood` pinned at 0 with TX flowing; Base receives the stream at the true novelty rate
+(~2.3 pkt/s, median gap 356 ms) with no duplicate airtime.
+
+Tag build:
+```bash
+PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER \
+  -DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY" pio run -e tracker-t1000-e
+```

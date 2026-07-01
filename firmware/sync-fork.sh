@@ -22,6 +22,7 @@ cp "$CLONE/patch_bluefruit_ext.py"                 patch_bluefruit_ext.py
 git -C "$CLONE" diff -- \
     src/main.cpp \
     src/gps/GPS.cpp \
+    src/mesh/LR11x0Interface.cpp \
     src/modules/Modules.cpp \
     src/platform/nrf52/NRF52Bluetooth.cpp \
     variants/nrf52840/tracker-t1000-e/platformio.ini \

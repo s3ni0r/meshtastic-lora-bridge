@@ -79,6 +79,25 @@ index c654822..4c59a64 100644
  #ifdef SENSOR_GPS_CONFLICT
      }
  #endif
+diff --git a/src/mesh/LR11x0Interface.cpp b/src/mesh/LR11x0Interface.cpp
+index 3831a38..881c692 100644
+--- a/src/mesh/LR11x0Interface.cpp
++++ b/src/mesh/LR11x0Interface.cpp
+@@ -233,7 +233,13 @@ template <typename T> void LR11x0Interface<T>::configHardwareForSend()
+ 
+ template <typename T> void LR11x0Interface<T>::startReceive()
+ {
+-#ifdef SLEEP_ONLY
++#if defined(HIGHRATE_TX_ONLY)
++    // Fork: TX-only bridge node — the ODID Tag only *relays*; it never needs to hear the mesh. Idle in
++    // STANDBY instead of RX so an in-progress foreign RX can never defer our TX (LoRa is half-duplex),
++    // and standby draws uA vs mA in continuous RX. CAD (isChannelActive) still runs before TX, and the
++    // TX-done IRQ is wired in startSend(), so the transmit path is unaffected.
++    setStandby();
++#elif defined(SLEEP_ONLY)
+     sleep();
+ #else
+ 
 diff --git a/src/modules/Modules.cpp b/src/modules/Modules.cpp
 index e477574..115f238 100644
 --- a/src/modules/Modules.cpp
