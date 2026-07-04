@@ -51,7 +51,7 @@ def main():
         print(__doc__)
         sys.exit(2)
     port, uf2 = args
-    if port.lower() in ("tag", "base"):  # resolve a role name to its port via nodes.py (USB serial)
+    if port.lower() in ("tag", "base", "gpstag"):  # resolve a role name to its port via nodes.py (USB serial)
         try:
             import nodes
             resolved = nodes.resolve(port)

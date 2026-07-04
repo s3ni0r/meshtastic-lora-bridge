@@ -14,12 +14,14 @@ import sys
 
 from serial.tools import list_ports
 
-# Registry keyed on USB serial. Confirmed 2026-06-25 via `meshtastic --info`.
+# Registry keyed on USB serial. Confirmed 2026-06-25 (tag/base) + 2026-07-04 (gpstag) via `meshtastic --info`.
 NODES = {
-    "92EBF6B5B6C9AC37": {"role": "tag",  "name": "Tag",  "node_id": "!b4dbb54c",
+    "92EBF6B5B6C9AC37": {"role": "tag",    "name": "Tag",     "node_id": "!b4dbb54c",
                          "num": 3034297676, "mac": "db:d5:b4:db:b5:4c"},
-    "4A8693CC387EBD66": {"role": "base", "name": "Base", "node_id": "!b0bb9cda",
+    "4A8693CC387EBD66": {"role": "base",   "name": "Base",    "node_id": "!b0bb9cda",
                          "num": 2965085402, "mac": "fb:a7:b0:bb:9c:da"},
+    "15B20E7A7AAD8AF0": {"role": "gpstag", "name": "GpsTag",  "node_id": "!18e77545",
+                         "num": 417822021, "mac": "cd:7e:18:e7:75:45"},
 }
 BY_ROLE = {v["role"]: sn for sn, v in NODES.items()}
 
@@ -42,7 +44,7 @@ def resolve(role):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", metavar="ROLE", help="print only the port path for tag|base")
+    ap.add_argument("--port", metavar="ROLE", help="print only the port path for tag|base|gpstag")
     args = ap.parse_args()
     found = connected()
 
@@ -55,7 +57,7 @@ def main():
 
     if not found:
         print("No known nodes connected.")
-    for role in ("tag", "base"):
+    for role in ("tag", "base", "gpstag"):
         n = found.get(role)
         if n:
             print(f"  {n['name']:4} {n['node_id']}  serial={n['serial']}  ->  {n['port']}")
