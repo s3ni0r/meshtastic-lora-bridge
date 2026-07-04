@@ -1,0 +1,4693 @@
+LC29H&LC79H Series
+GNSS Protocol Specification
+
+ GNSS Module Series
+
+ Version: 1.1
+
+ Date: 2022-08-26
+
+ Status: Released
+                                                                                   GNSS Module Series
+
+
+At Quectel, our aim is to provide timely and comprehensive services to our customers. If you
+require any assistance, please contact our headquarters:
+
+Quectel Wireless Solutions Co., Ltd.
+Building 5, Shanghai Business Park Phase III (Area B), No.1016 Tianlin Road, Minhang District, Shanghai
+200233, China
+Tel: +86 21 5108 6236
+Email: info@quectel.com
+
+Or our local offices. For more information, please visit:
+http://www.quectel.com/support/sales.htm.
+
+For technical support, or to report documentation errors, please visit:
+http://www.quectel.com/support/technical.htm.
+Or email us at: support@quectel.com.
+
+
+Legal Notices
+We offer information as a service to you. The provided information is based on your requirements and we
+make every effort to ensure its quality. You agree that you are responsible for using independent analysis
+and evaluation in designing intended products, and we provide reference designs for illustrative purposes
+only. Before using any hardware, software or service guided by this document, please read this notice
+carefully. Even though we employ commercially reasonable efforts to provide the best possible
+experience, you hereby acknowledge and agree that this document and related services hereunder are
+provided to you on an “as available” basis. We may revise or restate this document from time to time at
+our sole discretion without any prior notice to you.
+
+
+Use and Disclosure Restrictions
+License Agreements
+Documents and information provided by us shall be kept confidential, unless specific permission is
+granted. They shall not be accessed or used for any purpose except as expressly provided herein.
+
+
+Copyright
+Our and third-party products hereunder may contain copyrighted material. Such copyrighted material
+shall not be copied, reproduced, distributed, merged, published, translated, or modified without prior
+written consent. We and the third party have exclusive rights over copyrighted material. No license shall
+be granted or conveyed under any patents, copyrights, trademarks, or service mark rights. To avoid
+ambiguities, purchasing in any form cannot be deemed as granting a license other than the normal
+non-exclusive, royalty-free license to use the material. We reserve the right to take legal action for
+noncompliance with abovementioned requirements, unauthorized use, or other illegal or malicious use of
+the material.
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                    1 / 83
+                                                                                        GNSS Module Series
+
+
+
+Trademarks
+Except as otherwise set forth herein, nothing in this document shall be construed as conferring any rights
+to use any trademark, trade name or name, abbreviation, or counterfeit product thereof owned by Quectel
+or any third party in advertising, publicity, or other aspects.
+
+
+Third-Party Rights
+This document may refer to hardware, software and/or documentation owned by one or more third parties
+(“third-party materials”). Use of such third-party materials shall be governed by all restrictions and
+obligations applicable thereto.
+
+We make no warranty or representation, either express or implied, regarding the third-party materials,
+including but not limited to any implied or statutory, warranties of merchantability or fitness for a particular
+purpose, quiet enjoyment, system integration, information accuracy, and non-infringement of any
+third-party intellectual property rights with regard to the licensed technology or use thereof. Nothing herein
+constitutes a representation or warranty by us to either develop, enhance, modify, distribute, market, sell,
+offer for sale, or otherwise maintain production of any our products or any other hardware, software,
+device, tool, information, or product. We moreover disclaim any and all warranties arising from the course
+of dealing or usage of trade.
+
+
+Privacy Policy
+To implement module functionality, certain device data are uploaded to Quectel’s or third-party’s servers,
+including carriers, chipset suppliers or customer-designated servers. Quectel, strictly abiding by the
+relevant laws and regulations, shall retain, use, disclose or otherwise process relevant data for the
+purpose of performing the service only or as permitted by applicable laws. Before data interaction with
+third parties, please be informed of their privacy and data security policy.
+
+
+Disclaimer
+a)   We acknowledge no liability for any injury or damage arising from the reliance upon the information.
+b)   We shall bear no liability resulting from any inaccuracies or omissions, or from the use of the
+     information contained herein.
+c)   While we have made every effort to ensure that the functions and features under development are
+     free from errors, it is possible that they could contain errors, inaccuracies, and omissions. Unless
+     otherwise provided by valid agreement, we make no warranties of any kind, either implied or express,
+     and exclude all liability for any loss or damage suffered in connection with the use of features and
+     functions under development, to the maximum extent permitted by law, regardless of whether such
+     loss or damage may have been foreseeable.
+d)   We are not responsible for the accessibility, safety, accuracy, availability, legality, or completeness of
+     information, advertising, commercial offers, products, services, and materials on third-party websites
+     and third-party resources.
+
+Copyright © Quectel Wireless Solutions Co., Ltd. 2022. All rights reserved.
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                         2 / 83
+                                                                       GNSS Module Series
+
+
+
+
+About the Document
+Document Information
+
+Title                     LC29H&LC79H Series GNSS Protocol Specification
+
+Subtitle                  GNSS Module Series
+
+Document Type             GNSS Protocol Specification
+
+Document Status           Released
+
+
+
+
+Revision History
+
+Version     Date           Description
+
+-           2021-03-18     Creation of the document
+
+1.0         2021-08-19     First official release
+
+                           Numerous changes were made to this document. It should be read in
+1.1         2022-08-26
+                           its entirety.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                      3 / 83
+                                                                                                                               GNSS Module Series
+
+
+
+
+Contents
+
+About the Document ................................................................................................................................... 3
+Contents ....................................................................................................................................................... 4
+Table Index ................................................................................................................................................... 6
+
+1     Introduction .......................................................................................................................................... 7
+      1.1. Special Mark ............................................................................................................................... 8
+
+2     NMEA Protocol ..................................................................................................................................... 9
+      2.1. Structure of NMEA Protocol Messages ...................................................................................... 9
+      2.2. Standard Messages .................................................................................................................. 10
+          2.2.1. RMC ............................................................................................................................... 10
+          2.2.2. GGA................................................................................................................................ 13
+          2.2.3. GSV ................................................................................................................................ 16
+          2.2.4. GSA ................................................................................................................................ 18
+          2.2.5. VTG ................................................................................................................................ 20
+          2.2.6. GLL ................................................................................................................................. 21
+          2.2.7. ZDA ................................................................................................................................ 23
+          2.2.8. GRS ................................................................................................................................ 24
+          2.2.9. GST ................................................................................................................................ 27
+      2.3. PAIR Messages......................................................................................................................... 28
+          2.3.1. Packet Type: 001 PAIR_ACK ......................................................................................... 28
+          2.3.2. Packet Type: 002 PAIR_GNSS_SUBSYS_POWER_ON .............................................. 29
+          2.3.3. Packet Type: 003 PAIR_GNSS_SUBSYS_POWER_OFF ............................................ 30
+          2.3.4. Packet Type: 004 PAIR_GNSS_SUBSYS_HOT_START .............................................. 30
+          2.3.5. Packet Type: 005 PAIR_GNSS_SUBSYS_WARM_START .......................................... 31
+          2.3.6. Packet Type: 006 PAIR_GNSS_SUBSYS_COLD_START ........................................... 31
+          2.3.7. Packet Type: 007 PAIR_GNSS_SUBSYS_FULL_COLD_START ................................ 32
+          2.3.8. Packet Type: 010 PAIR_REQUEST_AIDING ................................................................ 33
+          2.3.9. Packet Type: 050 PAIR_COMMON_SET_FIX_RATE ................................................... 33
+          2.3.10. Packet Type: 051 PAIR_COMMON_GET_FIX_RATE .................................................. 34
+          2.3.11. Packet Type: 058 PAIR_COMMON_SET_MIN_SNR .................................................... 35
+          2.3.12. Packet Type: 059 PAIR_COMMON_GET_MIN_SNR ................................................... 36
+          2.3.13. Packet Type: 062 PAIR_COMMON_SET_NMEA_OUTPUT_RATE ............................. 37
+          2.3.14. Packet Type: 063 PAIR_COMMON_GET_NMEA_OUTPUT_RATE ............................. 38
+          2.3.15. Packet Type: 066 PAIR_COMMON_SET_GNSS_SEARCH_MODE ........................... 39
+          2.3.16. Packet Type: 067 PAIR_COMMON_GET_GNSS_SEARCH_MODE ........................... 41
+          2.3.17. Packet Type: 070 PAIR_COMMON_SET_STATIC_THRESHOLD ............................... 42
+          2.3.18. Packet Type: 071 PAIR_COMMON_GET_STATIC_THRESHOLD ............................... 43
+          2.3.19. Packet Type: 072 PAIR_COMMON_SET_ELEV_MASK .............................................. 44
+          2.3.20. Packet Type: 073 PAIR_COMMON_GET_ELEV_MASK .............................................. 44
+          2.3.21. Packet Type: 074 PAIR_COMMON_SET_AIC_ENABLE.............................................. 45
+          2.3.22. Packet Type: 075 PAIR_COMMON_GET_AIC_STATUS .............................................. 46
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                                                                       4 / 83
+                                                                                                                      GNSS Module Series
+
+
+          2.3.23.      Packet Type: 080 PAIR_COMMON_SET_NAVIGATION_MODE ................................. 47
+          2.3.24.      Packet Type: 081 PAIR_COMMON_GET_NAVIGATION_MODE ................................. 48
+          2.3.25.      Packet Type: 086 PAIR_COMMON_SET_DEBUGLOG_OUTPUT .............................. 49
+          2.3.26.      Packet Type: 087 PAIR_COMMON_GET_DEBUGLOG_OUTPUT .............................. 49
+          2.3.27.      Packet Type: 100 PAIR_COMMON_SET_NMEA_OUTPUT_MODE............................ 50
+          2.3.28.      Packet Type: 101 PAIR_COMMON_GET_NMEA_OUTPUT_MODE ........................... 51
+          2.3.29.      Packet Type: 104 PAIR_COMMON_SET_DUAL_BAND .............................................. 52
+          2.3.30.      Packet Type: 105 PAIR_COMMON_GET_DUAL_BAND .............................................. 53
+          2.3.31.      Packet Type: 382 PAIR_TEST_LOCK_SYSTEM_SLEEP ............................................ 54
+          2.3.32.      Packet Type: 391 PAIR_TEST_JAMMING_DETECT ................................................... 54
+          2.3.33.      Packet Type: 400 PAIR_DGPS_SET_MODE ................................................................ 56
+          2.3.34.      Packet Type: 401 PAIR_DGPS_GET_MODE ............................................................... 57
+          2.3.35.      Packet Type: 410 PAIR_SBAS_ENABLE ...................................................................... 58
+          2.3.36.      Packet Type: 411 PAIR_SBAS_GET_STATUS ............................................................. 59
+          2.3.37.      Packet Type: 432 PAIR_RTCM_SET_OUTPUT_MODE ............................................... 60
+          2.3.38.      Packet Type: 433 PAIR_RTCM_GET_OUTPUT_MODE .............................................. 60
+          2.3.39.      Packet Type: 434 PAIR_RTCM_SET_OUTPUT_ANT_PNT ......................................... 61
+          2.3.40.      Packet Type: 435 PAIR_RTCM_GET_OUTPUT_ANT_PNT......................................... 62
+          2.3.41.      Packet Type: 436 PAIR_RTCM_SET_OUTPUT_EPHEMERIS .................................... 63
+          2.3.42.      Packet Type: 437 PAIR_RTCM_GET_OUTPUT_EPHEMERIS .................................... 64
+          2.3.43.      Packet Type: 490 PAIR_EASY_ENABLE ...................................................................... 65
+          2.3.44.      Packet Type: 491 PAIR_EASY_GET_STATUS ............................................................. 65
+          2.3.45.      Packet Type: 511 PAIR_NVRAM_SAVE_NAVIGATION_DATA ..................................... 66
+          2.3.46.      Packet Type: 513 PAIR_NVRAM_SAVE_SETTING ...................................................... 67
+          2.3.47.      Packet Type: 650 PAIR_LOW_POWER_ENTRY_RTC_MODE ................................... 68
+          2.3.48.      Packet Type: 690 PAIR_PERIODIC_SET_MODE ........................................................ 69
+          2.3.49.      Packet Type: 691 PAIR_PERIODIC_GET_MODE ........................................................ 70
+          2.3.50.      Packet Type: 752 PAIR_PPS_SET_CONFIG_CMD ..................................................... 71
+          2.3.51.      Packet Type: 830 PAIR_RAW_ENABLE ....................................................................... 72
+          2.3.52.      Packet Type: 831 PAIR_RAW_GET_STATUS .............................................................. 72
+          2.3.53.      Packet Type: 864 PAIR_IO_SET_BAUDRATE.............................................................. 73
+          2.3.54.      Packet Type: 865 PAIR_IO_GET_BAUDRATE ............................................................. 74
+          2.3.55.      Packet Type: 866 PAIR_IO_SET_FLOW_CONTROL ................................................... 75
+          2.3.56.      Packet Type: 867 PAIR_IO_GET_FLOW_CONTROL .................................................. 76
+
+3   RTCM Protocol ................................................................................................................................... 78
+
+4   Appendix A References..................................................................................................................... 80
+5   Appendix B GNSS Numbering .......................................................................................................... 83
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                                                              5 / 83
+                                                                                                                          GNSS Module Series
+
+
+
+
+Table Index
+
+Table 1: Applicable Modules and Variants Supported.................................................................................. 7
+Table 2: Special Mark ................................................................................................................................... 8
+Table 3: Structure of NMEA Protocol Messages .......................................................................................... 9
+Table 4: NMEA Talker ID ............................................................................................................................ 10
+Table 5: Supported RTCM3 Messages ...................................................................................................... 78
+Table 6: Related Documents ...................................................................................................................... 80
+Table 7: Terms and Abbreviations .............................................................................................................. 80
+Table 8: GNSS Numbering ......................................................................................................................... 83
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                                                                 6 / 83
+                                                                                  GNSS Module Series
+
+
+
+
+1 Introduction
+Quectel LC29H and LC79H series GNSS modules support GPS, GLONASS, Galileo, BDS and QZSS
+constellations. Concurrent tracking of GPS L1 C/A, GLONASS L1, Galileo E1, BDS B1I, QZSS L1 C/A,
+GPS L5, Galileo E5a, BDS B2a and QZSS L5 frequency bands 1) provides fast and accurate acquisition
+and makes these modules ideal solutions for positioning and navigation in various vertical markets.
+
+This document describes the software commands that are needed to control and modify the module
+configuration. The software commands are NMEA proprietary commands defined by the chipset supplier
+(PAIR messages). To report GNSS information, the modules support output messages in NMEA 0183
+standard protocol format and RTCM protocol format.
+
+This document is applicable to the following Quectel GNSS modules and variants:
+
+
+
+Table 1: Applicable Modules and Variants Supported
+
+ Module                   Variant
+
+                          LC29H (AA)
+
+                          LC29H (BA)
+
+ LC29H series             LC29H (CA)
+
+                          LC29H (DA)
+
+                          LC29H (EA)*
+
+                          LC79H (AL)
+ LC79H series
+                          LC79H (BA)
+
+
+
+ NOTE
+
+1. Quectel assumes no responsibility if commands other than the ones listed herein are used.
+2. 1) LC79H (BA) supports concurrent tracking of GPS L1 C/A, GLONASS L1, Galileo E1, BDS B1I and
+   QZSS L1 C/A.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                               7 / 83
+                                                                                   GNSS Module Series
+
+
+
+1.1. Special Mark
+
+
+Table 2: Special Mark
+
+
+ Mark        Definition
+
+             Unless otherwise specified, when an asterisk (*) is used after a function, feature, interface,
+             pin name, or argument, it indicates that the function, feature, interface, pin, or argument is
+ *
+             under development and currently not supported; and the asterisk (*) after a model indicates
+             that the model sample is currently unavailable.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                    8 / 83
+                                                                                                    GNSS Module Series
+
+
+
+
+2 NMEA Protocol
+2.1. Structure of NMEA Protocol Messages
+
+
+                                                                                     Start with a ‘*’, 8-bit
+ The start character of the                                                       checksum value convert to
+     frame, always ‘$’                                                              two ASCII characters
+                        Address field, contains talker Identifier    Data field(s),                    End frame, always
+                              and sentence formatter                delimited by ‘,’                      <CR><LF>
+
+
+                                    <Address>
+             $                                                        [,<Data>]        *<Checksum>         <CR><LF>
+                         (<TalkerID><SentenceFormatter>)
+
+
+                                   The range for checksum calculation
+
+
+
+                                Figure 1: Structure of NMEA Protocol Messages
+
+
+
+
+Table 3: Structure of NMEA Protocol Messages
+
+
+ Field               Description
+
+ $                   Start of the sentence (Hex 0x24).
+
+                     In Standard Messages:
+                     In NMEA standard messages, this field consists of a two-character talker identifier
+                     (TalkerID) and a three-character sentence formatter (SentenceFormatter).
+                     The talker identifier serves to define the nature of the data being transmitted. For more
+                     information on the TalkerID, see Table 4: NMEA Talker ID.
+ <Address>           The sentence formatter is used to define data format and type.
+
+                     In Proprietary Messages:
+                     In NMEA proprietary messages, this field consists of the proprietary character P
+                     followed by a three-character Manufacturer's Mnemonic Code, used to identify the
+                     TALKER issuing a proprietary sentence, and any additional characters as required.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                                     9 / 83
+                                                                                 GNSS Module Series
+
+
+                 Data fields, delimited by comma (,).
+ <Data>
+                 Variable length (depends on the NMEA message type).
+                 The checksum field follows the checksum delimiter character *.
+ <Checksum>      The checksum is the 8-bit exclusive OR of all characters in the sentence, including the
+                 comma (,) delimiter, between but not including the $ and the * delimiters.
+
+ <CR><LF>        End of the sentence (Hex 0x0D 0x0A).
+
+
+
+Table 4: NMEA Talker ID
+
+                                             TalkerID                    TalkerID
+ GNSS Constellation Configuration
+                                             (NMEA 0183 V3.01)           (NMEA 0183 V4.10)
+
+ GPS                                         GP                          GP
+
+ GLONASS                                     GL                          GL
+
+ Galileo                                     GA                          GA
+
+ BDS                                         GB                          GB
+
+ QZSS                                        GP                          GP
+
+ Combination of Multiple Satellite Systems   GN                          GN
+
+
+
+ NOTE
+
+The TalkerID of QZSS in NMEA 0183 V4.10 is GQ for LC29H (BA, CA, DA, EA*).
+
+
+
+
+2.2. Standard Messages
+
+This chapter explains the NMEA 0183 V3.01 and NMEA 0183 V4.10 standard messages supported by the
+modules.
+
+
+
+2.2.1. RMC
+
+Recommended Minimum Specific GNSS Data. Time, date, position, course, and speed data provided by
+a GNSS receiver.
+
+Type:
+
+Output
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                  10 / 83
+                                                                          GNSS Module Series
+
+
+Synopsis:
+
+Format for NMEA 0183 V3.01:
+
+$<TalkerID>RMC,<UTC>,<Status>,<Lat>,<N/S>,<Lon>,<E/W>,<SOG>,<COG>,<Date>,<MagVar>,<Ma
+gVarDir>,<ModeInd>*<Checksum><CR><LF>
+
+Format for NMEA 0183 V4.10 (default):
+
+$<TalkerID>RMC,<UTC>,<Status>,<Lat>,<N/S>,<Lon>,<E/W>,<SOG>,<COG>,<Date>,<MagVar>,<Ma
+gVarDir>,<ModeInd>,<NavStatus>*<Checksum><CR><LF>
+
+Parameter:
+
+
+Field         Format                 Unit   Example        Description
+
+$             -                      -      $              Each NMEA message starts with $.
+
+                                                           Talker identifier.
+<TalkerID>    String, 2 characters   -      GN
+                                                           See Table 4: NMEA Talker ID.
+                                                           Recommended        Minimum Specific
+RMC           String, 3 characters   -      RMC
+                                                           GNSS Data.
+                                                           Position fix UTC.
+                                                           hh: Hours (00–23)
+<UTC>         hhmmss.sss             -      093316.000     mm: Minutes (00–59)
+                                                           ss: Seconds (00–59)
+                                                           sss: Decimal fraction of seconds
+                                                           Positioning system status.
+<Status>      Character              -      A              A = Data valid
+                                                           V = Navigation receiver warning
+                                                           Latitude.
+                                                           dd: Degrees (00–90)
+                                                           mm: Minutes (00–59)
+<Lat>         ddmm.mmmmmm            -      3149.332558    mmmmmm: Decimal fraction of
+                                                           minutes (variable length)
+                                                           Note that this field is empty in case of
+                                                           an invalid value.
+                                                           Latitude direction.
+                                                           N = North
+<N/S>         Character              -      N              S = South
+                                                           Note that this field is empty in case of
+                                                           an invalid value.
+                                                           Longitude.
+                                                           ddd: Degrees (000–180)
+<Lon>         dddmm.mmmmmm           -      11706.912570
+                                                           mm: Minutes (00–59)
+                                                           mmmmmm: Decimal fraction             of
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                            11 / 83
+                                                                  GNSS Module Series
+
+
+
+Field         Format            Unit     Example   Description
+
+                                                   minutes
+                                                   Note that this field is empty in case of
+                                                   an invalid value.
+                                                   Longitude direction.
+                                                   E = East
+<E/W>         Character         -        E         W = West
+                                                   Note that this field is empty in case of
+                                                   an invalid value.
+                                                   Speed over ground. Variable length.
+<SOG>         Numeric           Knot     0.00      Note that this field is empty in case of
+                                                   an invalid value.
+                                                   Course over ground. Variable length.
+                                                   Maximum value: 359.99.
+<COG>         Numeric           Degree   237.67
+                                                   Note that this field is empty in case of
+                                                   an invalid value.
+                                                   Date.
+                                                   dd: Day of month
+<Date>        ddmmyy            -        140122
+                                                   mm: Month
+                                                   yy: Year
+
+<MagVar>      -                 -        -         Magnetic variation. Not supported.
+
+                                                   The direction of magnetic variation.
+<MagVarDir>   -                 -        -
+                                                   Not supported.
+                                                   Mode indicator.
+                                                   A = Autonomous mode. Satellite
+                                                   system used in non-differential mode
+                                                   in position fix.
+                                                   D = Differential mode. Satellite
+                                                   system used in differential mode in
+                                                   position fix. Corrections from ground
+                                                   stations      or      Satellite    Based
+                                                   Augmentation System (SBAS).
+<ModeInd>     Character         -        A         E = Estimated (dead reckoning)
+                                                   mode.
+                                                   F = Float RTK. Satellite system used
+                                                   in RTK mode with floating integers.
+                                                   M = Manual input mode.
+                                                   N = No fix. Satellite system not used
+                                                   in position fix, or fix not valid.
+                                                   R = Real Time Kinematic (RTK).
+                                                   Satellite system used in RTK mode
+                                                   with fixed integers.
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                    12 / 83
+                                                                                   GNSS Module Series
+
+
+
+ Field           Format                 Unit       Example          Description
+
+                                                                    Navigational status. Not supported.
+                                                                    Always “V” (Invalid. The device
+                                                                    cannot provide navigational status
+ <NavStatus>     Character              -          V                indication).
+                                                                    Please note that this parameter is
+                                                                    only available in NMEA 0183 V4.10
+                                                                    and above.
+
+ <Checksum>      Hexadecimal            -          0B               Checksum
+
+ <CR><LF>        Character              -          -                Carriage return and line feed.
+
+
+Example for NMEA 0183 V3.01:
+
+$GNRMC,093423.000,A,3149.332006,N,11706.913200,E,0.01,0.00,140122,,,A*79
+
+Example for NMEA 0183 V4.10:
+
+$GNRMC,093316.000,A,3149.332558,N,11706.912570,E,0.00,237.67,140122,,,A,V*0B
+
+
+
+2.2.2. GGA
+
+Global Positioning System Fix Data. Time, position, and fix-related data for a GNSS receiver.
+
+Type:
+
+Output
+
+Synopsis:
+
+Format for NMEA 0183 V3.01:
+
+$<TalkerID>GGA,<UTC>,<Lat>,<N/S>,<Lon>,<E/W>,<Quality>,<NumSatUsed>,<HDOP>,<Alt>,M,<Se
+p>,M,<DiffAge>,<DiffStation>*<Checksum><CR><LF>
+
+Format for NMEA 0183 V4.10 (default):
+
+$<TalkerID>GGA,<UTC>,<Lat>,<N/S>,<Lon>,<E/W>,<Quality>,<NumSatUsed>,<HDOP>,<Alt>,M,<Se
+p>,M,<DiffAge>,<DiffStation>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field              Format                  Unit       Example       Description
+
+ $                  -                       -          $             Each NMEA message starts with $.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                   13 / 83
+                                                                           GNSS Module Series
+
+
+
+Field           Format                 Unit   Example        Description
+
+                                                             Talker identifier.
+<TalkerID>      String, 2 characters   -      GN
+                                                             See Table 4: NMEA Talker ID.
+                                                             Global   Positioning   System    Fix
+GGA             String, 3 characters   -      GGA
+                                                             Data.
+                                                             Position fix UTC.
+                                                             hh: Hours (00–23)
+<UTC>           hhmmss.sss             -      093316.000     mm: Minutes (00–59)
+                                                             ss: Seconds (00–59)
+                                                             sss: Decimal fraction of seconds
+                                                             Latitude.
+                                                             dd: Degrees (00–90)
+                                                             mm: Minutes (00–59)
+<Lat>           ddmm.mmmmmm            -      3149.332558    mmmmmm: Decimal fraction of
+                                                             minutes
+                                                             Note that this field is empty in case
+                                                             of an invalid value.
+                                                             Latitude direction.
+                                                             N = North
+<N/S>           Character              -      N              S = South
+                                                             Note that this field is empty in case
+                                                             of an invalid value.
+                                                             Longitude.
+                                                             ddd: Degrees (000–180)
+                                                             mm: Minutes (00–59)
+<Lon>           dddmm.mmmmmm           -      11706.912570   mmmmmm: Decimal fraction of
+                                                             minutes
+                                                             Note that this field is empty in case
+                                                             of an invalid value.
+                                                             Longitude direction.
+                                                             E = East
+<E/W>           Character              -      E              W = West
+                                                             Note that this field is empty in case
+                                                             of an invalid value.
+                                                             GPS quality indicator.
+                                                             0 = Fix not available or invalid
+                                                             1 = GPS SPS Mode, fix valid
+                                                             2 = Differential GPS, SPS Mode, or
+<Quality>       Numeric, 1 digit       -      1              Satellite Based Augmentation.
+                                                             System (SBAS), fix valid
+                                                             3 = GPS PPS Mode, fix valid
+                                                             4 = Real Time Kinematic (RTK)
+                                                             System used in RTK mode with
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                           14 / 83
+                                                                           GNSS Module Series
+
+
+
+ Field            Format              Unit    Example        Description
+
+                                                             fixed integers
+                                                             5 = Float RTK. Satellite system
+                                                             used in RTK mode, floating
+                                                             integers.
+                                                             6 = Estimated (dead reckoning)
+                                                             mode
+
+ <NumSatUsed> 1) Numeric, 2 digits    -       28             Number of satellites in use.
+
+                                                             Horizontal dilution of precision.
+                                                             Variable length.
+ <HDOP>           Numeric             -       0.67
+                                                             Note that this field is empty in case
+                                                             of an invalid value.
+                                                             Altitude above mean-sea-level
+                                                             (geoid). Variable length.
+ <Alt>            Numeric             Meter   54.481
+                                                             Note that this field is empty in case
+                                                             of an invalid value.
+
+ M                Character           -       M              Unit of <Alt>. "M" = meter.
+
+                                                             Geoid separation (the difference
+                                                             between the earth ellipsoid surface
+                                                             and the mean-sea-level (geoid)
+                                                             surface defined by the reference
+ <Sep>            Numeric             Meter   -0.337
+                                                             datum used in the position
+                                                             solution). Variable length.
+                                                             Note that this field is empty in case
+                                                             of an invalid value.
+
+ M                Character           -       M              Unit of <Sep>. "M" = meter.
+
+                                                             Differential GPS data age.
+ <DiffAge>        -                   -       -
+                                                             Not supported.
+                                                             Differential reference station ID.
+ <DiffStation>    -                   -       -
+                                                             Not supported.
+
+ <Checksum>       Hexadecimal         -       *5D            Checksum
+
+ <CR><LF>         Character           -       -              Carriage return and line feed.
+
+
+Example for NMEA 0183 V3.01:
+
+$GNGGA,093423.000,3149.332006,N,11706.913200,E,1,22,0.75,45.346,M,-0.337,M,,*56
+
+
+Example for NMEA 0183 V4.10:
+
+$GNGGA,093316.000,3149.332558,N,11706.912570,E,1,28,0.67,54.481,M,-0.337,M,,*5D
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                              15 / 83
+                                                                                 GNSS Module Series
+
+
+
+ NOTE
+
+1.   The NMEA 0183 specification indicates that GGA messages are GPS specific. However, when the
+     receiver is configured for multi-constellations, the content of GGA messages will be generated from
+     the multi-constellation solution.
+     1)
+2.      According to the NMEA 0183 specification, the number of satellites in use is between 00 and 12.
+     However, in the multi-constellation solution, the number of satellites in use may exceed 12.
+
+
+
+2.2.3. GSV
+
+GNSS Satellites in View. The GSV sentence provides the number of satellites in view (SV), satellite ID
+numbers, elevation, azimuth, and SNR value, and it contains maximum four satellites per transmission.
+Therefore, it may take several sentences to get complete information. The total number of sentences
+being transmitted and the sentence number are indicated in the first two data fields.
+
+Type:
+
+Output
+
+Synopsis:
+
+Format for NMEA 0183 V3.01:
+
+$<TalkerID>GSV,<TotalNumSen>,<SenNum>,<TotalNumSat>{,<SatID>,<SatElev>,<SatAz>,<SatCN0>}*
+<Checksum><CR><LF>
+
+Format for NMEA 0183 V4.10 (default):
+
+$<TalkerID>GSV,<TotalNumSen>,<SenNum>,<TotalNumSat>{,<SatID>,<SatElev>,<SatAz>,<SatCN0>},
+<SignalID>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field              Format                 Unit      Example      Description
+
+ $                  -                      -         $            Each NMEA message starts with $.
+
+                                                                  Talker identifier.
+ <TalkerID>         String, 2 characters   -         GP
+                                                                  See Table 4: NMEA Talker ID.
+
+ GSV                String, 3 characters   -         GSV          GNSS Satellites in View.
+
+                                                                  Total number of sentences.
+ <TotalNumSen>      Numeric                -         3
+                                                                  Range: 1–9.
+                                                                  Sentence number.
+ <SenNum>           Numeric                -         1
+                                                                  Range: 1–<TotalNumSen>.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                   16 / 83
+                                                                             GNSS Module Series
+
+
+
+ <TotalNumSat>      Numeric                  -        11    Total number of satellites in view.
+
+ Start of repeat block. Repeat times: 1–4.
+
+                                                            Satellite ID.
+ <SatID>            Numeric                  -        08
+                                                            See Table 8: GNSS Numbering.
+
+ <SatElev>          Numeric                  Degree   76    Satellite elevation. Range: 00–90.
+
+                                                            Satellite azimuth, with true north as
+ <SatAz>            Numeric                  Degree   353
+                                                            the reference plane. Range: 000–359.
+                                                            Satellite C/N0. Range 00–99.
+ <SatCN0>           Numeric                  dB-Hz    46
+                                                            Null when not tracking.
+
+ End of repeat block.
+
+                                                            GNSS signal ID.
+                                                            See Table 8: GNSS Numbering.
+ <SignalID>         Numeric                  -        1
+                                                            Please note that this parameter is only
+                                                            available in NMEA V4.10 or higher.
+
+ <Checksum>         Hexadecimal              -        *5C   Checksum
+
+ <CR><LF>           Character                -        -     Carriage return and line feed.
+
+
+Example for NMEA 0183 V3.01:
+
+$GPGSV,3,1,12,08,75,355,46,195,68,113,44,194,64,081,42,199,51,162,36*47
+$GPGSV,3,2,12,27,45,037,44,21,44,156,43,16,30,072,39,30,18,317,38*72
+$GPGSV,3,3,12,03,,,19,04,,,37,09,,,40,07,,,43*7C
+$GPGSV,2,1,08,08,75,355,38,195,68,113,38,194,64,081,38,199,51,162,38*4C
+$GPGSV,2,2,08,27,45,037,38,30,18,317,31,04,,,29,09,,,32*70
+$GLGSV,1,1,04,86,63,182,32,85,59,041,42,76,36,333,41,66,07,278,*6A
+$GAGSV,1,1,00*68
+$GAGSV,1,1,00*68
+$GBGSV,3,1,12,29,82,083,41,07,64,319,41,09,54,220,40,36,47,113,45*66
+$GBGSV,3,2,12,06,45,201,39,39,34,192,40,01,,,38,30,,,40*69
+$GBGSV,3,3,12,16,,,41,05,,,31,02,,,36,13,,,35*6E
+$GBGSV,1,1,04,29,82,083,36,36,47,113,36,39,34,192,32,30,,,28*5F
+
+Example for NMEA 0183 V4.10:
+
+$GPGSV,3,1,11,08,76,353,46,195,68,113,44,194,64,080,42,199,51,162,37,1*5C
+$GPGSV,3,2,11,27,45,037,43,07,44,315,43,21,43,156,44,16,30,071,39,1*6B
+$GPGSV,3,3,11,09,28,244,40,04,20,206,37,30,,,38,1*6F
+$GPGSV,2,1,08,08,76,353,35,195,68,113,34,194,64,080,33,199,51,162,34,8*5A
+$GPGSV,2,2,08,27,45,037,33,09,28,244,28,04,20,206,26,30,,,27,8*5E
+$GLGSV,1,1,03,85,59,042,41,76,35,333,40,66,07,279,32,1*43
+$GAGSV,1,1,00,7*73
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                               17 / 83
+                                                                                 GNSS Module Series
+
+
+$GAGSV,1,1,00,1*75
+$GBGSV,4,1,13,07,64,319,41,40,61,345,43,36,47,113,43,06,45,201,40,1*7E
+$GBGSV,4,2,13,16,41,195,41,35,40,213,45,26,17,313,39,56,,,19,1*49
+$GBGSV,4,3,13,57,,,37,01,,,39,02,,,36,60,,,40,1*7B
+$GBGSV,4,4,13,03,,,40,1*73
+$GBGSV,1,1,04,40,61,345,32,36,47,113,32,35,40,213,29,26,17,313,23,5*79
+
+
+
+ NOTE
+
+GN cannot be used for GSV sentences. If satellites of multiple constellations are in view, GSV sentences
+are output with the corresponding talker ID for each constellation, respectively.
+
+
+
+2.2.4. GSA
+
+GNSS DOP and Active Satellites. GNSS receiver operating mode, satellites used in the navigation
+solution reported by the GGA sentence, and DOP values.
+
+Type:
+
+Output
+
+Synopsis:
+
+Format for NMEA 0183 V3.01:
+
+$<TalkerID>GSA,<Mode>,<FixMode>{,<SatID>},<PDOP>,<HDOP>,<VDOP>*<Checksum><CR><LF>
+
+Format for NMEA 0183 V4.10 (default):
+
+$<TalkerID>GSA,<Mode>,<FixMode>{,<SatID>},<PDOP>,<HDOP>,<VDOP><SystemID>*<Checksum>
+<CR><LF>
+
+Parameter:
+
+
+ Field           Format                 Unit     Example     Description
+
+ $               -                      -        $           Each NMEA message starts with $.
+
+                                                             Talker identifier.
+ <TalkerID>      String, 2 characters   -        GN
+                                                             See Table 4: NMEA Talker ID.
+
+ GSA             String, 3 characters   -        GSA         GNSS DOP and Active Satellites.
+
+                                                             Auto selection of 2D or 3D fix:
+                                                             M = Manual, forced to operate in 2D or 3D
+ <Mode>          Character              -        A
+                                                             mode.
+                                                             A = Automatic, allowed to automatically
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                  18 / 83
+                                                                                 GNSS Module Series
+
+
+                                                         switch to 2D/3D.
+
+                                                         Fix mode.
+                                                         1 = Fix not available
+ <FixMode>       Numeric                    -   3
+                                                         2 = 2D
+                                                         3 = 3D
+
+ Start of repeat block. Repeat times: 12.
+
+                                                         ID numbers of satellites used in solution.
+                                                         See Table 8: GNSS Numbering.
+ <SatID>         Numeric                    -   08
+                                                         Note that this field is empty in case of an
+                                                         invalid value.
+
+ End of repeat block.
+
+                                                         Position dilution of precision.
+                                                         Maximum value: 99.00.
+ <PDOP>          Numeric                    -   1.03
+                                                         Note that this field is empty in case of an
+                                                         invalid value.
+                                                         Horizontal dilution of precision.
+                                                         Maximum value: 99.00.
+ <HDOP>          Numeric                    -   0.67
+                                                         Note that this field is empty in case of an
+                                                         invalid value.
+                                                         Vertical dilution of precision.
+                                                         Maximum value: 99.00.
+ <VDOP>          Numeric                    -   0.78
+                                                         Note that this field is empty in case of an
+                                                         invalid value.
+                                                         GNSS system ID.
+                                                         See Table 8: GNSS Numbering.
+ <SystemID>      Numeric                    -   1
+                                                         Please note that this parameter is only
+                                                         available in NMEA 4.10 or higher.
+
+ <Checksum>      Hexadecimal                -   *3E      Checksum
+
+ <CR><LF>        Character                  -   -        Carriage return and line feed.
+
+
+Example for NMEA 0183 V3.01:
+
+$GPGSA,A,3,08,195,194,199,27,21,16,30,,,,,1.09,0.75,0.79*3C
+$GLGSA,A,3,86,85,76,,,,,,,,,,1.09,0.75,0.79*18
+$GAGSA,A,3,,,,,,,,,,,,,1.09,0.75,0.79*17
+$GBGSA,A,3,07,09,36,06,39,,,,,,,,1.09,0.75,0.79*13
+
+Example for NMEA 0183 V4.10:
+
+$GNGSA,A,3,08,195,194,199,27,07,21,16,09,04,,,1.03,0.67,0.78,1*3E
+$GNGSA,A,3,85,76,66,,,,,,,,,,1.03,0.67,0.78,2*02
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                              19 / 83
+                                                                                      GNSS Module Series
+
+
+$GNGSA,A,3,,,,,,,,,,,,,1.03,0.67,0.78,3*0F
+$GNGSA,A,3,07,40,36,06,16,35,26,,,,,,1.03,0.67,0.78,4*0D
+
+
+
+ NOTE
+
+If less than 12 satellites are used for navigation, the remaining <SatID> fields are left empty. If more than
+12 satellites are used, multiple GSA sentences containing all satellite IDs will be output.
+
+
+
+2.2.5. VTG
+
+Course Over Ground & Ground Speed. The actual course and speed relative to the ground.
+
+Type:
+
+Output
+
+Synopsis:
+
+Format for NMEA 0183 V3.01:
+
+$<TalkerID>VTG,<COGT>,T,<COGM>,M,<SOGN>,N,<SOGK>,K,<ModeInd>*<Checksum><CR><LF>
+
+Format for NMEA 0183 V4.10 (default):
+
+$<TalkerID>VTG,<COGT>,T,<COGM>,M,<SOGN>,N,<SOGK>,K,<ModeInd>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field            Format                  Unit        Example      Description
+
+ $                -                       -           $            Each NMEA message starts with $.
+
+                                                                   Talker identifier.
+ <TalkerID>       String, 2 characters    -           GN
+                                                                   See Table 4: NMEA Talker ID.
+
+ VTG              String, 3 characters    -           VTG          Course Over Ground & Ground Speed.
+
+                                                                   Course over ground, in true north
+                                                                   course direction.
+ <COGT>           Numeric                 Degrees     237.67
+                                                                   Note that this field is empty in case of an
+                                                                   invalid value.
+                                                                   Course over ground.
+ T                Character               -           T
+                                                                   (degrees true, fixed field)
+                                                                   Course over ground (magnetic).
+ <COGM>           Numeric                 Degrees     -
+                                                                   Not supported.
+                                                                   Course over ground.
+ M                Character               -           M
+                                                                   (degrees magnetic, fixed field)
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                       20 / 83
+                                                                                   GNSS Module Series
+
+
+
+ Field           Format                 Unit        Example     Description
+
+                                                                Speed over ground in knots. Variable
+                                                                length.
+ <SOGN>          Numeric                Knots       0.00
+                                                                Note that this field is empty in case of an
+                                                                invalid value.
+
+ N               Character              -           N           Speed over ground (knots, fixed field).
+
+                                                                Speed over ground in kilometers per
+                                                                hour. Variable length.
+ <SOGK>          Numeric                km/h        0.00
+                                                                Note that this field is empty in case of an
+                                                                invalid value.
+                                                                Speed over ground.
+ K               Character              -           K
+                                                                (kilometers per hour, fixed field).
+                                                                Mode indicator:
+                                                                A = Autonomous mode
+                                                                D = Differential mode
+                                                                E = Estimated (dead reckoning) mode
+                                                                F = Float RTK. Satellite system used in
+ <ModeInd>       Character              -           A
+                                                                real time kinematic mode with floating
+                                                                integers.
+                                                                M = Manual input mode
+                                                                N = No fix. Satellite system not used in
+                                                                position fix, or fix not valid.
+
+ <Checksum>      Hexadecimal            -           *24         Checksum
+
+ <CR><LF>        Character              -           -           Carriage return and line feed.
+
+
+Example for NMEA 0183 V3.01:
+
+$GNVTG,0.00,T,,M,0.01,N,0.02,K,A*20
+
+Example for NMEA 0183 V4.10:
+
+$GNVTG,237.67,T,,M,0.00,N,0.00,K,A*24
+
+
+
+2.2.6. GLL
+
+Geographic Position – Latitude/Longitude. Latitude and longitude of the GNSS receiver position, the time
+of position fix and status.
+
+Type:
+
+Output
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                        21 / 83
+                                                                             GNSS Module Series
+
+
+Synopsis:
+
+Format for NMEA 0183 V3.01:
+
+$<TalkerID>GLL,<Lat>,<N/S>,<Lon>,<E/W>,<UTC>,<Status>,<ModeInd>*<Checksum><CR><LF>
+
+Format for NMEA 0183 V4.10 (default):
+
+$<TalkerID>GLL,<Lat>,<N/S>,<Lon>,<E/W>,<UTC>,<Status>,<ModeInd>*<Checksum><CR><LF>
+
+Parameter:
+
+
+Field         Format                 Unit   Example        Description
+
+$             -                      -      $              Each NMEA message starts with $.
+
+                                                           Talker identifier.
+<TalkerID>    String, 2 characters   -      GN
+                                                           See Table 4: NMEA Talker ID.
+                                                           Geographic Position –
+GLL           String, 3 characters   -      GLL
+                                                           Latitude/Longitude.
+                                                           Latitude.
+                                                           dd: Degrees (00–90)
+                                                           mm: Minutes (00–59)
+<Lat>         ddmm.mmmmmm            -      3149.332558
+                                                           mmmmmm: Decimal fraction of minutes
+                                                           Note that this field is empty in case of an
+                                                           invalid value.
+                                                           Latitude direction.
+                                                           N = North
+<N/S>         Character              -      N              S = South
+                                                           Note that this field is empty in case of an
+                                                           invalid value.
+                                                           Longitude.
+                                                           ddd: Degrees (000–180)
+                                                           mm: Minutes (00–59)
+<Lon>         dddmm.mmmmmm           -      11706.912570
+                                                           mmmmmm: Decimal fraction of minutes
+                                                           Note that this field is empty in case of an
+                                                           invalid value.
+                                                           Longitude direction.
+                                                           E = East
+<E/W>         Character              -      E              W = West
+                                                           Note that this field is empty in case of an
+                                                           invalid value.
+                                                           Position fix UTC.
+                                                           hh: Hours (00–23)
+<UTC>         hhmmss.sss             -      093316.000
+                                                           mm: Minutes (00–59)
+                                                           ss: Seconds (00–59)
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                               22 / 83
+                                                                            GNSS Module Series
+
+
+
+ Field          Format                 Unit   Example     Description
+
+                                                          sss: Decimal fraction of seconds
+
+                                                          Positioning system status.
+ <Status>       Character              -      A           A = Data valid
+                                                          V = Data not valid
+                                                          Mode indicator.
+                                                          A = Autonomous mode
+                                                          D = Differential mode
+                                                          E = Estimated (dead reckoning) mode
+                                                          F = Float RTK. Satellite system used in
+ <ModeInd>      Character              -      A
+                                                          real time kinematic mode with floating
+                                                          integers
+                                                          M = Manual input mode
+                                                          N = No fix. Satellite system not used in
+                                                          position fix, or fix not valid.
+
+ <Checksum>     Hexadecimal            -      *45         Checksum
+
+ <CR><LF>       Character              -      -           Carriage return and line feed.
+
+
+Example for NMEA 0183 V3.01:
+
+$GNGLL,3149.332006,N,11706.913200,E,093423.000,A,A*4B
+
+Example for NMEA 0183 V4.10:
+
+$GNGLL,3149.332558,N,11706.912570,E,093316.000,A,A*45
+
+
+
+2.2.7. ZDA
+
+Time & Date. UTC, day, month, year and local time zone.
+
+Type:
+
+Output
+
+Synopsis:
+
+Format for NMEA 0183 V3.01:
+
+$<TalkerID>ZDA,<UTC>,<Day>,<Month>,<Year>,<LocalHour>,<LocalMin>*<Checksum><CR><LF>
+
+Format for NMEA 0183 V4.10 (default):
+
+$<TalkerID>ZDA,<UTC>,<Day>,<Month>,<Year>,<LocalHour>,<LocalMin>*<Checksum><CR><LF>
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                             23 / 83
+                                                                               GNSS Module Series
+
+
+Parameter:
+
+
+ Field          Format                 Unit   Example        Description
+
+ $              -                      -      $              Each NMEA message starts with $.
+
+                                                             Talker identifier.
+ <TalkerID>     String, 2 characters   -      GN
+                                                             See Table 4: NMEA Talker ID.
+                                                             Time & Date. UTC, day, month, year
+ ZDA            String, 3 characters   -      ZDA
+                                                             and local time zone.
+                                                             Position fix UTC.
+                                                             hh: Hours (00–23)
+ <UTC>          hhmmss.sss             -      093316.000     mm: Minutes (00–59)
+                                                             ss: Seconds (00–59)
+                                                             sss: Decimal fraction of seconds
+
+ <Day>          Numeric                -      14             Day of month. Range: 01–31.
+
+ <Month>        Numeric                -      01             Month. Range: 01–12.
+
+ <Year>         Numeric                -      2022           Year.
+
+                                                             Local zone hours, 00 to ±13 hours.
+ <LocalHour>    Numeric                -      -
+                                                             Not supported.
+                                                             Local zone minutes, 00 to 59 minutes.
+ <LocalMin>     Numeric                -      -
+                                                             Not supported.
+
+ <Checksum>     Hexadecimal            -      *40            Checksum.
+
+ <CR><LF>       Character              -      -              Carriage return and line feed.
+
+
+Example for NMEA 0183 V3.01:
+
+$GNZDA,093423.000,14,01,2022,,*41
+
+Example for NMEA 0183 V4.10:
+
+$GNZDA,093316.000,14,01,2022,,*40
+
+
+
+ NOTE
+
+ZDA is not supported for LC29H (BA, CA, DA, EA*).
+
+
+
+2.2.8. GRS
+
+GNSS range residuals. This sentence supports Receiver Autonomous Integrity Monitoring (RAIM). Range
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                24 / 83
+                                                                                    GNSS Module Series
+
+
+residuals can be computed in two ways for this process. The basic measurement integration cycle of most
+navigation filters generates a set of residuals and uses these to update the position state of the receiver.
+
+Type:
+
+Output
+
+Synopsis:
+
+Format for NMEA 0183 V3.01:
+
+$<TalkerID>GRS,<UTC>,<Mode>{,<Resi>}*<Checksum><CR><LF>
+
+Format for NMEA 0183 V4.10 (default):
+
+$<TalkerID>GRS,<UTC>,<Mode>{,<Resi>},<SystemID>,<SignalID>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field            Format                   Unit   Example        Description
+
+ $                -                        -      $              Each NMEA message starts with $.
+
+                                                                 Talker identifier.
+ <TalkerID>       String, 2 characters     -      GN
+                                                                 See Table 4: NMEA Talker ID.
+
+ GRS              String, 3 characters     -      GRS            GNSS range residuals.
+
+                                                                 Position fix UTC.
+                                                                 hh: Hours (00–23)
+ <UTC>            hhmmss.sss               -      061549.000     mm: Minutes (00–59)
+                                                                 ss: Seconds (00–59)
+                                                                 sss: Decimal fraction of seconds
+                                                                 Computation method used.
+                                                                 0 = Residuals were used to calculate the
+                                                                 position given in the matching GGA or
+ <Mode>           Numeric                  -      1
+                                                                 GNS sentence.
+                                                                 1 = Residuals were recomputed after the
+                                                                 GGA or GNS position was computed.
+
+ Start of repeat block. Repeat time: 12.
+
+                                                                 Range residuals for SVs used in
+                                                                 navigation. Range: -999 to 999.
+ <Resi>           Numeric                  m      6.2
+                                                                 Note that this field is empty in case of an
+                                                                 invalid value.
+
+ End of repeat block.
+
+ <SystemID>       Numeric                  -      1              GNSS system ID.
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                      25 / 83
+                                                                                 GNSS Module Series
+
+
+
+ Field           Format                 Unit   Example        Description
+
+                                                              See Table 8: GNSS Numbering.
+                                                              Please note that this parameter is only
+                                                              available in NMEA 0183 V4.10 or higher.
+                                                              GNSS signal ID.
+                                                              See Table 8: GNSS Numbering.
+ <SignalID>      Numeric                -      1
+                                                              Please note that this parameter is only
+                                                              available in NMEA 0183 V4.10 or higher.
+
+ <Checksum>      Hexadecimal            -      *6F            Checksum.
+
+ <CR><LF>        Character              -      -              Carriage return and line feed.
+
+
+Example for NMEA 0183 V3.01:
+
+$GNGRS,072520.000,1,-4.5,-133,-6.9,2.3,-4.3,-144,-4.9,-4.4,-2.2,-131,-76.7,-3.3*61
+$GNGRS,072520.000,1,-4.5,,,,-4.3,,,-4.4,,,,-3.3*64
+$GNGRS,072520.000,1,-2.3,0.3,-2.0,,,,,,,,,*4C
+$GNGRS,072520.000,1,-3.9,-4.6,3.0,-15.1,0.7,,,,,,,*58
+$GNGRS,072520.000,1,-3.9,-4.6,3.0,-15.1,0.7,,,,,,,*58
+$GNGRS,072520.000,1,-4.1,0.3,-0.2,6.1,-4.3,3.8,-0.2,-10.3,-6.6,1.8,12.2,-15.5*79
+$GNGRS,072520.000,1,6.5,-6.3,1.9,-4.1,-141,0.5,,,,,,*5B
+$GNGRS,072520.000,1,-4.1,0.3,-0.2,,,,-0.2,,-6.6,,12.2,*55
+$GNGRS,072520.000,1,,,1.9,,,0.5,,,,,,*6F
+
+Example for NMEA 0183 V4.10:
+
+$GNGRS,061549.000,1,6.2,-7.5,0.4,-0.7,0.8,-8.6,4.0,4.1,7.7,7.2,2.0,-6.3,1,1*6F
+$GNGRS,061549.000,1,-4.8,5.2,-82.4,1.7,,,,,,,,,1,1*5C
+$GNGRS,061549.000,1,6.2,-7.5,,,0.8,-8.6,,4.1,,,,,1,8*4D
+$GNGRS,061549.000,1,-4.8,5.2,,,,,,,,,,,1,8*40
+$GNGRS,061549.000,1,-2.5,11.2,-16.4,-1.5,,,,,,,,,2,1*43
+$GNGRS,061549.000,1,-9.8,8.0,8.0,74.7,-16.2,-6.2,-101,,,,,,3,7*5F
+$GNGRS,061549.000,1,-9.8,8.0,8.0,74.7,-16.2,-6.2,,,,,,,3,1*44
+$GNGRS,061549.000,1,-0.6,-2.0,-6.4,1.0,12.7,7.8,-18.0,3.3,-5.3,16.5,-7.6,-91.2,4,1*4D
+$GNGRS,061549.000,1,-3.8,5.9,-0.4,1.1,-107,-5.2,,,,,,,4,1*76
+$GNGRS,061549.000,1,-0.6,-2.0,-6.4,,,,,3.3,,,,,4,4*44
+$GNGRS,061549.000,1,-3.8,5.9,-0.4,1.1,,,,,,,,,4,4*6C
+
+
+
+ NOTE
+
+1.   GRS is not supported for LC29H (BA, CA, DA, EA*).
+2.   The SV order matches the order of the satellite ID numbers in GSA sentence. If the range residual
+     exceeds +99.9 meters, then the decimal part is dropped, resulting in an integer. The maximum value
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                 26 / 83
+                                                                                    GNSS Module Series
+
+
+     for <Resi> is +999.
+3.   If less than 12 satellites are used for navigation, the remaining <Resi>s are left empty. If more than
+     12 satellites are used, multiple GRS sentences containing all <Resi>s will be output.
+
+
+
+2.2.9. GST
+
+GNSS Pseudorange Error Statistics. This sentence supports Receiver Autonomous Integrity Monitoring
+(RAIM). Pseudorange measurement error statistics can be translated in the position domain in order to
+give statistical measures of the quality of the position solution.
+
+Type:
+
+Output
+
+Synopsis:
+
+Format for NMEA 0183 V3.01:
+
+$<TalkerID>GST,<UTC>,<RMS_D>,<MajorD>,<MinorD>,<Orient>,<LatD>,<LonD>,<AltD>*<Checksum>
+<CR><LF>
+
+Format for NMEA 0183 V4.10 (default):
+
+$<TalkerID>GST,<UTC>,<RMS_D>,<MajorD>,<MinorD>,<Orient>,<LatD>,<LonD>,<AltD>*<Checksum>
+<CR><LF>
+
+Parameter:
+
+
+ Field            Format                 Unit        Example         Description
+
+ $                -                      -           $               Each NMEA message starts with $.
+
+                                                                     Talker identifier.
+ <TalkerID>       String, 2 characters   -           GN
+                                                                     See Table 4: NMEA Talker ID.
+
+ GST              String, 3 characters   -           GST             GNSS pseudorange error statistics.
+
+                                                                     Position fix UTC.
+                                                                     hh: Hours (00–23)
+ <UTC>            hhmmss.sss             -           061549.000      mm: Minutes (00–59)
+                                                                     ss: Seconds (00–59)
+                                                                     sss: Decimal fraction of seconds
+                                                                     RMS value of the standard deviation
+ <RMS_D>          Numeric                Meter       8.2             of the range inputs to the navigation
+                                                                     process.
+                                                                     Standard deviation of semi-major
+ <MajorD>         Numeric                Meter       2.6
+                                                                     axis of error ellipse.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                     27 / 83
+                                                                               GNSS Module Series
+
+
+
+ Field          Format                Unit          Example     Description
+
+                                                                Standard deviation of semi-minor
+ <MinorD>       Numeric               Meter         2.4
+                                                                axis of error ellipse.
+                                                                Orientation of semi-major axis of
+ <Orient>       Numeric               Degree        74.7
+                                                                error ellipse.
+
+ <LatD>         Numeric               Meter         2.4         Standard deviation of latitude error.
+
+ <LonD>         Numeric               Meter         2.6         Standard deviation of longitude error.
+
+ <AltD>         Numeric               Meter         8.5         Standard deviation of altitude error.
+
+ <Checksum>     Hexadecimal           -             *45         Checksum.
+
+ <CR><LF>       Character             -             -           Carriage return and line feed.
+
+
+Example for NMEA 0183 V3.01:
+
+$GNGST,072520.000,6.5,2.9,2.3,98.2,2.3,2.9,11.2*79
+
+Example for NMEA 0183 V4.10:
+
+$GNGST,061549.000,8.2,2.6,2.4,74.7,2.4,2.6,8.5*45
+
+
+
+ NOTE
+
+GST is not supported for LC29H (BA, CA, DA, EA*).
+
+
+
+
+2.3. PAIR Messages
+
+This chapter explains PAIR messages (proprietary NMEA messages defined by the chipset supplier). “P”
+means proprietary message, and “AIR” means the command defined by the chipset supplier.
+
+
+
+2.3.1. Packet Type: 001 PAIR_ACK
+
+Acknowledges a PAIR command. An acknowledgement packet $PAIR001 is returned to inform the
+sender that the receiver has received the packet.
+
+Type:
+
+Output
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                28 / 83
+                                                                            GNSS Module Series
+
+
+Synopsis:
+
+$PAIR001,<CommandID>,<Result>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field           Format       Unit    Description
+
+ <CommandID>     Numeric      -       Type of command/packet to be acknowledged.
+
+                                      0 = Command has been successfully sent.
+                                      1 = Command is being processed. Please wait for the result.
+                                      2 = Command sending failed.
+ <Result>        Numeric      -       3 = <CommandID> is not supported
+                                      4 = Command parameter error. Out of range/Some parameters
+                                      were lost/Checksum error.
+                                      5 = MNL service is busy. You can try again soon.
+
+
+Example:
+
+$PAIR001,004,0*3F
+
+
+
+2.3.2. Packet Type: 002 PAIR_GNSS_SUBSYS_POWER_ON
+
+Powers on the GNSS system, including DSP, RF, PE and clock.
+
+Type:
+
+Command
+
+Synopsis:
+
+$PAIR002*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR002*38
+$PAIR001,002,1*38
+$PAIR001,002,0*39
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                           29 / 83
+                                                                                GNSS Module Series
+
+
+
+2.3.3. Packet Type: 003 PAIR_GNSS_SUBSYS_POWER_OFF
+
+Powers off the GNSS system, including DSP, RF, PE and clock.
+
+Type:
+
+Command
+
+Synopsis:
+
+$PAIR003*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR003*39
+$PAIR001,003,1*39
+$PAIR001,003,0*38
+
+
+
+ NOTE
+
+1.   If the module receives $PAIR382,1*2E before $PAIR003*39, and $PAIR001,382,0*32 is returned
+     correctly, then it can still receive other commands. Otherwise, any other commands will not be
+     received.
+2.   For software versions supporting I2C communication, the module can receive commands after
+     sending $PAIR003*39.
+
+
+
+2.3.4. Packet Type: 004 PAIR_GNSS_SUBSYS_HOT_START
+
+Performs a hot start (uses all available data in the NVRAM). Normally a hot start means that the GNSS
+module has been powered down for less than 2 hours (RTC must be alive) with its ephemeris still valid.
+Therefore, there is no need to download an ephemeris again upon a hot start, thus making this startup
+method the fastest.
+
+Type:
+
+Command
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                30 / 83
+                                                                                   GNSS Module Series
+
+
+Synopsis:
+
+$PAIR004*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR004*3E
+$PAIR001,004,0*3F
+
+
+
+2.3.5. Packet Type: 005 PAIR_GNSS_SUBSYS_WARM_START
+
+Performs a warm start. A warm start means that the GNSS module remembers only rough time, position,
+and almanac data, and thus needs to download an ephemeris before it can fix a position.
+
+Type:
+
+Command
+
+Synopsis:
+
+$PAIR005*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR005*3F
+$PAIR001,005,0*3E
+
+
+
+2.3.6. Packet Type: 006 PAIR_GNSS_SUBSYS_COLD_START
+
+Performs a cold start, which means that there is no location information stored in the receiver, including
+time, position, and almanacs and ephemeris data.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                    31 / 83
+                                                                                     GNSS Module Series
+
+
+Type:
+
+Command
+
+Synopsis:
+
+$PAIR006*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR006*3C
+$PAIR001,006,0*3D
+
+
+
+2.3.7. Packet Type: 007 PAIR_GNSS_SUBSYS_FULL_COLD_START
+
+Performs a cold start and clears system and user configurations at the start, i.e., resets the module to its
+factory settings. Upon a full cold start, the module loses all data on the previous position. Therefore, it
+needs to search over the full frequency spectrum for all visible satellites before it can fix a position.
+
+Type:
+
+Command
+
+Synopsis:
+
+$PAIR007*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR007*3D
+$PAIR001,007,0*3C
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                      32 / 83
+                                                                                GNSS Module Series
+
+
+
+2.3.8. Packet Type: 010 PAIR_REQUEST_AIDING
+
+Notifies the expiration of GNSS aiding data stored in the module. This message is automatically output
+when the module powers on.
+
+Type:
+
+Output
+
+Synopsis:
+
+$PAIR010,<Type>,<GNSS_System>,<WN>,<TOW>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field                        Format    Unit      Description
+
+                                                  Type of data to be updated.
+                                                  0 = EPO data
+ <Type>                       Numeric   -
+                                                  1 = Time
+                                                  2 = Location
+                                                  Type of required GNSS data.
+                                                  0 = GPS data
+                                                  1 = GLONASS data
+ <GNSS_System>                Numeric   -
+                                                  2 = Galileo data
+                                                  3 = BDS data
+                                                  4 = QZSS data
+
+ <WN>                         Numeric   Week      Week Number (accommodating roll-over).
+
+ <TOW>                        Numeric   Second    Time of Week.
+
+
+Example:
+
+$PAIR010,0,0,2044,369413*33
+
+
+
+ NOTE
+
+The GNSS system sends this message automatically. Do not send $PAIR010 manually.
+
+
+
+
+2.3.9. Packet Type: 050 PAIR_COMMON_SET_FIX_RATE
+
+Sets position fix interval.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                33 / 83
+                                                                               GNSS Module Series
+
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR050,<Time>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field              Format         Unit                Description
+
+                                                       Position fix interval.
+ <Time>             Numeric        Millisecond
+                                                       Range: 100–1000. Default value: 1000.
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR050,1000*12
+$PAIR001,050,0*3E
+
+
+
+ NOTE
+
+1.    If the default value is not given for any parameter in a Set command, you can query it with the
+      corresponding Get command when the default setting has not been changed. If the default setting
+      had been changed with the Set command, contact Quectel Technical Support
+      (support@quectel.com) for the default setting.
+2.    If the set frequency is greater than 1 Hz, only RMC and GGA massages will be output at the set
+      frequency, whereas VTG and GLL messages will not be output. Other NMEA messages are kept
+      output at 1 Hz.
+3.    For LC29H (BA) with LC29HBANR01A01S_CSA4 or higher software versions, LC29H (CA) with
+      LC29HCANR01A01S_DSA4 or higher software versions, as well as LC29H (EA*) modules:
+      1) <Time> can be set only to 100 or 1000.
+      2) $PAIR050 will take effect after you reboot the module.
+4.    $PAIR050 is not supported for LC29H (BA) with LC29HBANR01A01S_CSA2 or higher software
+      versions, LC29H (CA) with LC29HCANR01A01S_DSA2 or LC29HCANR01A01S_DTB2 or their
+      higher versions, as well as LC29H (DA) modules.
+
+
+
+2.3.10. Packet Type: 051 PAIR_COMMON_GET_FIX_RATE
+
+Gets the position fix interval.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                 34 / 83
+                                                                                 GNSS Module Series
+
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR051*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR051,<Time>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field          Format        Unit              Description
+
+                                                Position fix interval.
+ <Time>         Numeric       Millisecond
+                                                Range: 100–1000. Default value: 1000.
+
+
+Example:
+
+$PAIR051*3E
+$PAIR001,051,0*3F
+$PAIR051,1000*13
+
+
+
+ NOTE
+
+This command is not supported for LC29H (BA) with LC29HBANR01A01S_CSA2 or higher software
+versions, LC29H (CA) with LC29HCANR01A01S_DSA2 or LC29HCANR01A01S_DTB2 or their higher
+versions, as well as LC29H (DA) modules.
+
+
+
+2.3.11. Packet Type: 058 PAIR_COMMON_SET_MIN_SNR
+
+Sets the minimum SNR of satellites in use. If the minimum SNR threshold is set, the module will not use
+the satellites with SNR below the threshold.
+
+Type:
+
+Set
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                 35 / 83
+                                                                              GNSS Module Series
+
+
+Synopsis:
+
+$PAIR058,<MIN_SNR>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field           Format            Unit      Description
+
+                                             Minimum SNR threshold of satellites in use.
+ <MIN_SNR>       Numeric           dB
+                                             Range: 9–37. Default value: 9
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR058,15*1F
+$PAIR001,058,0*36
+
+
+
+ NOTE
+
+This command is not supported for LC29H (BA, CA, DA, EA*).
+
+
+
+
+2.3.12. Packet Type: 059 PAIR_COMMON_GET_MIN_SNR
+
+Gets the minimum SNR of satellites in use.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR059*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR059,<MIN_SNR>*<Checksum><CR><LF>
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                             36 / 83
+                                                                                 GNSS Module Series
+
+
+Parameter included in the result:
+
+
+ Field            Format       Unit          Description
+
+                                             Minimum SNR threshold of satellites in use.
+ <MIN_SNR>        Numeric      dB
+                                             Range: 9–37. Default value: 9.
+
+
+Example:
+
+$PAIR059*36
+$PAIR001,059,0*37
+$PAIR059,15*1E
+
+
+
+ NOTE
+
+This command is not supported for LC29H (BA, CA, DA, EA*).
+
+
+
+
+2.3.13. Packet Type: 062 PAIR_COMMON_SET_NMEA_OUTPUT_RATE
+
+Sets the output rate of standard NMEA sentences of each type.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR062,<Type>,<OutputRate>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field              Format            Unit      Description
+
+                                                Type of standard NMEA sentence.
+                                                -1 = Reset the output rates of all types of sentences to
+                                                default values
+                                                0 = NMEA_SEN_GGA
+                                                1 = NMEA_SEN_GLL
+                                                2 = NMEA_SEN_GSA
+ <Type>             Numeric           -
+                                                3 = NMEA_SEN_GSV
+                                                4 = NMEA_SEN_RMC
+                                                5 = NMEA_SEN_VTG
+                                                6 = NMEA_SEN_ZDA
+                                                7 = NMEA_SEN_GRS
+                                                8 = NMEA_SEN_GST
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                  37 / 83
+                                                                                  GNSS Module Series
+
+
+                                                 Message output rate setting.
+                                                 0 = Disable sentence output
+ <OutputRate>         Numeric            -
+                                                 N = Output message once every N position fix(es)
+                                                 Range of N: 0–20. Default value: 1.
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR062,0,3*3D
+$PAIR001,062,0*3F
+
+
+
+ NOTE
+
+1.    LC29H (BA, CA, DA, EA*) only supports setting <Type> to 0–5.
+2.    LC29H (BA, CA, DA, EA*) only supports setting <OutputRate> to 0 or 1.
+
+
+
+2.3.14. Packet Type: 063 PAIR_COMMON_GET_NMEA_OUTPUT_RATE
+
+Gets the output rate of standard NMEA sentences of each type.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR063,<Type>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field              Format        Unit       Description
+
+                                             Type of standard NMEA sentence.
+                                             -1 = Return the output rates of all types of standard NMEA
+                                             sentences
+                                             0 = NMEA_SEN_GGA
+                                             1 = NMEA_SEN_GLL
+ <Type>             Numeric       -
+                                             2 = NMEA_SEN_GSA
+                                             3 = NMEA_SEN_GSV
+                                             4 = NMEA_SEN_RMC
+                                             5 = NMEA_SEN_VTG
+                                             6 = NMEA_SEN_ZDA
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                  38 / 83
+                                                                                 GNSS Module Series
+
+
+                                          7 = NMEA_SEN_GRS
+                                          8 = NMEA_SEN_GST
+
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR063,<Type>,<OutputRate>*<Checksum><CR><LF>
+
+Parameters included in the result:
+
+
+ Field            Format       Unit              Description
+
+                                                 Type of standard NMEA sentence.
+                                                 0 = NMEA_SEN_GGA
+                                                 1 = NMEA_SEN_GLL
+                                                 2 = NMEA_SEN_GSA
+                                                 3 = NMEA_SEN_GSV
+ <Type>           Numeric      -
+                                                 4 = NMEA_SEN_RMC
+                                                 5 = NMEA_SEN_VTG
+                                                 6 = NMEA_SEN_ZDA
+                                                 7 = NMEA_SEN_GRS
+                                                 8 = NMEA_SEN_GST
+                                                 Message output rate setting.
+                                                 0 = Disabled or not supported.
+ <OutputRate>     Numeric      -
+                                                 N = Output message once every N position fix(es)
+                                                 Range of N: 1–20.
+
+
+Example:
+
+$PAIR063,0*23
+$PAIR001,063,0*3E
+$PAIR063,0,3*3C
+
+
+
+ NOTE
+
+LC29H (BA, CA, DA, EA*) only supports setting <Type> to 0–5.
+
+
+
+
+2.3.15. Packet Type: 066 PAIR_COMMON_SET_GNSS_SEARCH_MODE
+
+Sets the GNSS search mode. The setting is valid when the NVRAM data are valid.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                              39 / 83
+                                                                                  GNSS Module Series
+
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR066,<GPS_Enabled>,<GLONASS_Enabled>,<Galileo_Enabled>,<BDS_Enabled>,<QZSS_Enabl
+ed>,<Reserved>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field                       Format        Unit   Description
+
+                                                  0 = Disable (DO NOT search for GPS satellites)
+ <GPS_Enabled>               Numeric       -
+                                                  1 = Search for GPS satellites
+                                                  0 = Disable (DO NOT search for GLONASS satellites)
+ <GLONASS_Enabled>           Numeric       -
+                                                  1 = Search for GLONASS satellites
+                                                  0 = Disable (DO NOT search for Galileo satellites)
+ <Galileo_Enabled>           Numeric       -
+                                                  1 = Search for Galileo satellites
+                                                  0 = Disable (DO NOT search for BDS satellites)
+ <BDS_Enabled>               Numeric       -
+                                                  1 = Search for BDS satellites
+                                                  0 = Disable (DO NOT search for QZSS satellites)
+ <QZSS_Enabled>              Numeric       -
+                                                  1 = Search for QZSS satellites
+
+ <Reserved>                  Numeric       -      Always "0"
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+//Search for GPS + GLONASS + Galileo + BDS satellites:
+$PAIR066,1,1,1,1,0,0*3A
+$PAIR001,066,0*3B
+
+
+
+ NOTE
+
+1.    QZSS is always enabled by default.
+2.    Supported GNSS search modes:
+      ⚫ GPS only
+      ⚫ GPS + QZSS
+      ⚫ GPS + GLONASS
+      ⚫ GPS + QZSS + GLONASS
+      ⚫ GPS + Galileo
+      ⚫ GPS + QZSS + Galileo
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                   40 / 83
+                                                                                GNSS Module Series
+
+
+
+      ⚫ GPS + BDS
+      ⚫ GPS + QZSS + BDS
+      ⚫ GPS + GLONASS + Galileo + BDS
+      ⚫ GPS + QZSS + GLONASS + Galileo + BDS
+3.    This command is not supported for LC29H (BA, CA, DA, EA*).
+
+
+
+2.3.16. Packet Type: 067 PAIR_COMMON_GET_GNSS_SEARCH_MODE
+
+Gets the GNSS search mode.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR067*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR067,<GPS_Enabled>,<GLONASS_Enabled>,<Galileo_Enabled>,<BDS_Enabled>,<QZSS_Enabl
+ed>,<Reserved>*<Checksum><CR><LF>
+
+Parameters included in the result:
+
+
+ Field                      Format       Unit   Description
+
+                                                0 = Disabled (DO NOT search for GPS satellites)
+ <GPS_Enabled>              Numeric      -
+                                                1 = Search for GPS satellites
+                                                0 = Disabled (DO NOT search for GLONASS satellites)
+ <GLONASS_Enabled>          Numeric      -
+                                                1 = Search for GLONASS satellites
+                                                0 = Disabled (DO NOT search for Galileo satellites)
+ <Galileo_Enabled>          Numeric      -
+                                                1 = Search for Galileo satellites
+                                                0 = Disabled (DO NOT search for BDS satellites)
+ <BDS_Enabled>              Numeric      -
+                                                1 = Search for BDS satellites
+                                                0 = Disabled (DO NOT search for QZSS satellites)
+ <QZSS_Enabled>             Numeric      -
+                                                1 or other non-zero values = Search for QZSS satellites
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                 41 / 83
+                                                                                    GNSS Module Series
+
+
+
+ <Reserved>                  Numeric       -      Always “0”.
+
+
+Example:
+
+$PAIR067*3B
+$PAIR001,067,0*3A
+$PAIR067,1,1,1,1,1,0*3A
+
+
+
+ NOTE
+
+This command is not supported for LC29H (BA, CA, DA, EA*).
+
+
+
+
+2.3.17. Packet Type: 070 PAIR_COMMON_SET_STATIC_THRESHOLD
+
+Sets the static navigation speed threshold. If the actual speed is below the threshold, the output position
+remains unchanged and the output speed is 0. If the threshold value is set to 0, this function is disabled.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR070,<SpeedThreshold>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field                           Format        Unit             Description
+
+                                                                Speed threshold.
+ <SpeedThreshold>                Numeric       dm/s
+                                                                Range: 0–20. Default value: 0.
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR070,4*25
+$PAIR001,070,0*3C
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                     42 / 83
+                                                                             GNSS Module Series
+
+
+
+ NOTE
+
+This command is not supported for LC29H (BA, CA, DA, EA*).
+
+
+
+
+2.3.18. Packet Type: 071 PAIR_COMMON_GET_STATIC_THRESHOLD
+
+Gets the static navigation speed threshold.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR071*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR071,<SpeedThreshold>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field                    Format          Unit    Description
+
+                                                  Static navigation speed threshold.
+ <SpeedThreshold>         Numeric         m/s
+                                                  Range: 0–2. Default value: 0.
+
+
+Example:
+
+$PAIR071*3C
+$PAIR001,071,0*3D
+$PAIR071,0.4*3A
+
+
+
+ NOTE
+
+This command is not supported for LC29H (BA, CA, DA, EA*).
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                          43 / 83
+                                                                                  GNSS Module Series
+
+
+
+2.3.19. Packet Type: 072 PAIR_COMMON_SET_ELEV_MASK
+
+Sets satellite elevation mask.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR072,<Degree>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field            Format             Unit           Description
+
+                                                    Satellite elevation mask.
+ <Degree>         Numeric            Degree
+                                                    Range: -90 to 90. Default value: 5.
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR072,5*26
+$PAIR001,072,0*3E
+
+
+
+ NOTE
+
+1. The satellites below the elevation mask are not used for positioning.
+2. This command is not supported for LC29H (BA, CA, DA, EA*).
+
+
+
+2.3.20. Packet Type: 073 PAIR_COMMON_GET_ELEV_MASK
+
+Gets satellite elevation mask.
+
+Type:
+
+Get
+
+Synopsis
+
+$PAIR073*<Checksum><CR><LF>
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                               44 / 83
+                                                                                   GNSS Module Series
+
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR073,<Degree>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field            Format              Unit         Description
+
+                                                   Satellite elevation mask
+ <Degree>         Numeric             Degree
+                                                   Range: -90 to 90.
+
+
+Example:
+
+$PAIR073*3E
+$PAIR001,073,0*3F
+$PAIR073,5*27
+
+
+
+ NOTE
+
+This command is not supported for LC29H (BA, CA, DA, EA*).
+
+
+2.3.21. Packet Type: 074 PAIR_COMMON_SET_AIC_ENABLE
+
+Enables/disables the active interference cancellation (AIC) function. For details about AIC function, see
+documents [1] and [2].
+
+Type:
+
+Set
+
+Synopsis
+
+$PAIR074,<Enabled>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field              Format            Unit          Description
+
+ <Enabled>          Numeric           -             Enable/disable AIC function.
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                   45 / 83
+                                                                             GNSS Module Series
+
+
+                                                      0 = Disable
+                                                      1 = Enable (default)
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR074,1*24
+$PAIR001,074,0*38
+
+
+
+2.3.22. Packet Type: 075 PAIR_COMMON_GET_AIC_STATUS
+
+Queries the status of active interference cancellation (AIC) function.
+
+Type:
+
+Get
+
+Synopsis
+
+$PAIR075*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR075,<Status>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field            Format         Unit           Description
+
+                                                Status of AIC function.
+ <Status>         Numeric        -              0 = Disabled
+                                                1 = Enabled
+
+
+Example:
+
+$PAIR075*38
+$PAIR001,075,0*39
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                          46 / 83
+                                                                               GNSS Module Series
+
+
+$PAIR075,1*25
+
+
+
+2.3.23. Packet Type: 080 PAIR_COMMON_SET_NAVIGATION_MODE
+
+Sets navigation mode.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR080,<NavMode>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field          Format      Unit   Description
+
+                                   Navigation mode.
+                                   0 = Normal mode. For general purposes. (Default)
+                                   1 = Fitness mode. Used for running and walking purposes, making
+                                   low-speed movement (< 5 m/s) more impactful on position
+                                   calculation.
+                                   2 = Reserved.
+                                   3 = Reserved.
+                                   4 = Stationary mode. For stationary applications where zero
+ <NavMode >     Numeric     -      dynamics is assumed.
+                                   5 = Drone mode. Used for drone applications with equivalent
+                                   dynamics range and vertical acceleration at different flight phases
+                                   (for example, hovering, cruising).
+                                   6 = Reserved.
+                                   7 = Swimming mode. Used for swimming purposes to smooth the
+                                   trajectory and improve the accuracy of distance calculation.
+                                   8 = Reserved.
+                                   9 = Bike mode. For sharing bike applications.
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR080,1*2F
+$PAIR001,080,0*33
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                47 / 83
+                                                                                GNSS Module Series
+
+
+
+2.3.24. Packet Type: 081 PAIR_COMMON_GET_NAVIGATION_MODE
+
+Queries navigation mode.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR081*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR081,<NavMode>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field          Format     Unit     Description
+
+                                    Navigation mode.
+                                    0 = Normal mode. For general purposes. (Default)
+                                    1 = Fitness mode. Used for running and walking purposes, making
+                                    low-speed movement (< 5 m/s) more impactful on position
+                                    calculation.
+                                    2 = Reserved.
+                                    3 = Reserved.
+                                    4 = Stationary mode. For stationary applications where zero
+ <NavMode>      Numeric    -        dynamics is assumed.
+                                    5 = Drone mode. Used for drone applications with equivalent
+                                    dynamics range and vertical acceleration at different flight phases
+                                    (for example, hovering, cruising).
+                                    6 = Reserved.
+                                    7 = Swimming mode. Used for swimming purposes to smooth the
+                                    trajectory and improve the accuracy of distance calculation.
+                                    8 = Reserved.
+                                    9 = Bike mode. For sharing bike applications.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                 48 / 83
+                                                                                    GNSS Module Series
+
+
+Example:
+
+$PAIR081*33
+$PAIR001,081,0*32
+$PAIR081,0*2F
+
+
+
+2.3.25. Packet Type: 086 PAIR_COMMON_SET_DEBUGLOG_OUTPUT
+
+Enables/disables debug log output in binary format.
+
+Type:
+
+Set
+
+Synopsis
+
+$PAIR086,<Status>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field               Format             Unit          Description
+
+                                                      Debug log output setting.
+                                                      0 = Disable (default)
+ <Status>            Numeric            -
+                                                      1 = Enable with full debug log output
+                                                      2 = Enable with lite debug log output
+
+
+Result:
+
+Returns $PAIR001 message.
+Example:
+
+$PAIR086,1*29
+$PAIR001,086,0*35
+
+
+
+2.3.26. Packet Type: 087 PAIR_COMMON_GET_DEBUGLOG_OUTPUT
+
+Queries the debug log output setting.
+
+Type:
+
+Get
+
+Synopsis
+
+$PAIR087*<Checksum><CR><LF>
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                 49 / 83
+                                                                                GNSS Module Series
+
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR087,<Status>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field           Format             Unit         Description
+
+                                                 Debug log output setting.
+                                                 0 = Disabled
+ <Status>        Numeric            -
+                                                 1 = Enabled with full debug log output
+                                                 2 = Enabled with lite debug log output
+
+
+Example:
+
+$PAIR087*35
+$PAIR001,087,0*34
+$PAIR087,0*29
+
+
+
+2.3.27. Packet Type: 100 PAIR_COMMON_SET_NMEA_OUTPUT_MODE
+
+Sets output mode of standard NMEA sentences.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR100,<NMEA_Mode>,<Res>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field              Format      Unit       Description
+
+                                           Output mode of standard NMEA sentences.
+                                           0 = Disabled
+ <NMEA_Mode>        Numeric     -
+                                           1 = ASCII NMEA 0183 V4.10 output enabled (default)
+                                           2 = ASCII NMEA 0183 V3.01 output enabled
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                             50 / 83
+                                                                            GNSS Module Series
+
+
+
+ <Res>              Numeric     -           Reserved. Default value: 0.
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR100,1,0*3A
+$PAIR001,100,0*3A
+
+
+
+ NOTE
+
+For LC29H (BA, CA, DA, EA*), standard NMEA sentences are output in NMEA 0183 V4.10 format and
+this command is not supported.
+
+
+
+2.3.28. Packet Type: 101 PAIR_COMMON_GET_NMEA_OUTPUT_MODE
+
+Queries output mode of standard NMEA sentences.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR101*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR101,<NMEA_Mode>,<Res>*<Checksum><CR><LF>
+
+Parameters included in the result:
+
+
+ Field               Format         Unit   Description
+
+                                           Output mode of standard NMEA sentences.
+ <NMEA_Mode>         Numeric        -
+                                           0 = Disabled
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                         51 / 83
+                                                                              GNSS Module Series
+
+
+                                          1 = ASCII NMEA 0183 V4.10 output enabled (default)
+                                          2 = ASCII NMEA 0183 V3.01 output enabled
+
+ <Res>               Numeric     -        Reserved. Default value: 0.
+
+
+Example:
+
+$PAIR101*3A
+$PAIR001,101,0*3B
+$PAIR101,1,0*3B
+
+
+
+ NOTE
+
+This command is not supported for LC29H (BA, CA, DA, EA*).
+
+
+
+
+2.3.29. Packet Type: 104 PAIR_COMMON_SET_DUAL_BAND
+
+Enables/disables the Dual Band feature when the GNSS system is powered off.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR104,<DualBandEnabled>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field                      Format         Unit          Description
+
+                                                         Enable/disable the Dual Band feature.
+ <DualBandEnabled>          Numeric        -             0 = Disable
+                                                         1 = Enable (default)
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR104,0*23
+$PAIR001,104,0*3E
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                              52 / 83
+                                                                                GNSS Module Series
+
+
+
+ NOTE
+
+1.    This command is not supported for LC79H (BA) and LC29H (BA, CA, DA, EA*).
+2.    Before setting the Dual Band feature by $PAIR104, send $PAIR382,1*2E and $PAIR003*39 in
+      sequence to power off the GNSS system. After the Dual Band feature has been set, send
+      $PAIR002*38 to power on the module.
+
+
+
+2.3.30. Packet Type: 105 PAIR_COMMON_GET_DUAL_BAND
+
+Queries whether the Dual Band feature is enabled or disabled.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR105*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR105,<Enabled>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field             Format            Unit        Description
+
+                                                 Status of the Dual Band feature.
+ <Enabled>         Numeric           -           0 = Disabled
+                                                 1 = Enabled
+
+
+Example:
+
+$PAIR105*3E
+$PAIR001,105,0*3F
+$PAIR105,1*23
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                             53 / 83
+                                                                                 GNSS Module Series
+
+
+
+ NOTE
+
+This command is not supported for LC79H (BA) and LC29H (BA, CA, DA, EA*).
+
+
+
+
+2.3.31. Packet Type: 382 PAIR_TEST_LOCK_SYSTEM_SLEEP
+
+Enables/disables the locking of Sleep mode. The CPU core will lock into the power off mode after the
+command is sent.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR382,<Enabled>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field                        Format         Unit       Description
+
+                                                        Sleep mode locking setting.
+ <Enabled>                    Numeric        -          0 = Disabled (default)
+                                                        1 = Enabled
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR382,1*2E
+$PAIR001,382,0*32
+
+
+
+ NOTE
+
+1.    This configuration will not be saved in the flash or RTC RAM. Please send this command every time
+      after the GNSS subsystem or main power reboots.
+2.    The module can still receive commands if it receives $PAIR382,1*2E before $PAIR003*39 and
+      $PAIR001,382,0*32 is returned correctly. Otherwise, any other commands cannot be received.
+
+
+
+2.3.32. Packet Type: 391 PAIR_TEST_JAMMING_DETECT
+
+Enables/disables jamming detection. Jamming status messages will be returned when jamming detection
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                 54 / 83
+                                                                            GNSS Module Series
+
+
+is enabled.
+
+Type:
+
+Set/Output
+
+Synopsis:
+
+$PAIR391,<CmdType>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field            Format            Unit      Description
+
+                                              Enable/disable jamming detection.
+ <CmdType>        Numeric           -         0 = Disable (default)
+                                              1 = Enable
+
+
+Result:
+
+Returns $PAIR001 message and enable $PAIRSPF message output periodically (at 1 Hz).
+
+Query result message format:
+
+$PAIRSPF,<Status>*<Checksum><CR><LF>
+$PAIRSPF5,<Status>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field            Format            Unit      Description
+
+                                              Jamming status.
+                                              0 = Unknown status
+ <Status>         Numeric           -         1 = No jamming, good status
+                                              2 = Warning status
+                                              3 = Critical status
+
+
+Example:
+
+$PAIR391,1*2C
+$PAIR001,391,0*30
+//Unknown status:
+$PAIRSPF,0*53
+$PAIRSPF5,0*66
+//Good status:
+$PAIRSPF,1*52
+$PAIRSPF5,1*67
+//Warning status:
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                         55 / 83
+                                                                                     GNSS Module Series
+
+
+$PAIRSPF,2*51
+$PAIRSPF5,2*64
+//Critical status:
+$PAIRSPF,3*50
+$PAIRSPF5,3*65
+
+
+
+ NOTE
+
+1.    The $PAIRSPF,<Status>*<Checksum><CR><LF> sentence indicates L1 jamming status.
+2.    The $PAIRSPF5,<Status>*<Checksum><CR><LF> sentence indicates L5 jamming status. This
+      message will not be output when only L1 band signals are received and tracked.
+3.    The module starts jamming detection once the feature is enabled.
+      ⚫ If there is no jamming, $PAIRSPF,1*52, or $PAIRSPF,1*52 and $PAIRSPF5,1*62, will be
+          reported to indicate good status (<Status> = 1).
+      ⚫ In case of continuous jamming, the jamming status will change from 1 to 2 and finally to 3.
+          1) When no position fix has been completed: module status is 1 right after the jamming
+              detection is enabled, and then changes to 2 when jamming is detected. During this process,
+              the module keeps attempting to get a fix; if the anti-jamming repair fails, the jamming status
+              changes to 3 at last.
+          2) After a successful position fix: jamming status is 1 right after jamming detection is enabled,
+              and changes to 2 and 3 consecutively when jamming is detected.
+
+
+
+2.3.33. Packet Type: 400 PAIR_DGPS_SET_MODE
+
+Sets the DGPS correction data source.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR400,<Mode>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field               Format      Unit       Description
+
+                                            DGPS data source.
+                                            0 = No DGPS data source
+ <Mode>              Numeric     -
+                                            1 = RTCM
+                                            2 = SBAS (including WAAS/EGNOS/GAGAN/MSAS) (default)
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                      56 / 83
+                                                                               GNSS Module Series
+
+
+Result:
+
+Retuns $PAIR001 message.
+
+Example:
+
+$PAIR400,2*20
+$PAIR001,400,0*3F
+
+
+
+ NOTE
+
+Since DGPS feature is not supported by LC29H (BA, CA, DA, EA*), this command is not supported either.
+
+
+
+
+2.3.34. Packet Type: 401 PAIR_DGPS_GET_MODE
+
+Queries the DGPS correction data source.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR401*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR401,<Mode>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field           Format             Unit      Description
+
+                                              DGPS data source.
+                                              0 = No DGPS data source
+ <Mode>          Numeric            -
+                                              1 = RTCM
+                                              2 = SBAS (including WAAS/EGNOS/GAGAN/MSAS)
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                               57 / 83
+                                                                                 GNSS Module Series
+
+
+Example:
+
+$PAIR401*3F
+$PAIR001,401,0*3E
+$PAIR401,2*21
+
+
+
+ NOTE
+
+This command is not supported by LC29H (BA, CA, DA, EA*).
+
+
+
+
+2.3.35. Packet Type: 410 PAIR_SBAS_ENABLE
+
+Enables/disables SBAS satellite search. SBAS supports wide-area or regional augmentation through
+geostationary satellite broadcast messages. The geostationary satellites broadcast GNSS integrity and
+correction data with the assistance of multiple ground stations that are located at accurately-surveyed
+points.
+
+Type:
+
+Set
+
+Synopsis
+
+$PAIR410,<Enabled>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field           Format              Unit         Description
+
+                                                  Enable or disable the search of SBAS satellites.
+ <Enabled>       Numeric             -            0 = Disable
+                                                  1 = Enable (default)
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR410,1*22
+$PAIR001,410,0*3E
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                 58 / 83
+                                                                               GNSS Module Series
+
+
+
+ NOTE
+
+1.    When the navigation mode is Fitness or Swimming mode (see command $PAIR080), SBAS is not
+      supported.
+2.    Since SBAS feature is not supported by LC29H (BA, CA, DA, EA*), this command is not supported
+      either.
+
+
+
+2.3.36. Packet Type: 411 PAIR_SBAS_GET_STATUS
+
+Queries the status of SBAS satellite search.
+
+Type:
+
+Get
+
+Synopsis
+
+$PAIR411*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR411,<Enabled>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field                 Format                  Unit     Description
+
+                                                        Status of SBAS satellite search.
+ <Enabled>             Numeric                 -        0 = Disabled
+                                                        1 = Enabled
+
+
+Example:
+
+$PAIR411*3E
+$PAIR001,411,0*3F
+$PAIR411,1*23
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                             59 / 83
+                                                                          GNSS Module Series
+
+
+
+ NOTE
+
+1.    When the navigation mode is Fitness or Swimming mode (see command $PAIR080), SBAS is not
+      supported.
+2.    This command is not supported by LC29H (BA, CA, DA, EA*).
+
+
+
+2.3.37. Packet Type: 432 PAIR_RTCM_SET_OUTPUT_MODE
+
+Sets RTCM output mode.
+
+Type:
+
+Set
+
+Synopsis
+
+$PAIR432,<Mode>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field          Format      Unit     Description
+
+                                     RTCM output mode setting.
+                                     -1 = Disable outputting RTCM (default)
+ <Mode>         Numeric     -
+                                     0 = Enable output RTCM3 with message type MSM4
+                                     1 = Enable output RTCM3 with message type MSM7
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR432,1*22
+$PAIR001,432,0*3E
+
+
+
+ NOTE
+
+LC79H (BA ) module does not support this command.
+
+
+
+2.3.38. Packet Type: 433 PAIR_RTCM_GET_OUTPUT_MODE
+
+Queries RTCM output mode.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                         60 / 83
+                                                                                 GNSS Module Series
+
+
+Type:
+
+Get
+
+Synopsis
+
+$PAIR433*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR433,<Mode>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field           Format         Unit        Description
+
+                                            RTCM output mode setting.
+                                            -1 = Outputting RTCM disabled
+ <Mode>          Numeric        -
+                                            0 = Outputting RTCM3 with message type MSM4 enabled
+                                            1 = Outputting RTCM3 with message type MSM7 enabled
+
+
+Example:
+
+$PAIR433*3E
+$PAIR001,433,0*3F
+$PAIR433,-1*0E
+
+
+
+ NOTE
+
+LC79H (BA) module does not support this command.
+
+
+
+
+2.3.39. Packet Type: 434 PAIR_RTCM_SET_OUTPUT_ANT_PNT
+
+Enables/disables outputting stationary antenna reference point in RTCM format.
+
+Type:
+
+Set
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                              61 / 83
+                                                                                  GNSS Module Series
+
+
+Synopsis
+
+$PAIR434,<Enable>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field          Format       Unit     Description
+
+                                      Enable/disable outputting outputting stationary antenna reference
+                                      point (message type 1005).
+ <Enable>       Numeric      -
+                                      0 = Disable (default)
+                                      1 = Enable
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR434,1*24
+$PAIR001,434,0*38
+
+
+
+ NOTE
+
+LC79H (BA) module does not support this command.
+
+
+
+2.3.40. Packet Type: 435 PAIR_RTCM_GET_OUTPUT_ANT_PNT
+
+Queries the setting of outputting stationary antenna reference point in RTCM format.
+
+Type:
+
+Get
+
+Synopsis
+
+$PAIR435*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                 62 / 83
+                                                                                 GNSS Module Series
+
+
+Query result message format:
+
+$PAIR435,<Enable>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field           Format         Unit        Description
+
+                                            Status of outputting stationary antenna reference point
+                                            (message type 1005).
+ <Enable>        Numeric        -
+                                            0 = Disabled
+                                            1 = Enabled
+
+
+Example:
+
+$PAIR435*38
+$PAIR001,435,0*39
+$PAIR435,1*25
+
+
+
+ NOTE
+
+LC79H (BA) module does not support this command.
+
+
+
+
+2.3.41. Packet Type: 436 PAIR_RTCM_SET_OUTPUT_EPHEMERIS
+
+Enables/disables outputting satellite ephemeris in RTCM format.
+
+Type:
+
+Set
+
+Synopsis
+
+$PAIR436,<Enable>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field           Format         Unit        Description
+
+                                            Enable/disable outputting satellite ephemeris.
+ <Enable>        Numeric        -           0 = Disable (default)
+                                            1 = Enable
+
+
+Result:
+
+Returns $PAIR001 message.
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                               63 / 83
+                                                                                  GNSS Module Series
+
+
+Example:
+
+$PAIR436,1*26
+$PAIR001,436,0*3A
+
+
+
+ NOTE
+
+LC79H (BA) module does not support this command.
+
+
+
+
+2.3.42. Packet Type: 437 PAIR_RTCM_GET_OUTPUT_EPHEMERIS
+
+Queries the status of satellite ephemeris in RTCM format.
+
+Type:
+
+Get
+
+Synopsis
+
+$PAIR437*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR437,<Enable>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field            Format        Unit        Description
+
+                                            Status of outputting satellite ephemeris.
+ <Enable>         Numeric       -           0 = Disabled
+                                            1 = Enabled
+
+
+Example:
+
+$PAIR437*3A
+$PAIR001,437,0*3B
+$PAIR437,1*27
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                               64 / 83
+                                                                               GNSS Module Series
+
+
+
+ NOTE
+
+LC79H (BA) module does not support this command.
+
+
+
+2.3.43. Packet Type: 490 PAIR_EASY_ENABLE
+
+Enables/disables EASY function.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR490,<Enabled>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field                Format           Unit     Description
+
+                                                EASY function setting.
+ <Enabled>            Numeric          -        0 = Disable
+                                                1 = Enable (default)
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR490,1*2A
+$PAIR001,490,0*36
+
+
+
+ NOTE
+
+Since EASY feature is not supported by LC29H (BA, CA, DA, EA*), this command is not supported either.
+
+
+
+
+2.3.44. Packet Type: 491 PAIR_EASY_GET_STATUS
+
+Queries the status of EASY function.
+
+Type:
+
+Get
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                               65 / 83
+                                                                                GNSS Module Series
+
+
+Synopsis:
+
+$PAIR491*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR491,<Enabled>,<Status>*<Checksum><CR><LF>
+
+Parameters included in the result:
+
+
+ Field               Format          Unit        Description
+
+                                                 EASY function setting.
+ <Enabled>           Numeric         -           0 = Disabled
+                                                 1 = Enabled
+                                                 EASY data extension status.
+                                                 0 = Not finished
+ <Status>            Numeric         -           1 = 1-day extension finished
+                                                 2 = 2-day extension finished
+                                                 3 = 3-day extension finished
+
+
+Example:
+
+$PAIR491*36
+$PAIR001,491,0*37
+$PAIR491,1,0*37
+
+
+
+  NOTE
+
+1.   If EASY function is disabled, only the <Enabled> value will be returned after executing this
+     command.
+2.   This command is not supported by LC29H (BA, CA, DA, EA*).
+
+
+
+2.3.45. Packet Type: 511 PAIR_NVRAM_SAVE_NAVIGATION_DATA
+
+Saves current navigation data from RTC RAM to flash.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                             66 / 83
+                                                                               GNSS Module Series
+
+
+Type:
+
+Command
+
+Synopsis
+
+$PAIR511*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR511*3F
+$PAIR001,511,1*3F
+$PAIR001,511,0*3E
+
+
+
+ NOTE
+
+1.   If the backup domain cannot be powered after the power supply of the module is cut off, this
+     command needs to be sent every time the parameters are modified.
+2.   In case the position fix rate is greater than 1 Hz, power off the GNSS system with $PAIR382,1*2E
+     and $PAIR003*39 in sequence before sending this command. After sending $PAIR511*3F, send
+     $PAIR002*38 to re-power the module. This limitation does not apply to fix rate below 1 Hz.
+
+
+
+2.3.46. Packet Type: 513 PAIR_NVRAM_SAVE_SETTING
+
+Saves the current configurations from RTC RAM to flash.
+
+Type:
+
+Command
+
+Synopsis:
+
+$PAIR513*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                               67 / 83
+                                                                                  GNSS Module Series
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR513*3D
+$PAIR001,513,0*3C
+
+
+
+ NOTE
+
+1.    If the backup domain cannot be powered after the power supply of the module is cut off, this
+      command needs to be sent every time the parameters are modified.
+2.    In case the position fix rate is greater than 1 Hz, power off the GNSS system with $PAIR382,1*2E
+      and $PAIR003*39 in sequence before sending this command. After sending $PAIR513*3D, send
+      $PAIR002*38 to re-power the module. This limitation does not apply to fix rate below 1 Hz.
+
+
+
+2.3.47. Packet Type: 650 PAIR_LOW_POWER_ENTRY_RTC_MODE
+
+Shuts down the GNSS system, except the clock. The CPU core will be set to the Backup mode after the
+command is sent, in which it cannot receive any commands. For details about Backup mode, see
+documents [1] and [2].
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR650,<Second>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field              Format         Unit         Description
+
+                                                Time to stay in Backup mode before exiting.
+ <Second>           Numeric        Second       Range: 0 and 10–62208000 (2 years); 0 means entering
+                                                the Backup mode without any timer.
+
+
+Result:
+
+⚫     If there is no error, the module will be set to Backup mode and cannot receive any commands.
+⚫     In case of any command parameter error, the $PAIR001 message will be returned.
+
+Example:
+
+$PAIR650,1*24
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                  68 / 83
+                                                                                 GNSS Module Series
+
+
+$PAIR001,650,4*3C
+
+
+
+ NOTE
+
+Refer to documents [1] and [2] for details about entering/exiting the Backup mode.
+
+
+
+
+2.3.48. Packet Type: 690 PAIR_PERIODIC_SET_MODE
+
+Sets Periodic Power Saving mode configurations.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR690,<Mode>,<FirstRun>,<FirstSleep>,<SecondRun>,<SecondSleep>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field                  Format            Unit             Description
+
+                                                           State of Periodic Power Saving mode.
+                                                           0 = Disabled (default)
+ <Mode>                 Numeric           -
+                                                           1 = Smart periodic mode enabled
+                                                           2 = Strict periodic mode enabled
+
+ <FirstRun>             Numeric           Second           Run time. Range: 3–518400.
+
+ <FirstSleep>           Numeric           Second           Sleep time. Range: 3–518400.
+
+ <SecondRun>            Numeric           Second           Second run time. Range: 0 or 3–518400.
+
+ <SecondSleep>          Numeric           Second           Second sleep time. Range: 0 or 3–518400.
+
+
+Result:
+
+Returns a $PAIR001 message.
+
+Example:
+
+$PAIR690,1,21,39,48,72*28
+$PAIR001,690,0*34
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                               69 / 83
+                                                                                    GNSS Module Series
+
+
+
+ NOTE
+
+1.    <FirstRun>: Interval in seconds after exiting the Sleep mode and getting a new position fix.
+2.    <FirstSleep>: Duration in seconds for staying in the Sleep mode after getting a fix (or attempting to
+      get a fix).
+3.    <SecondRun>: GNSS module will use “second run time” instead of “first run time” setting when
+      there is no signal. The second run time can be “0” only when the second sleep time is “0”.
+4.    <SecondSleep>: GNSS module will use “second sleep time” instead of “first sleep time” setting
+      when there is no signal. The second sleep time can be “0” only when the second run time is “0”.
+
+
+
+2.3.49. Packet Type: 691 PAIR_PERIODIC_GET_MODE
+
+Queries Periodic Power Saving Mode configurations.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR691*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+Result:
+
+Returns a $PAIR001 message and the query result.
+
+Query result message format:
+
+$PAIR691,<Mode>,<FirstRun>,<FirstSleep>,<SecondRun>,<SecondSleep>*<Checksum><CR><LF>
+
+Parameters included in the result:
+
+
+ Field                    Format            Unit              Description
+
+                                                              State of Periodic Power Saving mode.
+                                                              0 = Disabled
+ <Mode>                   Numeric           -
+                                                              1 = Smart periodic mode enabled
+                                                              2 = Strict periodic mode enabled
+
+ <FirstRun>               Numeric           Second            Run time. Range: 3–518400.
+
+ <FirstSleep>             Numeric           Second            Sleep time. Range: 3–518400.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                     70 / 83
+                                                                         GNSS Module Series
+
+
+
+ <SecondRun>               Numeric   Second        Second run time. Range: 0 or 3–518400.
+
+ <SecondSleep>             Numeric   Second        Second sleep time. Range: 0 or 3–518400.
+
+
+Example:
+
+$PAIR691*34
+$PAIR001,691,1*34
+$PAIR001,691,0*35
+$PAIR691,0,3,12,18,72*14
+
+
+
+2.3.50. Packet Type: 752 PAIR_PPS_SET_CONFIG_CMD
+
+Sets PPS configurations.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR752,<PPSType>,<PPSPulseWidth>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field                     Format    Unit            Description
+
+                                                     PPS pulse type.
+                                                     0 = Disable
+                                                     1 = After the first fix
+ <PPSType>                 Numeric   -
+                                                     2 = 3D fix only (default)
+                                                     3 = 2D/3D fix only
+                                                     4 = Always
+                                                     PPS Pulse Width. Range: 1–999.
+ <PPSPulseWidth>           Numeric   Millisecond
+                                                     Default value: 100.
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR752,2,100*39
+$PAIR001,752,0*3B
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                        71 / 83
+                                                                        GNSS Module Series
+
+
+
+2.3.51. Packet Type: 830 PAIR_RAW_ENABLE
+
+Enables/disables outputting binary raw measurement.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR830,<Enable>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field            Format         Unit         Description
+
+                                              Raw measurement output setting.
+                                              0 = Disabled
+                                              1 = Raw measurement
+ <Enable>         Numeric        -
+                                              2 = Raw measurement + SV information + PVT
+                                              (including time offset data between GPS and
+                                              GLONASS/Galileo/BDS)
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR830,1*2C
+$PAIR001,830,0*30
+
+
+
+2.3.52. Packet Type: 831 PAIR_RAW_GET_STATUS
+
+Gets the binary raw measurement output setting.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR831*<Checksum><CR><LF>
+
+Parameter:
+
+None
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                     72 / 83
+                                                                                 GNSS Module Series
+
+
+Result:
+
+Returns $PAIR001 and the query result.
+
+Query result message format:
+
+$PAIR831,<Enable>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field                Format            Unit          Description
+
+                                                      Raw measurement output setting.
+                                                      0 = Disabled
+                                                      1 = Raw measurement
+ <Enable>             Numeric           -
+                                                      2 = Raw measurement + SV information + PVT
+                                                      (including time offset data between GPS and
+                                                      GLONASS/Galileo/BDS)
+
+
+Example:
+
+$PAIR831*30
+$PAIR001,831,0*31
+$PAIR831,1*2D
+
+
+
+2.3.53. Packet Type: 864 PAIR_IO_SET_BAUDRATE
+
+Sets the baud rate of UART interface.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR864,<PortType>,<PortIndex>,<Baudrate>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field             Format                      Unit       Description
+
+                                                          Hardware port type.
+ <PortType>        Numeric                     -
+                                                          0 = UART
+                                                          Hardware port index.
+ <PortIndex>       Numeric                     -
+                                                          0 = UART0
+                                                          Baud rate.
+ <Baudrate>        Numeric                     bps
+                                                          4800
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                              73 / 83
+                                                                                   GNSS Module Series
+
+
+                                                         9600
+                                                         19200
+                                                         38400
+                                                         57600
+                                                         115200
+                                                         230400
+                                                         460800
+                                                         921600
+                                                         3000000
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR864,0,0,115200*1B
+$PAIR001,864,0*31
+
+
+
+ NOTE
+
+1.    The module must be rebooted after changing the port baud rate, and the change will take effect after
+      the reboot.
+2.    For LC29H series and LC79H (AL) modules, messages may be lost when the output baud rate is
+      lower than 115200 bps.
+3.    For LC79H (BA), messages may be lost when the output baud rate is lower than 9600 bps.
+
+
+
+2.3.54. Packet Type: 865 PAIR_IO_GET_BAUDRATE
+
+Gets the baud rate of UART interface.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR865,<PortType>,<PortIndex>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field                 Format                 Unit        Description
+
+                                                          Hardware port type.
+ <PortType>            Numeric                -
+                                                          0 = UART
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                    74 / 83
+                                                                           GNSS Module Series
+
+
+                                                    Hardware port index.
+ <PortIndex>         Numeric             -
+                                                    0 = UART0
+
+
+Result:
+
+Returns $PAIR001 and the query result.
+
+Query result message format:
+
+$PAIR865,<Baudrate>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field                Format                 Unit    Description
+
+                                                     Baud rate.
+                                                     4800
+                                                     9600
+                                                     19200
+                                                     38400
+ <Baudrate>           Numeric                bps     57600
+                                                     115200
+                                                     230400
+                                                     460800
+                                                     921600
+                                                     3000000
+
+
+Example:
+
+$PAIR865,0,0*31
+$PAIR001,865,0*30
+$PAIR865,115200*1A
+
+
+
+2.3.55. Packet Type: 866 PAIR_IO_SET_FLOW_CONTROL
+
+Sets UART flow control.
+
+Type:
+
+Set
+
+Synopsis:
+
+$PAIR866,<PortType>,<PortIndex>,<FlowControl>*<Checksum><CR><LF>
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                        75 / 83
+                                                                                 GNSS Module Series
+
+
+Parameter:
+
+
+ Field            Format                    Unit       Description
+
+                                                       Hardware port type.
+ <PortType>       Numeric                   -
+                                                       0 = UART
+                                                       Hardware port index.
+ <PortIndex>      Numeric                   -
+                                                       0 = UART0
+                                                       Flow control setting.
+                                                       0 = Flow control disabled (default)
+ <FlowControl>    Numeric                   -
+                                                       1 = Software flow control enabled
+                                                       2 = Hardware flow control enabled
+
+
+Result:
+
+Returns $PAIR001 message.
+
+Example:
+
+$PAIR866,0,0,1*2F
+$PAIR001,866,0*33
+
+
+
+ NOTE
+
+The module must be rebooted after changing the port baud rate, and the change will take effect after the
+reboot.
+
+
+
+2.3.56. Packet Type: 867 PAIR_IO_GET_FLOW_CONTROL
+
+Gets UART flow control setting.
+
+Type:
+
+Get
+
+Synopsis:
+
+$PAIR867,<PortType>,<PortIndex>*<Checksum><CR><LF>
+
+Parameter:
+
+
+ Field               Format                 Unit        Description
+
+                                                        Hardware port type.
+ <PortType>          Numeric                -
+                                                        0 = UART
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                                  76 / 83
+                                                                           GNSS Module Series
+
+
+                                                    Hardware port index.
+ <PortIndex>        Numeric              -
+                                                    0 = UART0
+
+
+Result:
+
+Returns $PAIR001 and the query result.
+
+Query result message format:
+
+$PAIR867,<FlowControl>*<Checksum><CR><LF>
+
+Parameter included in the result:
+
+
+ Field                Format                 Unit    Description
+
+                                                     Flow control setting.
+                                                     0 = Flow control disabled
+ <FlowControl>        Numeric                -
+                                                     1 = Software flow control enabled
+                                                     2 = Hardware flow control enabled
+
+
+Example:
+
+$PAIR867,0,0*33
+$PAIR001,867,0*32
+$PAIR867,0*2F
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                           77 / 83
+                                                                               GNSS Module Series
+
+
+
+
+3 RTCM Protocol
+The LC79H (AL) and LC29H series modules support the RTCM protocol which is in accordance with
+RTCM STANDARD 10403.3 DIFFERENTIAL GNSS (GLOBAL NAVIGATION SATELLITE SYSTEMS)
+SERVICES - VERSION 3. This protocol is used to transfer GNSS raw measurement data and is available
+from https://www.rtcm.org/.
+
+
+Table 5: Supported RTCM3 Messages
+
+ Message Type    Mode                Message Name
+
+ 1005            Output              Stationary RTK Reference Station ARP.
+
+ 1019            Output              GPS Ephemerides.
+
+ 1020            Output              GLONASS Ephemerides.
+
+ 1042            Output              BDS Satellite Ephemeris Data.
+
+ 1044            Output              QZSS Ephemerides.
+
+ 1046            Output              Galileo I/NAV Satellite Ephemeris Data.
+
+ 1074            Output              GPS MSM4.
+
+ 1077            Output              GPS MSM7.
+
+ 1084            Output              GLONASS MSM4.
+
+ 1087            Output              GLONASS MSM7.
+
+ 1094            Output              Galileo MSM4.
+
+ 1097            Output              Galileo MSM7.
+
+ 1114            Output              QZSS MSM4.
+
+ 1117            Output              QZSS MSM7.
+
+ 1124            Output              BDS MSM4.
+
+ 1127            Output              BDS MSM7.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                            78 / 83
+                                                                          GNSS Module Series
+
+
+
+ NOTE
+
+1.   The $PAIR432 command can enable/disable MSM4/MSM7 (1074, 1077, 1084, 1087, 1094,
+     1097,1114, 1117, 1124 and 1127) messages if the corresponding constellation is enabled.
+2.   The $PAIR434 command can enable/disable Stationary RTK Reference Station ARP (1005)
+     message.
+3.   The $PAIR436 command can enable/disable ephemeris (1019, 1020, 1042, 1044 and 1046)
+     messages if the corresponding constellation is enabled.
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                        79 / 83
+                                                                             GNSS Module Series
+
+
+
+
+4 Appendix A References
+Table 6: Related Documents
+
+
+ Document Name
+
+ [1] Quectel_LC29H_Series_Hardware_Design
+
+ [2] Quectel_LC79H_Hardware_Design
+
+
+
+Table 7: Terms and Abbreviations
+
+ Abbreviation            Description
+
+ 2D                      2 Dimension
+
+ 3D                      3 Dimension
+
+ ACK                     Acknowledgement
+
+ AIC                     Active Interference Cancellation
+
+ ARP                     Antenna Reference Point
+
+ BDS                     BeiDou Navigation Satellite System
+
+ DGPS                    Differential Global Positioning System
+
+ DOP                     Dilution of Precision
+
+ DSP                     Digital Signal Processing
+
+ EGNOS                   European Geostationary Navigation Overlay Service
+
+ EPO                     Extended Prediction Orbit
+
+ GAGAN                   GPS-aided GEO Augmented Navigation
+
+ Galileo                 Galileo Satellite Navigation System (EU)
+
+ GGA                     Global Positioning System Fix Data
+
+ GLL                     Geographic Position – Latitude/Longitude
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                          80 / 83
+                                                                         GNSS Module Series
+
+
+
+GNSS                  Global Navigation Satellite System
+
+GPS                   Global Positioning System
+
+GRS                   GNSS Range Residuals
+
+GSA                   GNSS DOP and Active Satellites
+
+GST                   GNSS Pseudorange Error Statistics
+
+GSV                   GNSS Satellites in View
+
+RMS                   Root Mean Square
+
+HDOP                  Horizontal Dilution of Precision
+
+ID                    Identifier
+
+MNL                   MTK Navigation Lib
+
+MSAS                  Multi-functional Satellite Augmentation System
+
+NMEA                  NMEA (National Marine Electronics Association) 0183 Interface Standard
+
+NVRAM                 Non-Volatile Random Access Memory
+
+PAIR                  Proprietary Protocol of MTK
+
+PDOP                  Position Dilution of Precision
+
+PE                    Positioning Engine
+
+PPS                   Pulse Per Second
+
+QZSS                  Quasi-Zenith Satellite System
+
+RF                    Radio Frequency
+
+RMC                   Recommended Minimum Specific GNSS Data
+
+RTC                   Real-time Clock
+
+RTK                   Real Time Kinematic
+
+SBAS                  Satellite-Based Augmentation System
+
+SNR                   Signal-to-noise Ratio
+
+SV                    Satellites in View
+
+PVT                   Position, Velocity, and Timing
+
+UART                  Universal Asynchronous Receiver/Transmitter
+
+ULP                   Ultra-Low Power
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                         81 / 83
+                                                            GNSS Module Series
+
+
+
+UTC                   Coordinated Universal Time
+
+VDOP                  Vertical Dilution of Precision
+
+VTG                   Course Over Ground and Ground Speed
+
+WAAS                  Wide Area Augmentation System
+
+ZDA                   Time & Date
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                         82 / 83
+                                                                             GNSS Module Series
+
+
+
+
+5 Appendix B GNSS Numbering
+Table 8: GNSS Numbering
+
+
+ GNSS Type         System ID            Satellite ID            Signal ID
+
+                                                                1 = L1 C/A
+ GPS               1                    1–32
+                                                                8 = L5
+
+ GLONASS           2                    65–88                   1 = L1
+
+                                                                1 = E5a
+ Galileo           3                    1–36
+                                                                7 = E1
+                                                                1 = B1I
+ BDS               4                    1–63
+                                                                5 = B2a
+                                                                1 = L1 C/A
+ QZSS              5                    193–199
+                                                                8 = L5
+
+ SBAS              -                    33–51                   -
+
+
+
+ NOTE
+
+QZSS Satellite ID numbers range from 1 to 10 for LC29H (BA, CA, DA, EA*).
+
+
+
+
+LC29H&LC79H_Series_GNSS_Protocol_Specification                                          83 / 83
+

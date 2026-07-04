@@ -28,7 +28,7 @@ index 75cdac5..8446cc4 100644
  #define GPS_THREAD_INTERVAL 200
  #endif
 diff --git a/src/gps/GPS.cpp b/src/gps/GPS.cpp
-index 6c6cdba..5bbc8c1 100644
+index 6c6cdba..a8b2a50 100644
 --- a/src/gps/GPS.cpp
 +++ b/src/gps/GPS.cpp
 @@ -32,6 +32,23 @@
@@ -112,22 +112,34 @@ index 6c6cdba..5bbc8c1 100644
      // If we're due for an update, wake the GPS
      if (!config.position.fixed_position && powerState != GPS_ACTIVE && scheduling.isUpdateDue())
          up();
-@@ -1313,6 +1366,14 @@ GnssModel_t GPS::probe(int serialSpeed)
+@@ -1313,6 +1366,26 @@ GnssModel_t GPS::probe(int serialSpeed)
      }
      case 3: {
          /* Airoha (Mediatek) AG3335A/M/S, A3352Q, Quectel L89 2.0, SimCom SIM65M */
 +#ifdef HIGHRATE_POSITION_SENDER
 +        // Keep the module awake + out of backup sleep before probing (anti-brick; see FORK.md).
-+        // NOTE: never send $PAIR382,1 — it enters a VRTC-backed backup sleep that bricks detection.
 +        _serial_gps->write("$PAIR002*38\r\n"); // GNSS power ON
 +        delay(200);
-+        _serial_gps->write("$PAIR382,0*2F\r\n"); // ensure backup sleep is disabled
++#ifdef GPS_TAG
++        // $PAIR382,1 = LOCK system sleep (KEEP AWAKE) — per the LC29H spec and Seeed's own
++        // ag3335.c, which blasts it 25x at every scan start. This firmware's command CPU
++        // auto-sleeps a few seconds after boot (NMEA keeps streaming, but incoming commands are
++        // silently ignored — why $PAIR050 "never ACKed" historically). Latching the lock inside
++        // the boot window keeps the command interface alive for GnssRateProbe. Send it several
++        // times like Seeed does: only one needs to land while the CPU is awake.
++        for (uint8_t i = 0; i < 6; i++) {
++            _serial_gps->write("$PAIR382,1*2E\r\n");
++            delay(60);
++        }
++#else
++        _serial_gps->write("$PAIR382,0*2F\r\n"); // legacy preamble (bridge builds never power GPS)
 +        delay(200);
++#endif
 +#endif
          _serial_gps->write("$PAIR062,2,0*3C\r\n"); // GSA OFF to reduce volume
          _serial_gps->write("$PAIR062,3,0*3D\r\n"); // GSV OFF to reduce volume
          _serial_gps->write("$PAIR513*3D\r\n");     // save configuration
-@@ -1570,6 +1631,25 @@ GPS *GPS::createGps()
+@@ -1570,6 +1643,25 @@ GPS *GPS::createGps()
      // Make sure the GPS is awake before performing any init.
      new_gps->up();
  
@@ -153,6 +165,16 @@ index 6c6cdba..5bbc8c1 100644
  #ifdef PIN_GPS_RESET
      pinMode(PIN_GPS_RESET, OUTPUT);
      digitalWrite(PIN_GPS_RESET, GPS_RESET_MODE); // assert for 10ms
+@@ -1822,6 +1914,9 @@ bool GPS::whileActive()
+     // First consume any chars that have piled up at the receiver
+     while (_serial_gps->available() > 0) {
+         int c = _serial_gps->read();
++#ifdef GPS_TAG
++        gnssRateProbe.feedByte(c); // raw tap: captures $PAIR001 ACKs + $PAIR021/$PAIR051 replies
++#endif
+         UBXscratch[charsInBuf] = c;
+ #ifdef GPS_DEBUG
+         debugmsg += vformat("%c", (c >= 32 && c <= 126) ? c : '.');
 diff --git a/src/main.cpp b/src/main.cpp
 index c654822..4c59a64 100644
 --- a/src/main.cpp

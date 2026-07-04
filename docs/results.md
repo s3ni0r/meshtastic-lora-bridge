@@ -256,3 +256,35 @@ Build: `firmware/patch-bluefruit-ext.sh` (grows Bluefruit's 31 B scan buffer →
 > "is the data fresh?" indicator (deferred — bundles with a future app update).
 
 
+
+## GPS rate UNLOCKED — 10 Hz on the T1000-E AG3335 (2026-07-04)
+
+**The "hard 1 Hz firmware lock" (above) was a misdiagnosis.** Root cause: the Seeed/Airoha GNSS
+firmware's command CPU auto-sleeps a few seconds after boot — NMEA keeps streaming, but any UART
+command sent later is silently ignored (no execution, no ACK). Every earlier $PAIR050 landed after
+that window; every "$PAIR062 works" datapoint was a boot-window write from Meshtastic's own init.
+Seeed's own driver held the answer: it blasts `$PAIR382,1` ("lock system sleep" = keep awake) 25x
+at every scan start.
+
+**Unlock (GnssRateProbe v2, branch `gps-lora-tag`, runs every GPS_TAG boot):**
+1. `$PAIR382,1` latched inside the boot window (probe() preamble blasts 6x; probe verifies
+   `$PAIR001,382,0`) — the command interface then stays alive indefinitely.
+2. `$PAIR050,100` → `$PAIR001,050,0` — takes effect immediately, no reboot, no persist dance.
+   (`$PAIR050,250` also ACKs 0 — no CSA4-style 100/1000 restriction on this build.)
+
+| Metric | Value |
+|---|---|
+| Baseline | 0.99 fix/s (2.0 sentences/fix, GGA+RMC) |
+| After unlock | **9.9–10.3 fix/s sustained** (20.0 sent/s), stable 2+ min, reproduced across reboots |
+| Latch→unlock time | ~11 s after NMEA up (all inside the normal boot) |
+| Persistence | RAM-only by design; probe re-applies per boot + resident sag re-apply |
+
+Diagnostics that cracked it (now permanent in the GPS_TAG build): raw `$PAIR` response tap in
+`GPS::whileActive` (ACK codes visible for the first time), boot-window latch, ACK-gated dance,
+echo test (deaf-vs-mute), reset+latch-spam window re-opener, RTC_INT rescue. Full story +
+evidence log: `docs/gnss/UNLOCK_NOTES.md`. Spec: `docs/gnss/Quectel_LC29H_LC79H_GNSS_Protocol_
+Specification_V1.1.pdf`.
+
+Knock-on: GPS tag build now `-DGPS_TAG -DHIGHRATE_MIN_SPACING_MS=100` (LoRa TX up to 10 Hz,
+bench/US; EU868 deployment stays duty-limited ~2 Hz). Pending: outdoor moving test to confirm
+10 Hz position novelty end-to-end on the iPhone (rate verified at the NMEA layer indoors).

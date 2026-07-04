@@ -7,7 +7,7 @@ Base/iOS receiver — flags bits 5–7 carry the source type so receivers can te
 | Flavor | Build flag | Position source | src bits |
 |---|---|---|---|
 | **BLE5/LoRa bridge** | `-DODID_SNIFFER …` | Dronetag Remote ID adverts (its GNSS, >1 Hz) | 1 |
-| **GPS tag** | `-DGPS_TAG` | Onboard AG3335 (+ boot-time 4 Hz rate probe, §9) | 2 |
+| **GPS tag** | `-DGPS_TAG` | Onboard AG3335 **@ 10 Hz** (boot-time unlock, §3/§9) | 2 |
 | Base (receiver) | *(plain build)* | — | — |
 
 > **Bench/test only.** At >2.4 Hz this exceeds the EU868 10% duty cycle. Set
@@ -50,73 +50,26 @@ Inside `setupModules()`, alongside the other `new XxxModule()` lines:
 #endif
 ```
 
-## 3. GNSS fix rate — unit #1's AG3335 is LOCKED at 1 Hz (verified exhaustively)
+## 3. GNSS fix rate — UNLOCKED to 10 Hz (2026-07-04; earlier "locked at 1 Hz" was a misdiagnosis)
 
-> **Scope:** everything in this section was measured on **unit #1** (the original T1000-E, now the
-> bridge tag). The lock is a property of that unit's GNSS *firmware build*, not of the T1000-E as a
-> product — so the `GPS_TAG` flavor re-runs a safe, automated version of this investigation
-> (`GnssRateProbe`, §9) on every boot, and any new unit gets its own verdict in the log. The safety
-> rails below (**never `$PAIR382,1`**, RTC_INT recovery) are baked into the probe.
+**The AG3335 was never rate-locked.** Its command CPU auto-sleeps a few seconds after boot: NMEA
+keeps streaming but later UART commands are silently ignored — which looked exactly like "the rate
+command is refused" in every earlier probe (both units). The unlock, automated by `GnssRateProbe`
+(v2) in every `GPS_TAG` boot:
 
-⚠️ **Bottom line (unit #1):** the AG3335 firmware **refuses all fix-rate commands** and there is
-**no working way to raise it above 1 Hz.** Measured on-device with `-DGPS_DEBUG` (RMC steps by exactly
-1.000 s every time): `$PAIR050,100` (Airoha) gets no `$PAIR001` ACK and no effect via RAM, save+reboot,
-*and* save+hardware-RESETB; `$PMTK220,100`/`$PMTK300,100` (MediaTek) likewise. The interface itself
-works — it answers `$PAIR021` and honors `$PAIR062` sentence config — so the rate is specifically
-locked. Full table in `../docs/results.md` "GPS rate — exhaustive root-cause". **Leave it at 1 Hz; do
-client-side interpolation for a real-time feel.**
+1. **`$PAIR382,1` inside the boot window** ("lock system sleep" = keep the command CPU awake —
+   Seeed's own driver blasts it 25x at scan start). `probe()`'s GPS_TAG preamble sends it 6x at
+   GNSS power-on; the probe re-latches and verifies `$PAIR001,382,0`.
+2. **`$PAIR050,100`** → ACK 0, effective immediately: **measured 10.0 fix/s sustained** (20
+   GGA+RMC sentences/s). RAM-only; the probe re-applies each boot and re-runs if the rate sags.
 
-⚠️ **And do NOT try to force it via the persist dance — it bricks the module.** Raising the rate above
-1 Hz "officially" requires *persisting* it, and the documented persist sequence **bricks GPS detection
-on the T1000-E**:
+Full root-cause, evidence log and spec references: `../docs/gnss/UNLOCK_NOTES.md`.
 
-```
-$PAIR050,100   (10 Hz)
-$PAIR382,1     (stop engine / enter backup)   ← the culprit
-$PAIR003       (power off GNSS subsystem)
-$PAIR513       (save)
-$PAIR002 / $PAIR004 (re-power / hot-start)
-```
-
-`$PAIR382,1` puts the AG3335 into a **VRTC-backed backup sleep**. On the T1000-E `GPS_VRTC_EN`
-(P0.8) stays HIGH across reboots, so the sleep **survives every reboot and a plain hardware reset**,
-and the module stops answering the `$PAIR021` probe → `No GNSS Module` forever. A bare `$PAIR513`
-(the only save valid at 1 Hz) does **not** persist >1 Hz, so this dance is the *only* documented way —
-and it's a trap on this hardware.
-
-**Net: the onboard AG3335 is treated as a fixed ~1 Hz source.** `position.gps_update_interval=1`,
-no `$PAIR050`. For a faster-*feeling* track, interpolate on the client (60 fps dead-reckoning between
-1 Hz fixes) — not faster GPS. See `../docs/results.md` "GPS rate ceiling".
-
-### Recovery safety-net (keep this — it un-bricks a slept GNSS)
-
-If a module is already stuck asleep, the wake is the **`GPS_RTC_INT` pin going HIGH** (variant:
-"normal LOW, wake by HIGH") — UART can't wake it. In `createGps()` (just after `new_gps->up();`,
-before the stock `PIN_GPS_RESET` pulse):
-```cpp
-#if defined(HIGHRATE_POSITION_SENDER) && defined(GPS_RTC_INT)
-    pinMode(GPS_RTC_INT, OUTPUT);
-    digitalWrite(GPS_RTC_INT, HIGH); delay(300);          // wake from backup sleep
-#ifdef PIN_GPS_RESET
-    pinMode(PIN_GPS_RESET, OUTPUT);
-    digitalWrite(PIN_GPS_RESET, GPS_RESET_MODE); delay(60);
-    digitalWrite(PIN_GPS_RESET, !GPS_RESET_MODE);
-#endif
-    delay(400); digitalWrite(GPS_RTC_INT, LOW); delay(200);
-#endif
-```
-And in `probe()`'s Airoha case (before the `$PAIR021` probe), keep it awake + at 1 Hz:
-```cpp
-#ifdef HIGHRATE_POSITION_SENDER
-    _serial_gps->write("$PAIR002*38\r\n");      delay(200); // power on
-    _serial_gps->write("$PAIR382,0*2F\r\n");    delay(200); // DISABLE backup sleep
-    _serial_gps->write("$PAIR050,1000*12\r\n"); delay(200); // 1 Hz
-    _serial_gps->write("$PAIR513*3D\r\n");      delay(300); // save (valid at 1 Hz)
-#endif
-```
-
-> The module's TX cadence is independent of the GNSS fix rate, so the LoRa rate/PDR path (Step 6) was
-> validated to 4 Hz on a counter regardless — the GPS is what's pinned at 1 Hz, not the link.
+⚠️ Still true (the real trap): `$PAIR003`/`$PAIR650`-class power-offs without a *confirmed*
+`$PAIR382,1` ACK leave the module deaf to UART until the **`GPS_RTC_INT` line pulses HIGH**
+(variant: "normal LOW, wake by HIGH"). That wake + a reset pulse remain baked into `createGps()`
+(gated on `HIGHRATE_POSITION_SENDER`) and in the probe's rescue path, so no sequence the firmware
+sends can strand the module.
 
 ## 4. Build — one command per flavor
 
@@ -125,9 +78,10 @@ And in `probe()`'s Airoha case (before the `$PAIR021` probe), keep it awake + at
 PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER \
   -DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY" pio run -e tracker-t1000-e
 
-# TAG flavor B — self-contained GPS tag (onboard AG3335 + 4 Hz rate probe, §9).
-# GPS_TAG implies HIGHRATE_POSITION_SENDER + HIGHRATE_TX_ONLY + a 100 ms GPS parser tick:
-PLATFORMIO_BUILD_FLAGS="-DGPS_TAG" pio run -e tracker-t1000-e
+# TAG flavor B — self-contained GPS tag (onboard AG3335 unlocked to 10 Hz, §3/§9).
+# GPS_TAG implies HIGHRATE_POSITION_SENDER + HIGHRATE_TX_ONLY + a 100 ms GPS parser tick;
+# MIN_SPACING 100 lets the LoRa TX ride the full 10 Hz GNSS (bench/US only):
+PLATFORMIO_BUILD_FLAGS="-DGPS_TAG -DHIGHRATE_MIN_SPACING_MS=100" pio run -e tracker-t1000-e
 
 # Base (iPhone-side receiver): plain build — a sender-flavor Base would emit pointless heartbeats:
 pio run -e tracker-t1000-e
@@ -234,27 +188,23 @@ alt m, speed km/h, heading, hacc ≈ HDOP × 3 m, plus a **0.1 s-in-hour timesta
 the bridge (§8). With `gps_update_interval=1` the GPS stays always-on, so fixes publish at the
 chip's true cadence.
 
-### GnssRateProbe — the automated 4 Hz attempt (why it's safe to retry per unit)
+### GnssRateProbe v2 — the boot-time 10 Hz unlock (and per-unit evidence machine)
 
-Unit #1's 1 Hz lock (§3) was a property of *that unit's* GNSS firmware. Every `GPS_TAG` boot
-re-tests the installed unit with a **non-blocking, RAM-only** prober driven off the GPS thread:
+Every `GPS_TAG` boot re-runs the unlock, non-blocking off the GPS thread (see §3 and
+`../docs/gnss/UNLOCK_NOTES.md` for the root cause it exploits):
 
-1. Waits ~15 s for boot + NMEA flow, measures the **as-shipped baseline** for 5 s and calibrates
-   sentences-per-fix (fix epochs = NMEA time-of-day changes at centisecond resolution — works
-   before a position lock; the sentence-rate cross-check defeats tick-aliasing at 10 Hz).
-2. Walks candidates in order, 4 s measurement each, stopping at the first that holds
-   **≥ 3.5 fix/s**: `$PAIR050,250` → `$PAIR050,100` → `$PAIR080,1`+`$PAIR050,250` (nav-mode gate)
-   → `$PMTK220/300,250` → `$PAIR003 › $PAIR050,250 › $PAIR002` (engine-stop sandwich — the one
-   documented "apply while stopped" path that does **not** use the `$PAIR382,1` backup-sleep brick).
-3. Logs `GnssProbe: *** WINNER …` and stays resident (10 s rate logs, auto re-apply if the RAM
-   setting sags — e.g. after a GPS power event), **or** logs
-   `GnssProbe: VERDICT — all candidates refused … locked (same as unit #1)` and the stream simply
-   rides 1 Hz novelty (client interpolation still applies).
-
-Hard safety rails: **never `$PAIR382,1`**, never a persist dance; checksums computed at runtime;
-commands only while `GPS_ACTIVE`; the §3 anti-brick preamble + `GPS_RTC_INT` recovery net stay in
-place (they're gated on `HIGHRATE_POSITION_SENDER`, which `GPS_TAG` implies). Worst case on a
-locked unit = a few ignored sentences at boot and an honest verdict in the log.
+1. **Raw `$PAIR` tap** in `GPS::whileActive()` logs every module response verbatim ($PAIR001 ACK
+   codes, $PAIR021 version, $PAIR051 fix-interval reply) — silence vs refusal is finally visible.
+2. **Latch first**: `$PAIR382,1` as the opening step (plus a 6x blast in `probe()` at GNSS
+   power-on) keeps the command CPU awake past its boot window; ACK `$PAIR001,382,0` = alive.
+3. Baseline (5 s, sentences-per-fix calibrated), then `$PAIR050,250`/`$PAIR050,100` — on this unit
+   both ACK 0 and 100 ms takes effect immediately: **WINNER at ~10 fix/s**, resident 10 s rate
+   logs, auto re-apply if the rate ever sags.
+4. If a unit ever behaves differently, the fallback ladder still runs on evidence: ACK-gated
+   dance (382,1 → 003 → 050,100 → 513 → 002, aborted unless the latch ACKs), $PAIR004 hot start,
+   hardware reset, an echo test ($PAIR062,3,1 GSV-on) separating deaf-vs-mute, a reset+latch-spam
+   window re-opener, GPS_RTC_INT rescue, and a 1000 ms restore so the module is never left
+   half-configured.
 
 ### Configure + verify the GPS tag
 
@@ -264,10 +214,10 @@ Give each node a distinct name for sanity (`meshtastic --set-owner "TAG-GPS"` /
 `"TAG-BRIDGE"` / `"BASE"`).
 
 Watch the serial log after flashing:
-- `GnssProbe: baseline 1.00 fix/s, 2.0 sentences/fix` — probe armed and measuring;
-- per-candidate verdicts, then either `*** WINNER` or the locked verdict;
-- `GnssProbe: GNSS rate X.XX fix/s` every 10 s — the live ground truth;
+- `GnssProbe: 'PAIR382,1' -> ACK code 0 (ok)` — sleep lock latched (interface alive);
+- `GnssProbe: *** WINNER … ~10 fix/s ***` then `GnssProbe: GNSS rate 10.0 fix/s (20.0 sent/s)`
+  every 10 s — the live ground truth;
 - `HighRate: src=2 seq=…` — the stream is flowing with the GPS-tag source type.
-On the receiver, `tools/m2_stream_poc.py recv --csv run.csv` shows `src=gps` rows at the novelty
-rate; the iOS app's per-source "GPS refresh" is the end-to-end number that must read ~4 Hz if the
-probe won (else ~1 Hz).
+On the receiver, `tools/m2_stream_poc.py recv --csv run.csv` shows `src=gps` rows; outdoors with a
+position lock the iOS per-source "GPS refresh" should read up to ~10 Hz (TX-capped by
+`HIGHRATE_MIN_SPACING_MS`).
