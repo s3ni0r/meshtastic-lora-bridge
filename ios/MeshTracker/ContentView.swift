@@ -17,6 +17,18 @@ private func sourceSymbol(_ s: PacketSource) -> String {
     }
 }
 
+/// Value snapshot of a track for Map content. Map's content diffing can skip re-evaluating rows
+/// whose ForEach element is an unchanged REFERENCE (SourceTrack is a class mutated in place), which
+/// froze the markers. Fresh value structs per body pass make every coordinate change visible.
+private struct TrackSnapshot: Identifiable {
+    let id: UInt32
+    let source: PacketSource
+    let title: String
+    let current: CLLocationCoordinate2D?
+    let trail: [CLLocationCoordinate2D]
+    let hasLock: Bool
+}
+
 struct ContentView: View {
     @State private var model: PositionModel
     @State private var ble: BLEManager
@@ -69,13 +81,19 @@ struct ContentView: View {
 
     var body: some View {
         // Register a dependency on the packet counter: SourceTrack is a reference type, so this
-        // is what guarantees the map content re-evaluates for every packet of a 10 Hz stream.
+        // is what guarantees body re-evaluates for every packet of the stream.
         let _ = model.revision
+        // Snapshot the tracks as VALUES here in body (also registers observation on every field
+        // read). Handing these to Map's ForEach is what actually makes the markers move.
+        let snaps = model.tracks.map { t in
+            TrackSnapshot(id: t.from, source: t.source, title: t.title,
+                          current: t.current, trail: t.trail, hasLock: t.hasLock)
+        }
         return ZStack(alignment: .top) {
             Map(position: $camera) {
                 // Every tag heard gets its own colored trail + marker — that's how the bridge tag,
                 // the GPS tag and anything else stay visually distinct on one map.
-                ForEach(model.tracks) { track in
+                ForEach(snaps) { track in
                     if track.trail.count > 1 {
                         MapPolyline(coordinates: track.trail)
                             .stroke(sourceColor(track.source), lineWidth: 3)
@@ -95,7 +113,8 @@ struct ContentView: View {
                 if follow { recenterIfNeeded() } // icon moves; camera only steps in near the edge
             }
             .onChange(of: model.selectedFrom) {
-                if follow { withAnimation(.easeInOut(duration: 0.4)) { centerOnActive() } } // chip tap -> jump
+                // Chip tap: always jump to that tag, then its icon moves from there.
+                withAnimation(.easeInOut(duration: 0.4)) { centerOnActive() }
             }
 
             statsPanel
