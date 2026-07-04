@@ -53,6 +53,10 @@ PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER
   -DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY" pio run -e tracker-t1000-e
 # Base: plain build. Flash: tools/flash_uf2.py, or serial DFU via adafruit-nrfutil.
 ```
+
+**Flashing more T1000-Es:** versioned, checksummed binaries live in
+[`firmware/releases/`](firmware/releases/) (v1.0 = all three flavors) — flash any board with
+`tools/flash_t1000e.sh <flavor> [port|role]` (`--list` shows releases + connected boards).
 > Build on the device's **installed** Meshtastic version (v2.7.15 here). Master 2.8.0 **hangs** this
 > hardware via single-bank DFU (SoftDevice mismatch). `meshtastic --enter-dfu` puts a node in DFU.
 

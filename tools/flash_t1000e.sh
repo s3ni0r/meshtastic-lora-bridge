@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# Flash a released firmware flavor onto a Seeed T1000-E.
+#
+#   tools/flash_t1000e.sh <flavor> [port|role]      flavor: gps-tag | bridge-tag | base-plain
+#   tools/flash_t1000e.sh --list                    show available releases/flavors + connected boards
+#   tools/flash_t1000e.sh gps-tag                   auto-detect (works when exactly ONE T1000-E is attached)
+#   tools/flash_t1000e.sh gps-tag gpstag            resolve port by role via tools/nodes.py
+#   tools/flash_t1000e.sh base-plain /dev/cu.usbmodem1111301
+#   VERSION=v1.0 tools/flash_t1000e.sh gps-tag      pin a release (default: latest in firmware/releases)
+#
+# Flash path (proven on this fleet): 1200-baud touch drops the running app into the bootloader's
+# serial-DFU CDC, then adafruit-nrfutil uploads the <flavor>-dfu.zip. If a UF2 volume is already
+# mounted (user double-tapped the button), the .uf2 is copied instead. After flashing, the node
+# keeps (or needs) its Meshtastic config — the script prints the per-flavor cheat-sheet.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+RELEASES="$REPO/firmware/releases"
+VERSION="${VERSION:-$(ls "$RELEASES" | sort -V | tail -1)}"
+DIR="$RELEASES/$VERSION"
+
+# adafruit-nrfutil lives in the PlatformIO tool package; run it with a python that has its deps.
+NRFUTIL_DIR="$HOME/.platformio/packages/tool-adafruit-nrfutil"
+PY="$HOME/.local/pipx/venvs/platformio/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3)"
+
+list_boards() {
+    "$PY" - "$REPO" <<'EOF'
+from serial.tools import list_ports
+import sys
+known = {}
+try:
+    sys.path.insert(0, sys.argv[1] + '/tools')
+    import nodes
+    known = dict(nodes.NODES)
+except Exception:
+    pass
+for p in list_ports.comports():
+    if p.vid == 0x239A:  # Adafruit/Seeed nRF52 bootloader VID (app + bootloader)
+        sn = (p.serial_number or '').upper()
+        role = known.get(sn, {}).get('role', '?')
+        print(f"  {p.device}  serial={sn}  role={role}  ({p.product})")
+EOF
+}
+
+if [ "${1:-}" = "--list" ] || [ -z "${1:-}" ]; then
+    echo "Releases in $RELEASES:"
+    for v in $(ls "$RELEASES" | sort -V); do
+        echo "  $v: $(ls "$RELEASES/$v" | grep -c '\.uf2$') flavors — $(ls "$RELEASES/$v"/*.uf2 2>/dev/null | xargs -n1 basename | tr '\n' ' ')"
+    done
+    echo "Connected T1000-E boards:"
+    list_boards
+    exit 0
+fi
+
+FLAVOR="$1"
+UF2="$DIR/$FLAVOR.uf2"
+DFUZIP="$DIR/$FLAVOR-dfu.zip"
+[ -f "$UF2" ] || { echo "ERROR: unknown flavor '$FLAVOR' in $DIR (have: $(ls "$DIR"/*.uf2 | xargs -n1 basename | sed 's/.uf2//' | tr '\n' ' '))" >&2; exit 2; }
+
+# Resolve the target port: explicit path, role name via nodes.py, or single-board autodetect.
+TARGET="${2:-}"
+if [ -n "$TARGET" ] && [ ! -e "$TARGET" ]; then
+    RESOLVED="$(cd "$REPO/tools" && "$PY" nodes.py --port "$TARGET" 2>/dev/null || true)"
+    [ -n "$RESOLVED" ] || { echo "ERROR: '$TARGET' is neither a device path nor a connected role (tag|base|gpstag)" >&2; exit 2; }
+    TARGET="$RESOLVED"
+elif [ -z "$TARGET" ]; then
+    MAPPED="$("$PY" - <<'EOF'
+from serial.tools import list_ports
+c = [p.device for p in list_ports.comports() if p.vid == 0x239A]
+print('\n'.join(c))
+EOF
+)"
+    COUNT="$(printf '%s' "$MAPPED" | grep -c . || true)"
+    if [ "$COUNT" -eq 1 ]; then
+        TARGET="$MAPPED"
+    else
+        echo "ERROR: $COUNT T1000-E boards connected — specify a port or role:" >&2
+        list_boards >&2
+        exit 2
+    fi
+fi
+
+echo "== Flashing $FLAVOR ($VERSION) -> $TARGET"
+(cd "$DIR" && shasum -a 256 -c SHA256SUMS --ignore-missing >/dev/null) && echo "   checksums OK"
+
+# If a UF2 bootloader volume is already mounted (double-tap), just copy the UF2.
+for v in /Volumes/*; do
+    if [ -f "$v/INFO_UF2.TXT" ]; then
+        echo "   UF2 volume found at $v — copying $(basename "$UF2")"
+        cp "$UF2" "$v/" 2>/dev/null || true  # device reboots mid-copy; that's normal
+        echo "DONE (UF2). Device reboots itself."
+        exit 0
+    fi
+done
+
+# Normal path: 1200-baud touch -> bootloader serial-DFU -> nrfutil upload of the DFU zip.
+echo "   1200-baud touch on $TARGET"
+"$PY" - "$TARGET" <<'EOF'
+import serial, sys, time
+try:
+    s = serial.Serial(sys.argv[1], 1200)
+    s.setDTR(False); time.sleep(0.3); s.close()
+except Exception as e:
+    print(f"   (touch: {e!r} — ok if already in bootloader)")
+EOF
+sleep 5
+
+echo "   serial DFU upload: $(basename "$DFUZIP")"
+(cd "$NRFUTIL_DIR" && PYTHONPATH=site-packages "$PY" adafruit-nrfutil.py dfu serial \
+    --package "$DFUZIP" -p "$TARGET" -b 115200 --singlebank) || {
+    echo "ERROR: DFU upload failed. Double-tap the device button (UF2 drive mounts) and re-run." >&2
+    exit 1
+}
+
+echo "DONE. Device reboots with $FLAVOR."
+case "$FLAVOR" in
+gps-tag) cat <<'EOT'
+-- Configure (once per node; same channel URL as your Base):
+   meshtastic --port <port> --seturl '<channel-url-from-base>'
+   meshtastic --port <port> --set lora.region <REGION> --set device.role CLIENT_MUTE \
+     --set device.rebroadcast_mode LOCAL_ONLY --set position.gps_update_interval 1
+   meshtastic --port <port> --set-owner "TAG-GPS-n" --set-owner-short "TGn"
+   Verify in serial log: GnssProbe WINNER ~4 fix/s, HighRate src=2.
+EOT
+;;
+bridge-tag) cat <<'EOT'
+-- Configure (once per node; same channel URL as your Base):
+   meshtastic --port <port> --seturl '<channel-url-from-base>'
+   meshtastic --port <port> --set lora.region <REGION> --set device.role CLIENT_MUTE \
+     --set device.rebroadcast_mode LOCAL_ONLY
+   Note: bridge advertises no BLE — configure over USB. Verify: ODID sniffer log + HighRate src=1.
+EOT
+;;
+base-plain) cat <<'EOT'
+-- Configure (once per node): set region + channel; name it so the iOS app finds it:
+   meshtastic --port <port> --set lora.region <REGION> --set-owner "BASE-n" --set-owner-short "BSn"
+   The iOS app connects to names containing "base" (see ios/MeshTracker/BLEManager.swift).
+EOT
+;;
+esac

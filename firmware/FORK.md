@@ -109,11 +109,15 @@ Rate knobs (defaults shown): `-DHIGHRATE_MIN_SPACING_MS=150` caps the event-driv
 (use ≥500 for EU868-legal 2 Hz deployment); `-DHIGHRATE_POSITION_INTERVAL_MS=250` is only the
 fallback poll when a cross-task wake is missed.
 
-## 5. Flash (UF2)
+## 5. Flash
 
-Hold the button and connect the magnetic charge cable **twice** until the green LED is **solid**; a
-`T1000-E` USB drive mounts. Drag the matching `.uf2` onto it (sender build → moving node, plain build
-→ receiver). On a big version jump, copy the matched nRF52 `*erase*.uf2` first.
+**Preferred:** `tools/flash_t1000e.sh <flavor> [port|role]` — flashes a **versioned release** from
+`firmware/releases/` (UF2 or serial-DFU automatically, checksummed, with the per-flavor config
+cheat-sheet printed after). `--list` shows releases + connected boards.
+
+Manual UF2 fallback: hold the button and connect the magnetic charge cable **twice** until the
+green LED is **solid**; a `T1000-E` USB drive mounts — drag the matching `.uf2` onto it. On a big
+version jump, copy the matched nRF52 `*erase*.uf2` first.
 
 ## 6. Configure both nodes (CLI or iOS app)
 

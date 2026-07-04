@@ -30,3 +30,6 @@ docs/results/*.csv
 # OS
 .DS_Store
 observer/
+
+# Versioned firmware releases are tracked (general *.uf2 stays ignored)
+!firmware/releases/**/*.uf2
