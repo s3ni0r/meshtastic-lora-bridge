@@ -1,29 +1,32 @@
 # meshtastic-tracker
 
-Real-time GPS over LoRa: a moving **Seeed T1000-E** (Meshtastic) streams its own GPS position to a
-second T1000-E tethered to an **iPhone**, shown live on a map at multi-Hz. Region: **EU868**
+Real-time GPS over LoRa: moving **Seeed T1000-E tags** (Meshtastic fork) stream positions to a
+T1000-E Base tethered to an **iPhone**, shown live on a map at multi-Hz. Region: **EU868**
 (deployment target); bench-validated on US/ShortTurbo.
 
-## Status (2026-06-25) — working end-to-end ✅
-
-A battery-powered tracker autonomously streams its **real GPS position** over LoRa, displayed **live
-on iPhone**:
+## Status (2026-07-04) — two tag flavors, AG3335 unlocked, multi-tag iOS app ✅
 
 ```
-Tag (T1000-E, fork) ──LoRa──▶ Base (T1000-E) ──BLE──▶ iPhone (MeshTracker app)
+Tag A: BLE5/LoRa bridge (Dronetag Remote ID → LoRa)  ─┐
+                                                      ├─LoRa─▶ Base ──BLE──▶ iPhone (MeshTracker)
+Tag B: GPS tag (onboard AG3335 @ 4 Hz → LoRa)        ─┘
 ```
 
-- **Firmware fork** on the moving node streams a 12-byte position on a custom `PRIVATE_APP(256)`
-  portnum at ~2.8–4 Hz, **bypassing Meshtastic's PositionModule throttles** (built on v2.7.15 — see
-  [firmware/FORK.md](firmware/FORK.md)).
-- **Real GPS validated:** Tag on a balcony acquired a live lock and streamed real coordinates at
-  **~2.9 Hz, 100% lock, 0 gaps** ([docs/results.md](docs/results.md)).
-- **iOS app** ([ios/](ios/)) connects to Base over BLE, decodes the stream, and shows the live
-  position on a MapKit map with a **Hz / SNR / RSSI** readout + CSV logging — running on a real
-  iPhone 17 Pro.
+- **Two interchangeable tag firmwares**, same 17-byte `PRIVATE_APP(256)` payload; flags bits 5–7
+  identify the source (1 = bridge, 2 = GPS tag) on top of the LoRa `from` node id
+  ([firmware/FORK.md](firmware/FORK.md)).
+- **AG3335 GNSS unlocked to 10 Hz** — the historical "1 Hz firmware lock" was a misdiagnosis (the
+  command CPU auto-sleeps post-boot; the fix is a boot-window `$PAIR382,1` latch + `$PAIR050`).
+  Deployed at a **4 Hz target**, steered per boot by `GnssRateProbe`, with a France/Europe GNSS
+  preset (GPS+GLONASS+Galileo+BDS, **EGNOS SBAS verified active**). Full story:
+  [docs/gnss/UNLOCK_NOTES.md](docs/gnss/UNLOCK_NOTES.md).
+- **GPS tag runs `role=CLIENT_MUTE` + TX-only radio** (never receives LoRa) while keeping BLE for
+  the Meshtastic app.
+- **iOS app v2**: per-tag colored trails + heading arrows, favorites (persisted), per-tag
+  show/hide, stable focus with pin/follow, map styles (standard/hybrid/satellite), fit-all, metric
+  tiles (speed/heading/alt/accuracy/SNR/RSSI), CSV logging, app icon.
 
-Numbers & raw results: [docs/results.md](docs/results.md). Full plan, RF/firmware constraints, and
-milestones: [PLAN.md](PLAN.md).
+Numbers & raw results: [docs/results.md](docs/results.md). Plan/constraints: [PLAN.md](PLAN.md).
 
 ## Layout
 
@@ -40,11 +43,15 @@ milestones: [PLAN.md](PLAN.md).
 ## Build & run
 
 ### Firmware fork
-Full steps in [firmware/FORK.md](firmware/FORK.md). Summary (sender node):
+Full steps + the three-flavor build matrix in [firmware/FORK.md](firmware/FORK.md). Summary:
 ```bash
 cd firmware/meshtastic-firmware
-PLATFORMIO_BUILD_FLAGS="-DHIGHRATE_POSITION_SENDER -DHIGHRATE_POSITION_INTERVAL_MS=250" \
-  pio run -e tracker-t1000-e -t upload --upload-port <tag-port>
+# GPS tag (onboard AG3335, 4 Hz target; 100 = 10 Hz):
+PLATFORMIO_BUILD_FLAGS="-DGPS_TAG" pio run -e tracker-t1000-e
+# BLE5/LoRa bridge tag:
+PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER \
+  -DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY" pio run -e tracker-t1000-e
+# Base: plain build. Flash: tools/flash_uf2.py, or serial DFU via adafruit-nrfutil.
 ```
 > Build on the device's **installed** Meshtastic version (v2.7.15 here). Master 2.8.0 **hangs** this
 > hardware via single-bank DFU (SoftDevice mismatch). `meshtastic --enter-dfu` puts a node in DFU.
@@ -69,19 +76,20 @@ python tools/m2_stream_poc.py both --send-port <a> --recv-port <b> --rate 2 --co
 python tools/m2_stream_poc.py recv --port <base-port> --duration 60 --csv run.csv
 ```
 
-## Identifying the two nodes
+## Identifying the nodes
 
 Port names (`usbmodemXXXX`) can shuffle on replug, so address boards by **role**, resolved from the
 stable nRF52 **USB serial** (survives reboot/reflash/DFU) via `tools/nodes.py`:
 
 | Role | USB serial (physical ID) | Node ID | Node num |
 |---|---|---|---|
-| **Tag** (mover) | `92EBF6B5B6C9AC37` | `!b4dbb54c` | 3034297676 |
+| **Tag** (BLE5 bridge) | `92EBF6B5B6C9AC37` | `!b4dbb54c` | 3034297676 |
+| **GpsTag** (onboard GPS @ 4 Hz) | `15B20E7A7AAD8AF0` | `!18e77545` | 417822021 |
 | **Base** (receiver, visually tagged) | `4A8693CC387EBD66` | `!b0bb9cda` | 2965085402 |
 
 ```bash
-python tools/nodes.py               # show which port is Tag / Base right now
-python tools/nodes.py --port base   # -> /dev/cu.usbmodemXXXX (for scripting)
+python tools/nodes.py               # show which port is which right now
+python tools/nodes.py --port gpstag # -> /dev/cu.usbmodemXXXX (for scripting)
 ```
 `flash_uf2.py` and `m2_stream_poc.py` accept `tag`/`base` anywhere a port is expected, e.g.
 `python tools/m2_stream_poc.py recv --port base` or `python tools/flash_uf2.py tag firmware.uf2`.

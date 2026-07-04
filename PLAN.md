@@ -1,5 +1,12 @@
 # Real-time LoRa GPS tracker — build plan
 
+> **Status update (2026-07-04, branch `gps-lora-tag`):** Phase 1 complete and superseded in places —
+> two tag flavors ship (BLE5/Dronetag bridge + onboard-GPS tag), the AG3335 is **unlocked to 10 Hz**
+> (the 1 Hz "lock" was a misdiagnosis — see `docs/gnss/UNLOCK_NOTES.md`), the GPS tag deploys at a
+> 4 Hz target with EGNOS active, and the iOS app is multi-tag. Current builds/config:
+> `firmware/FORK.md`; measured results: `docs/results.md`. The EU868 duty-cycle constraints below
+> still govern deployment TX rates.
+
 Stream GPS from a moving **Seeed SenseCAP T1000-E** (Meshtastic) over LoRa to a second
 T1000-E tethered to an **iPhone**, showing live position at up to **1 km**. Region: **EU868**.
 

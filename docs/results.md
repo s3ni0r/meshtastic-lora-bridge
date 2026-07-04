@@ -288,3 +288,27 @@ Specification_V1.1.pdf`.
 Knock-on: GPS tag build now `-DGPS_TAG -DHIGHRATE_MIN_SPACING_MS=100` (LoRa TX up to 10 Hz,
 bench/US; EU868 deployment stays duty-limited ~2 Hz). Pending: outdoor moving test to confirm
 10 Hz position novelty end-to-end on the iPhone (rate verified at the NMEA layer indoors).
+
+## 4 Hz deployment config + iOS multi-tag app v2 (2026-07-04)
+
+**GPS tag settled at a 4 Hz GNSS target** (`-DGPS_TAG`, `GPSTAG_FIX_INTERVAL_MS=250`): GnssRateProbe
+steers per boot (verified steering the flash-persisted 10 Hz back down: baseline 9.4 → 3.97–4.07
+fix/s sustained). France/Europe preset applied at every boot: GPS+GLONASS+Galileo+BDS, QZSS/NavIC
+off, **SBAS/EGNOS verified active on-device** (`$PAIR411,1`, `$PAIR401,2`). Node role
+**CLIENT_MUTE** + firmware `HIGHRATE_TX_ONLY`: LoRa is send-only, BLE stays up for the Meshtastic
+app. Gotcha discovered: a boot-window `$PAIR513` (stock init) persists whatever fix rate is in RAM;
+saves fail (ACK 2) while running >1 Hz — hence per-boot steering rather than persistence.
+
+**iOS MeshTracker v2** (multi-tag): per-`from` SourceTracks with colored trails + live heading
+arrows on every tag dot; favorites (★, persisted, sort first) and per-tag show/hide (👁, persisted);
+**stable focus** = pinned tag else first favorite/first seen (fixes camera ping-pong with two live
+tags); edge-triggered follow camera (icon moves on a still map, camera glides only near the screen
+edge); map styles standard/hybrid/satellite with 15 m–2000 km zoom bounds; fit-all; metric tiles
+(speed/heading/alt/±accuracy/SNR/RSSI); per-tag accuracy in the list rows; generated app icon.
+Fixes en route: 10 Hz streams no longer discarded by the 0.15 s flush heuristic (now 40 ms), and
+Map markers move again (value snapshots instead of reference-type ForEach elements, which MapKit
+diffed as "unchanged").
+
+Fleet identity: bridge `!b4dbb54c` (role tag), GPS tag `!18e77545` (role gpstag, TAG-GPS), Base
+`!b0bb9cda` — all in `tools/nodes.py`. Pending: outdoor moving test of the 4 Hz track + EGNOS
+accuracy delta; bridge tag reflash with this branch's build (still labels itself `legacy`).
