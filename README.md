@@ -27,6 +27,7 @@ Tag B: GPS tag (onboard AG3335 @ 4 Hz → LoRa)        ─┘
   tiles (speed/heading/alt/accuracy/SNR/RSSI), CSV logging, app icon.
 
 Numbers & raw results: [docs/results.md](docs/results.md). Plan/constraints: [PLAN.md](PLAN.md).
+Worldwide capacity study (presets × regions × rates × fleet size): [docs/CAPACITY.md](docs/CAPACITY.md).
 
 ## Layout
 
