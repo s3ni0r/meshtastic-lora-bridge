@@ -37,13 +37,14 @@ final class SourceTrack: Identifiable {
     init(from: UInt32) { self.from = from }
 
     func ingest(_ sp: StreamPacket, at now: Date) {
-        // A buffered backlog (e.g. the Base flushing its queue on (re)connect) arrives far faster
-        // than the send rate. Anything < 0.15 s after this tag's previous packet is a flush
+        // A buffered backlog (e.g. the Base flushing its queue on (re)connect) arrives back-to-back
+        // (single-digit ms apart). Anything < 40 ms after this tag's previous packet is a flush
         // artifact: jump to the latest position but don't inflate rates or spam the trail.
-        // Per-source arrival times, so two tags interleaving at 3 Hz don't look like a flush.
+        // 40 ms, NOT more: the live stream now runs up to 10 Hz (~100 ms spacing) since the AG3335
+        // unlock — a bigger threshold silently discards genuine real-time packets.
         let dt = lastArrival.map { now.timeIntervalSince($0) } ?? 999
         lastArrival = now
-        let isFlush = dt < 0.15
+        let isFlush = dt < 0.04
 
         source = sp.source
         hasLock = sp.hasLock
@@ -94,6 +95,9 @@ final class PositionModel {
     /// User-pinned tag (tap a chip); nil = follow whichever tag spoke last.
     var selectedFrom: UInt32?
     var packetCount = 0
+    /// Bumped on every packet. The view reads this so a 10 Hz stream re-renders the map content
+    /// even when only reference-type SourceTrack properties mutate.
+    var revision = 0
 
     /// The tag the header/metrics show: the pinned one, else the most recently heard.
     var active: SourceTrack? {
@@ -116,6 +120,7 @@ final class PositionModel {
         }
         track.ingest(sp, at: now)
         packetCount += 1
+        revision &+= 1
         writeCSV(sp, now)
     }
 

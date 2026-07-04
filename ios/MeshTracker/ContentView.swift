@@ -21,7 +21,8 @@ struct ContentView: View {
     @State private var model: PositionModel
     @State private var ble: BLEManager
     @State private var camera: MapCameraPosition = .automatic
-    @State private var centered = false
+    @State private var follow = true          // camera tracks the selected tag in realtime
+    @State private var camDistance: Double = 600 // user zoom, preserved while following
     @State private var phone = PhoneLocation()
 
     init() {
@@ -41,8 +42,16 @@ struct ContentView: View {
         return "searching…"
     }
 
+    private func centerOnActive() {
+        guard let c = model.active?.current else { return }
+        camera = .camera(MapCamera(centerCoordinate: c, distance: camDistance))
+    }
+
     var body: some View {
-        ZStack(alignment: .top) {
+        // Register a dependency on the packet counter: SourceTrack is a reference type, so this
+        // is what guarantees the map content re-evaluates for every packet of a 10 Hz stream.
+        let _ = model.revision
+        return ZStack(alignment: .top) {
             Map(position: $camera) {
                 // Every tag heard gets its own colored trail + marker — that's how the bridge tag,
                 // the GPS tag and anything else stay visually distinct on one map.
@@ -58,11 +67,15 @@ struct ContentView: View {
                 }
             }
             .ignoresSafeArea()
+            .onMapCameraChange(frequency: .continuous) { ctx in
+                camDistance = ctx.camera.distance // remember the user's zoom level
+            }
             .onChange(of: model.active?.current?.latitude) {
-                guard let c = model.active?.current, !centered else { return }
-                camera = .region(MKCoordinateRegion(center: c,
-                                                     latitudinalMeters: 300, longitudinalMeters: 300))
-                centered = true
+                // Realtime tracking: short linear glide between 10 Hz fixes reads as continuous motion.
+                if follow { withAnimation(.linear(duration: 0.1)) { centerOnActive() } }
+            }
+            .onChange(of: model.selectedFrom) {
+                if follow { centerOnActive() } // chip tap -> jump to that tag
             }
 
             statsPanel
@@ -86,12 +99,11 @@ struct ContentView: View {
                 }
                 Spacer()
                 Button {
-                    if let c = model.active?.current {
-                        camera = .region(MKCoordinateRegion(center: c,
-                                                            latitudinalMeters: 300, longitudinalMeters: 300))
-                    }
-                } label: { Image(systemName: "scope") }
-                .disabled(model.active?.current == nil)
+                    follow.toggle()
+                    if follow { centerOnActive() }
+                } label: { Image(systemName: follow ? "location.fill" : "location") }
+                .tint(follow ? .blue : .secondary)
+                .disabled(model.active?.current == nil && !follow)
             }
 
             if !model.tracks.isEmpty {
