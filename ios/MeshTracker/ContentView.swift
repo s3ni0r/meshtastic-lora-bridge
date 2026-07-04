@@ -21,8 +21,10 @@ struct ContentView: View {
     @State private var model: PositionModel
     @State private var ble: BLEManager
     @State private var camera: MapCameraPosition = .automatic
-    @State private var follow = true          // camera tracks the selected tag in realtime
-    @State private var camDistance: Double = 600 // user zoom, preserved while following
+    @State private var follow = true          // keep the selected tag in view (edge-triggered)
+    @State private var camDistance: Double = 600 // user zoom, preserved when recentering
+    @State private var camRegion: MKCoordinateRegion? // currently visible region (from the map)
+    @State private var centeredOnce = false
     @State private var phone = PhoneLocation()
 
     init() {
@@ -47,6 +49,24 @@ struct ContentView: View {
         camera = .camera(MapCamera(centerCoordinate: c, distance: camDistance))
     }
 
+    /// Follow = the ICON moves and traces its path on a still map; the camera only glides when the
+    /// tag nears the edge of the visible region (outside the inner 70%). Recentering every packet
+    /// would pin the icon to screen center and scroll the world instead — the bug this replaces.
+    private func recenterIfNeeded() {
+        guard let c = model.active?.current else { return }
+        if !centeredOnce {
+            centeredOnce = true
+            camera = .camera(MapCamera(centerCoordinate: c, distance: camDistance))
+            return
+        }
+        guard let r = camRegion else { return }
+        let offEdge = abs(c.latitude - r.center.latitude) > r.span.latitudeDelta * 0.35 ||
+                      abs(c.longitude - r.center.longitude) > r.span.longitudeDelta * 0.35
+        if offEdge {
+            withAnimation(.easeInOut(duration: 0.4)) { centerOnActive() }
+        }
+    }
+
     var body: some View {
         // Register a dependency on the packet counter: SourceTrack is a reference type, so this
         // is what guarantees the map content re-evaluates for every packet of a 10 Hz stream.
@@ -69,13 +89,13 @@ struct ContentView: View {
             .ignoresSafeArea()
             .onMapCameraChange(frequency: .continuous) { ctx in
                 camDistance = ctx.camera.distance // remember the user's zoom level
+                camRegion = ctx.region            // and what's visible, for edge detection
             }
             .onChange(of: model.active?.current?.latitude) {
-                // Realtime tracking: short linear glide between 10 Hz fixes reads as continuous motion.
-                if follow { withAnimation(.linear(duration: 0.1)) { centerOnActive() } }
+                if follow { recenterIfNeeded() } // icon moves; camera only steps in near the edge
             }
             .onChange(of: model.selectedFrom) {
-                if follow { centerOnActive() } // chip tap -> jump to that tag
+                if follow { withAnimation(.easeInOut(duration: 0.4)) { centerOnActive() } } // chip tap -> jump
             }
 
             statsPanel
