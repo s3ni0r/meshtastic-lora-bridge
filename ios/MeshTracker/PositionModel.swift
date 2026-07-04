@@ -105,10 +105,12 @@ final class PositionModel {
     /// even when only reference-type SourceTrack properties mutate.
     var revision = 0
 
-    /// The tag the header/metrics show: the pinned one, else the most recently heard.
+    /// The tag the header/metrics/camera follow: the pinned one, else a STABLE default — the
+    /// first visible entry of the sorted list (favorites sort first). Never "most recently
+    /// heard": with two live tags that flips focus on every packet and yanks the map around.
     var active: SourceTrack? {
         if let sel = selectedFrom, let t = tracks.first(where: { $0.from == sel }) { return t }
-        return tracks.max { ($0.lastHeard ?? .distantPast) < ($1.lastHeard ?? .distantPast) }
+        return tracks.first(where: { $0.isVisible }) ?? tracks.first
     }
 
     @ObservationIgnored private var csv: FileHandle?
