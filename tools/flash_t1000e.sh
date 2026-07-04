@@ -19,6 +19,40 @@ RELEASES="$REPO/firmware/releases"
 VERSION="${VERSION:-$(ls "$RELEASES" | sort -V | tail -1)}"
 DIR="$RELEASES/$VERSION"
 
+usage() {
+    cat <<EOF
+Flash a released firmware flavor onto a Seeed T1000-E.
+
+Usage:
+  $(basename "$0") <flavor> [port|role]   flash a board
+  $(basename "$0") --list                 show releases + connected boards (with roles)
+  $(basename "$0") -h | --help            this help
+
+Flavors (from firmware/releases/, currently $VERSION):
+  gps-tag      self-contained tag — onboard AG3335 @ 4 Hz, LoRa TX-only, BLE kept
+  bridge-tag   BLE5/LoRa bridge — relays Dronetag Remote ID, no BLE advertising
+  base-plain   receiver — forwards the stream to the iOS app over BLE
+
+Target selection (2nd argument):
+  omitted           auto-detect — works when exactly ONE T1000-E is connected
+  tag|base|gpstag   role, resolved via tools/nodes.py (stable USB serial)
+  /dev/cu.usbmodemX explicit serial port
+
+Environment:
+  VERSION=vX.Y      pin a release (default: latest in firmware/releases/)
+
+Flash path: 1200-baud touch -> bootloader serial-DFU (adafruit-nrfutil, <flavor>-dfu.zip).
+If a UF2 volume is already mounted (button double-tap), the .uf2 is copied instead.
+Checksums are verified against SHA256SUMS before flashing; a per-flavor Meshtastic
+config cheat-sheet is printed after. Full docs: firmware/FORK.md §4–§6.
+
+Examples:
+  $(basename "$0") gps-tag                    # one new board plugged in alone
+  $(basename "$0") base-plain base            # reflash the known Base by role
+  VERSION=v1.0 $(basename "$0") bridge-tag /dev/cu.usbmodem1111201
+EOF
+}
+
 # adafruit-nrfutil lives in the PlatformIO tool package; run it with a python that has its deps.
 NRFUTIL_DIR="$HOME/.platformio/packages/tool-adafruit-nrfutil"
 PY="$HOME/.local/pipx/venvs/platformio/bin/python"
@@ -43,7 +77,9 @@ for p in list_ports.comports():
 EOF
 }
 
-if [ "${1:-}" = "--list" ] || [ -z "${1:-}" ]; then
+case "${1:-}" in -h|--help|"") usage; exit 0;; esac
+
+if [ "${1:-}" = "--list" ]; then
     echo "Releases in $RELEASES:"
     for v in $(ls "$RELEASES" | sort -V); do
         echo "  $v: $(ls "$RELEASES/$v" | grep -c '\.uf2$') flavors — $(ls "$RELEASES/$v"/*.uf2 2>/dev/null | xargs -n1 basename | tr '\n' ' ')"
