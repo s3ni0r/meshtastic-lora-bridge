@@ -74,7 +74,7 @@ TH (16 dBm) → ×0.7 / ×0.5; CN (19 dBm) → ×0.85 / ×0.7; EU_433 (10 dBm, b
 |---|---|---|---|---|
 | `US` / `BR_902` | 902–928 / 902–907.5 | 30 dBm | none | ShortTurbo legal; best playground |
 | `EU_868` | 869.4–869.65 | 27 dBm ERP | **10%** | 250 kHz slot → **ShortTurbo won't fit** (firmware rejects) |
-| `EU_433` / `UA_433` | 433–434 | 10 dBm | **10%** | low power → short range |
+| `EU_433` / `UA_433` | 433–434 | 10 dBm | **10%** | low power; **T1000-E antenna is 862–930 MHz-tuned** → 10–20 dB mismatch/side, effectively unusable on our boards |
 | `UA_868` | 868–868.6 | 14 dBm | **1%** | harshest duty here — 0.22 msg/s max on ShortFast |
 | `ANZ` | 915–928 | 30 dBm | none | like US |
 | `IN` / `NP_865` | 865–867 / 865–868 | 30 dBm | none | |
@@ -85,7 +85,7 @@ TH (16 dBm) → ×0.7 / ×0.5; CN (19 dBm) → ×0.85 / ×0.7; EU_433 (10 dBm, b
 | `SG_923` / `TH` / `MY_919` | ~917–925 | 20 / 16 / 27 dBm | none | |
 | `CN` | 470–510 | 19 dBm | none | 470 MHz propagates slightly better |
 | `RU` | 868.7–869.2 | 20 dBm | none in fw | |
-| `LORA_24` | **2400–2483.5** | 10 dBm | none | **license-free worldwide** (wideLora presets); short range, zero regulatory homework |
+| `LORA_24` | **2400–2483.5** | 10 dBm | none | license-free worldwide, **but requires an SX1280-class radio — the LR1110 cannot TX at 2.4 GHz** (its 2.4 GHz block is a Wi-Fi-scan receiver). Not usable on T1000-E |
 
 > The firmware only *enforces* this table. JP/KR add listen-before-talk in law that it doesn't
 > model — verify locally before anything commercial.
@@ -139,7 +139,6 @@ erode it, so round down when tags spread over km.
 | EU, more tags | `EU_868` + ShortFast | 1 Hz (`MIN_SPACING 1000`), ≤7 moving tags |
 | US/AU trips, max fidelity | `US`/`ANZ` + ShortTurbo | 4 Hz, ≤4 tags — today's bench config, legal there |
 | Long range, few tags | LongFast | 1 fix/5 s, ≤3 tags, ~1.5 km urban / 4 km open / 10s of km elevated |
-| Any-country demo | `LORA_24` | wideLora presets, short range, no regulatory homework |
 | Japan | `JP` + ShortFast | 13 dBm: plan ~0.4 km urban / 1.2 km open; keep rates modest |
 
 ## 8. Formulas (recompute for new payloads/rates)
