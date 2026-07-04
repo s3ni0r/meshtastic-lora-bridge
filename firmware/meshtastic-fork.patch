@@ -1,8 +1,61 @@
+diff --git a/src/configuration.h b/src/configuration.h
+index 75cdac5..8446cc4 100644
+--- a/src/configuration.h
++++ b/src/configuration.h
+@@ -292,6 +292,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #define GPS_BAUDRATE_FIXED 1
+ #endif
+ 
++// Project fork: -DGPS_TAG = self-contained GPS tag flavor (onboard AG3335 -> PRIVATE_APP(256) LoRa
++// stream, same payload as the ODID bridge). One flag pulls in the whole role so a build can't end up
++// with the GPS fast-path but no sender (or vice versa). The ODID bridge keeps its explicit flag set.
++#ifdef GPS_TAG
++#ifdef ODID_SNIFFER
++#error "GPS_TAG and ODID_SNIFFER are mutually exclusive tag flavors - pick one position source"
++#endif
++#ifndef HIGHRATE_POSITION_SENDER
++#define HIGHRATE_POSITION_SENDER 1
++#endif
++#ifndef HIGHRATE_TX_ONLY
++#define HIGHRATE_TX_ONLY 1 // pure sender: LR1110 idles in standby, never RX (see LR11x0Interface.cpp)
++#endif
++#ifndef GPS_THREAD_INTERVAL
++#define GPS_THREAD_INTERVAL 100 // 4 Hz+ fixes shouldn't wait on the stock 200 ms parser tick
++#endif
++#endif
++
+ #ifndef GPS_THREAD_INTERVAL
+ #define GPS_THREAD_INTERVAL 200
+ #endif
 diff --git a/src/gps/GPS.cpp b/src/gps/GPS.cpp
-index 6c6cdba..5ec76b8 100644
+index 6c6cdba..5bbc8c1 100644
 --- a/src/gps/GPS.cpp
 +++ b/src/gps/GPS.cpp
-@@ -652,6 +652,10 @@ bool GPS::setup()
+@@ -32,6 +32,23 @@
+ #define GPS_RESET_MODE HIGH
+ #endif
+ 
++#ifdef GPS_TAG
++// Project fork: self-contained GPS tag. Every published AG3335 fix is stashed here for the LoRa
++// sender (HighRatePositionModule reads these — the GPS analog of the sniffer's g_odid* globals) and
++// the sender is woken immediately, so a fresh fix transmits in ~ms instead of aging up to a poll
++// tick. GnssRateProbe (ticked from runOnce) tries to raise the fix rate to 4 Hz+ on this unit.
++#include "GnssRateProbe.h"
++#include "modules/HighRatePositionModule.h"
++volatile int32_t g_gpsTagLat = 0;     // deg*1e7
++volatile int32_t g_gpsTagLon = 0;
++volatile int16_t g_gpsTagAlt = 0;     // MSL altitude, m
++volatile uint8_t g_gpsTagSpeed = 0;   // ground speed, km/h (capped 255)
++volatile uint8_t g_gpsTagHeading = 0; // heading, deg * 256/360
++volatile uint8_t g_gpsTagHacc = 0;    // ~horizontal accuracy, m (HDOP x 3 m UERE; 0 = unknown)
++volatile uint32_t g_gpsTagMs = 0;     // millis() of the last stash (0 = none yet)
++volatile uint16_t g_gpsTagTs = 0;     // fix time-of-hour in 0.1 s (incl. centiseconds) — novelty key
++#endif
++
+ // Not all platforms have std::size().
+ template <typename T, std::size_t N> std::size_t array_count(const T (&)[N])
+ {
+@@ -652,6 +669,10 @@ bool GPS::setup()
  
              delay(250);
              _serial_gps->write("$PAIR513*3D\r\n"); // save configuration
@@ -13,7 +66,53 @@ index 6c6cdba..5ec76b8 100644
          } else if (gnssModel == GNSS_MODEL_UBLOX6) {
              clearBuffer();
              SEND_UBX_PACKET(0x06, 0x02, _message_DISABLE_TXT_INFO, "disable text info messages", 500);
-@@ -1313,6 +1317,14 @@ GnssModel_t GPS::probe(int serialSpeed)
+@@ -1070,6 +1091,31 @@ void GPS::publishUpdate()
+         if (config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED) {
+             positionModule->handleNewPosition();
+         }
++
++#ifdef GPS_TAG
++        // Project fork: stash the fix for the PRIVATE_APP(256) sender and wake it NOW (event-driven
++        // send, same cross-task pattern as the ODID sniffer). Only real fixes — the loss-of-lock
++        // publish (p reset to defaults) must not overwrite the last good stash; the sender's own
++        // freshness window handles going stale.
++        if (hasValidLocation && (p.latitude_i != 0 || p.longitude_i != 0)) {
++            g_gpsTagLat = p.latitude_i;
++            g_gpsTagLon = p.longitude_i;
++            int32_t altM = p.altitude;
++            g_gpsTagAlt = (int16_t)(altM < -32768 ? -32768 : (altM > 32767 ? 32767 : altM));
++            uint32_t spdKmh = p.ground_speed; // stored in km/h by lookForLocation (reader.speed.kmph())
++            g_gpsTagSpeed = (uint8_t)(spdKmh > 255 ? 255 : spdKmh);
++            g_gpsTagHeading = (uint8_t)((((p.ground_track / 100000) % 360) * 256) / 360); // deg*1e5 -> deg
++            uint32_t haccM = ((uint32_t)p.HDOP * 3) / 100; // HDOP (x10^2) x ~3 m UERE
++            g_gpsTagHacc = (uint8_t)(p.HDOP == 0 ? 0 : (haccM > 255 ? 255 : (haccM < 1 ? 1 : haccM)));
++            // 0.1 s-in-hour timestamp incl. centiseconds: novelty key that ticks even when parked
++            // (coords alone can freeze between fixes) — mirrors the ODID Location ts semantics.
++            g_gpsTagTs = (uint16_t)((((uint32_t)reader.time.minute() * 60 + reader.time.second()) * 10) +
++                                    (reader.time.centisecond() / 10));
++            g_gpsTagMs = millis();
++            if (highRatePositionModule)
++                highRatePositionModule->wakeFreshFix();
++        }
++#endif
+     }
+ }
+ 
+@@ -1119,6 +1165,13 @@ int32_t GPS::runOnce()
+         setConnected();
+     }
+ 
++#ifdef GPS_TAG
++    // Project fork: drive the GNSS rate-raise probe + live fix-rate monitor (non-blocking; walks
++    // safe RAM-only rate candidates once at boot, then logs the measured cadence every 10 s).
++    if (powerState == GPS_ACTIVE)
++        gnssRateProbe.tick(_serial_gps, reader);
++#endif
++
+     // If we're due for an update, wake the GPS
+     if (!config.position.fixed_position && powerState != GPS_ACTIVE && scheduling.isUpdateDue())
+         up();
+@@ -1313,6 +1366,14 @@ GnssModel_t GPS::probe(int serialSpeed)
      }
      case 3: {
          /* Airoha (Mediatek) AG3335A/M/S, A3352Q, Quectel L89 2.0, SimCom SIM65M */
@@ -28,7 +127,7 @@ index 6c6cdba..5ec76b8 100644
          _serial_gps->write("$PAIR062,2,0*3C\r\n"); // GSA OFF to reduce volume
          _serial_gps->write("$PAIR062,3,0*3D\r\n"); // GSV OFF to reduce volume
          _serial_gps->write("$PAIR513*3D\r\n");     // save configuration
-@@ -1570,6 +1582,25 @@ GPS *GPS::createGps()
+@@ -1570,6 +1631,25 @@ GPS *GPS::createGps()
      // Make sure the GPS is awake before performing any init.
      new_gps->up();
  

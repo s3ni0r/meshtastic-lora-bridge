@@ -4,13 +4,19 @@
 /**
  * HighRatePositionModule — project fork.
  *
- * Streams the local GPS fix as a compact 12-byte payload on PRIVATE_APP (256) at a fixed
- * sub-second cadence, calling service->sendToMesh() directly. This deliberately BYPASSES
- * Meshtastic's PositionModule, whose 5 s RUNONCE_INTERVAL, whole-second config, smart-broadcast
- * gate, and channel-util/duty-cycle checks make 2-4 Hz impossible.
+ * Streams a position fix as a compact 12/17-byte payload on PRIVATE_APP (256), calling
+ * service->sendToMesh() directly. This deliberately BYPASSES Meshtastic's PositionModule, whose
+ * 5 s RUNONCE_INTERVAL, whole-second config, smart-broadcast gate, and channel-util/duty-cycle
+ * checks make 2-4 Hz impossible.
  *
- * Gated behind -DHIGHRATE_POSITION_SENDER so only the *moving* (sender) node streams; the
- * receiver node runs a normal build.
+ * Fix source = the TAG FLAVOR (flags bits 5-7 tell the receiver which one sent the packet):
+ *   -DODID_SNIFFER (src=1): BLE5/LoRa bridge — position sniffed from Dronetag Remote ID adverts.
+ *   -DGPS_TAG      (src=2): self-contained tag — onboard AG3335 fixes, event-driven via GPS.cpp
+ *                           (GnssRateProbe attempts >1 Hz on hardware that allows it).
+ *   neither        (src=0): legacy fixed-cadence localPosition bench streamer.
+ *
+ * Gated behind -DHIGHRATE_POSITION_SENDER (implied by GPS_TAG) so only *tag* nodes stream; the
+ * Base/receiver node runs a plain build.
  *
  * BENCH/TEST ONLY: at >2.4 Hz this exceeds the EU868 10% duty cycle. Set
  * lora.override_duty_cycle=true and device.role=TRACKER on the sender. Not for deployment.

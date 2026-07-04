@@ -4,10 +4,26 @@ import Foundation
 //   FromRadio.packet (2) -> MeshPacket{ from(1,fixed32), decoded(4), id(6,fixed32),
 //                                       rx_snr(8,float), rx_rssi(12,varint) }
 //   MeshPacket.decoded -> Data{ portnum(1,varint), payload(2,bytes) }
-// Our firmware streams a fixed 12-byte payload on PRIVATE_APP (256):
-//   <i lat*1e7 | <i lon*1e7 | <H ms_in_sec | <B seq | <B flags(bit0=GPS lock)
+// Our firmware streams a fixed 12/17-byte payload on PRIVATE_APP (256):
+//   <i lat*1e7 | <i lon*1e7 | <H ms_in_sec | <B seq | <B flags | [<h alt | <B spd | <B hdg | <B hacc]
+// flags: bit0 = GPS lock, bits 5-7 = source type (which tag flavor sent this).
 
 let kPrivateAppPortnum = 256
+
+/// flags bits 5-7 — which tag flavor produced the fix (on top of `from`, the unique node id).
+enum PacketSource: Int {
+    case legacy = 0 // pre-fork firmware (no source bits)
+    case bridge = 1 // BLE5/LoRa bridge relaying Dronetag Remote ID
+    case gpsTag = 2 // self-contained tag streaming its onboard AG3335
+
+    var label: String {
+        switch self {
+        case .legacy: return "Tag"
+        case .bridge: return "Dronetag"
+        case .gpsTag: return "GPS tag"
+        }
+    }
+}
 
 struct StreamPacket {
     var from: UInt32 = 0
@@ -26,6 +42,7 @@ struct StreamPacket {
     var hacc: Int = 0       // horizontal accuracy, metres (0 = unknown)
 
     var hasLock: Bool { flags & 0x01 != 0 }
+    var source: PacketSource { PacketSource(rawValue: Int((flags >> 5) & 0x7)) ?? .legacy }
 }
 
 private struct ProtoReader {

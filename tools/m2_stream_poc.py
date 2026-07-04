@@ -75,7 +75,7 @@ class Receiver:
         self.rssis = []
         self.csv = open(csv_path, "w") if csv_path else None
         if self.csv:
-            self.csv.write("host_time,from,seq,lat,lon,alt_m,speed_kmh,heading,hacc_m,ms_in_sec,flags,rx_snr,rx_rssi\n")
+            self.csv.write("host_time,from,src,seq,lat,lon,alt_m,speed_kmh,heading,hacc_m,ms_in_sec,flags,rx_snr,rx_rssi\n")
 
     def on_receive(self, packet, interface=None):
         if self.only_iface is not None and interface is not self.only_iface:
@@ -94,6 +94,9 @@ class Receiver:
         else:
             lat_i, lon_i, off, seq, flags = struct.unpack(PAYLOAD_FMT_V1, payload[:V1_LEN])
         lat, lon = lat_i / 1e7, lon_i / 1e7
+        # flags bits 5-7 = source type: which tag flavor sent this (0=legacy, 1=BLE5 bridge, 2=GPS tag).
+        src = (flags >> 5) & 0x7
+        src_name = {0: "legacy", 1: "bridge", 2: "gps"}.get(src, f"src{src}")
         now = time.monotonic()
         if self.first_t is None:
             self.first_t = now
@@ -105,10 +108,10 @@ class Receiver:
             self.snrs.append(snr)
         if rssi is not None:
             self.rssis.append(rssi)
-        print(f"  rx seq={seq:3d} lat={lat:.6f} lon={lon:.6f} spd={spd}km/h hdg={heading:3.0f} "
-              f"alt={alt}m ±{hacc}m snr={snr} rssi={rssi}")
+        print(f"  rx {src_name}!{(packet.get('from') or 0) & 0xffff:04x} seq={seq:3d} lat={lat:.6f} lon={lon:.6f} "
+              f"spd={spd}km/h hdg={heading:3.0f} alt={alt}m ±{hacc}m snr={snr} rssi={rssi}")
         if self.csv:
-            self.csv.write(f"{time.time():.3f},{packet.get('from')},{seq},{lat:.7f},{lon:.7f},"
+            self.csv.write(f"{time.time():.3f},{packet.get('from')},{src},{seq},{lat:.7f},{lon:.7f},"
                            f"{alt},{spd},{heading:.0f},{hacc},{off},{flags},{snr},{rssi}\n")
             self.csv.flush()
 
