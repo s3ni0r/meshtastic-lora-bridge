@@ -7,12 +7,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Success = a sustained fix cadence at/above this. The dance sets 100 ms (10 Hz) — the only >1 Hz
-// value this firmware lineage accepts — so a win reads ~10. LoRa TX is separately paced by
-// HIGHRATE_MIN_SPACING_MS.
+// Target position-fix interval in ms (verified: this unit ACKs any value; 250 = 4 Hz, 100 = 10 Hz).
+#ifndef GPSTAG_FIX_INTERVAL_MS
+#define GPSTAG_FIX_INTERVAL_MS 250
+#endif
+#define GNSSPROBE_STR2(x) #x
+#define GNSSPROBE_STR(x) GNSSPROBE_STR2(x)
+#define GNSSPROBE_RATE_CMD "PAIR050," GNSSPROBE_STR(GPSTAG_FIX_INTERVAL_MS)
+
+// Success = a sustained fix cadence at/above this. With the 250 ms target a win reads ~4.0.
 #ifndef GNSSPROBE_SUCCESS_HZ
 #define GNSSPROBE_SUCCESS_HZ 3.5f
 #endif
+// The goal is the TARGET rate, not just "fast": a persisted 10 Hz from an earlier session must
+// still be steered back to 4 Hz (and vice versa if the target ever changes).
+#define GNSSPROBE_TARGET_HZ (1000.0f / GPSTAG_FIX_INTERVAL_MS)
+static inline bool gnssNearTarget(float hz)
+{
+    return hz >= GNSSPROBE_TARGET_HZ * 0.8f && hz <= GNSSPROBE_TARGET_HZ * 1.25f;
+}
 
 #define GNSSPROBE_BOOT_DELAY_MS 15000
 #define GNSSPROBE_BASE_WIN_MS 5000
@@ -188,9 +201,7 @@ bool GnssRateProbe::runSeq(Stream *serial, uint32_t nowMs)
                  : ackCode == 5 ? " (busy)"
                                 : "");
         // Evidence capture for the verdict
-        if (!strcmp(st.body, "PAIR050,250"))
-            ack250 = ackCode;
-        else if (!strcmp(st.body, "PAIR050,100"))
+        if (!strncmp(st.body, "PAIR050,", 8) && strcmp(st.body, "PAIR050,1000") != 0)
             (phase == DANCE ? danceAck050 : ack100) = ackCode;
         else if (!strcmp(st.body, "PAIR513") && ackCode == 0 && !restoring)
             danceSaved = true;
@@ -244,12 +255,12 @@ void GnssRateProbe::winner(const char *how, float hz)
 
 void GnssRateProbe::finalVerdict(float hz)
 {
-    LOG_WARN("GnssProbe: VERDICT — still ~%.2f fix/s. Evidence: PAIR050,250 ack=%d; PAIR050,100 ack=%d (RAM) / %d "
-             "(in dance); 513 save=%d. Codes: -100 none, 0 ok, 3 unsupported, 4 param error.",
-             hz, ack250, ack100, danceAck050, (int)danceSaved);
+    LOG_WARN("GnssProbe: VERDICT — still ~%.2f fix/s. Evidence: rate cmd ack=%d (RAM) / %d (in dance); "
+             "513 save=%d. Codes: -100 none, 0 ok, 3 unsupported, 4 param error.",
+             hz, ack100, danceAck050, (int)danceSaved);
     LOG_WARN("GnssProbe: echo test %s; rescues=%u", echoPositive ? "POSITIVE (mute but commands execute)" : "negative/not run",
              (unsigned)rescues);
-    if (ack250 == -100 && ack100 == -100 && danceAck050 == -100) {
+    if (ack100 == -100 && danceAck050 == -100) {
         LOG_WARN("GnssProbe: no $PAIR001 ever seen for PAIR050 -> command REMOVED from this firmware "
                  "(CSA2-like lineage). UART cannot unlock it; a GNSS firmware update is the only path.");
     } else if (danceAck050 == 0 || ack100 == 0) {
@@ -287,10 +298,18 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
                  (unsigned long)nowMs);
         static const Step kWakeIdent[] = {
             {"PAIR382,1", 382, 700, 6, false, 150}, // keep-awake latch: ACK here = interface alive
-            {"PAIR021", 0, 0, 1, false, 1200},      // full version string — logged verbatim by the tap
-            {"PAIR051", 0, 0, 1, false, 1200},      // current fix interval — reply logged by the tap
+            {"PAIR021", 0, 0, 1, false, 1000},      // full version string — logged verbatim by the tap
+            {"PAIR051", 0, 0, 1, false, 800},       // current fix interval — reply logged by the tap
+            // France/Europe GNSS preset (applied at 1 Hz so the $PAIR513 save below is valid):
+            // GPS+GLONASS+Galileo+BDS = max usable satellites (best DOP/TTFF; Galileo is the
+            // European system); QZSS/NavIC off (regional, useless here).
+            {"PAIR066,1,1,1,1,0,0", 66, 1500, 2, false, 250},
+            {"PAIR410,1", 410, 1200, 1, false, 200}, // SBAS ON -> EGNOS corrections in France
+            {"PAIR411", 0, 0, 1, false, 400},        // query SBAS status (tap logs the reply)
+            {"PAIR401", 0, 0, 1, false, 400},        // query DGPS mode (2 = SBAS incl. EGNOS)
+            {"PAIR513", 513, 1500, 1, false, 300},   // persist constellation/SBAS config to flash
         };
-        startSeq(kWakeIdent, 3, IDENT);
+        startSeq(kWakeIdent, 8, IDENT);
         return;
     }
 
@@ -312,19 +331,19 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
         sentPerFix = (fixEpochs > 0) ? ((float)sentDelta / fixEpochs) : ((float)sentDelta / winSec);
         if (sentPerFix < 1.0f)
             sentPerFix = 1.0f;
-        LOG_INFO("GnssProbe: baseline %.2f fix/s, %.1f sentences/fix", baselineHz, sentPerFix);
-        if (baselineHz >= GNSSPROBE_SUCCESS_HZ) {
-            winner("already raised — saved rate persisted from a previous run", baselineHz);
+        LOG_INFO("GnssProbe: baseline %.2f fix/s, %.1f sentences/fix (target %.1f fix/s)", baselineHz, sentPerFix,
+                 GNSSPROBE_TARGET_HZ);
+        if (gnssNearTarget(baselineHz)) {
+            winner("already at the target rate (persisted from a previous run)", baselineHz);
             startWindow(reader, nowMs);
             phase = RESIDENT;
             return;
         }
-        // Characterize the RAM-set path first: exact ACK codes for 250 vs 100.
+        // Set the target rate (RAM): on this unit it ACKs 0 and takes effect immediately.
         static const Step kChar[] = {
-            {"PAIR050,250", 50, 1500, 1, false, 400},
-            {"PAIR050,100", 50, 1500, 1, false, 400},
+            {GNSSPROBE_RATE_CMD, 50, 1500, 2, false, 400},
         };
-        startSeq(kChar, 2, CHAR_RAM);
+        startSeq(kChar, 1, CHAR_RAM);
         return;
     }
 
@@ -362,14 +381,18 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
 
         switch (measureCtx) {
         case CTX_CHAR: {
-            LOG_INFO("GnssProbe: RAM-set immediate effect: %.2f fix/s (ack 250=%d, 100=%d)", hz, ack250, ack100);
-            if (hz >= GNSSPROBE_SUCCESS_HZ) {
+            LOG_INFO("GnssProbe: RAM-set immediate effect: %.2f fix/s (rate cmd ack=%d, target %d ms)", hz, ack100,
+                     GPSTAG_FIX_INTERVAL_MS);
+            if (gnssNearTarget(hz)) {
                 winner("RAM set took effect immediately", hz);
                 startWindow(reader, nowMs);
                 phase = RESIDENT;
                 return;
             }
-            if (ack250 == -100 && ack100 == -100) {
+            if (hz >= GNSSPROBE_SUCCESS_HZ)
+                LOG_WARN("GnssProbe: rate is %.2f fix/s but OFF-TARGET (%.1f wanted) — dance will set + persist it",
+                         hz, GNSSPROBE_TARGET_HZ);
+            if (ack100 == -100) {
                 // Nothing ACKs post-boot. Discriminate DEAF (commands unheard) from MUTE (commands
                 // execute, ACK generation disabled): turn GSV back on and watch the sentence mix.
                 LOG_INFO("GnssProbe: zero ACKs — echo test: $PAIR062,3,1 (GSV ON), watching the sentence mix");
@@ -381,7 +404,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             static const Step kDance[] = {
                 {"PAIR382,1", 382, 1500, 3, true, 150}, // keep-alive latch — ABORT if never ACKed
                 {"PAIR003", 3, 1500, 2, false, 400},    // engine off (commands stay alive via the latch)
-                {"PAIR050,100", 50, 1500, 2, false, 150},
+                {GNSSPROBE_RATE_CMD, 50, 1500, 2, false, 150},
                 {"PAIR513", 513, 2000, 2, false, 300},  // save — only valid while powered off
                 {"PAIR002", 2, 2500, 2, false, 1200},   // engine back on
             };
@@ -390,7 +413,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             return;
         }
         case CTX_DANCE:
-            if (hz >= GNSSPROBE_SUCCESS_HZ) {
+            if (gnssNearTarget(hz)) {
                 winner("dance applied without reboot", hz);
                 startWindow(reader, nowMs);
                 phase = RESIDENT;
@@ -403,7 +426,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             }
             return;
         case CTX_HOT:
-            if (hz >= GNSSPROBE_SUCCESS_HZ) {
+            if (gnssNearTarget(hz)) {
                 winner("applied after $PAIR004 hot start", hz);
                 startWindow(reader, nowMs);
                 phase = RESIDENT;
@@ -415,7 +438,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             nextActionMs = nowMs + 3500;
             return;
         case CTX_RESET:
-            if (hz >= GNSSPROBE_SUCCESS_HZ) {
+            if (gnssNearTarget(hz)) {
                 winner("applied after hardware reset", hz);
                 startWindow(reader, nowMs);
                 phase = RESIDENT;
@@ -455,8 +478,8 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
                     {"PAIR382,1", 0, 0, 1, false, 80},  {"PAIR382,1", 0, 0, 1, false, 120},
                     {"PAIR003", 0, 0, 1, false, 250},   {"PAIR003", 0, 0, 1, false, 250},
                     {"PAIR003", 0, 0, 1, false, 350},
-                    {"PAIR050,100", 0, 0, 1, false, 150}, {"PAIR050,100", 0, 0, 1, false, 150},
-                    {"PAIR050,100", 0, 0, 1, false, 200},
+                    {GNSSPROBE_RATE_CMD, 0, 0, 1, false, 150}, {GNSSPROBE_RATE_CMD, 0, 0, 1, false, 150},
+                    {GNSSPROBE_RATE_CMD, 0, 0, 1, false, 200},
                     {"PAIR513", 0, 0, 1, false, 250},   {"PAIR513", 0, 0, 1, false, 250},
                     {"PAIR513", 0, 0, 1, false, 350},
                     {"PAIR002", 0, 0, 1, false, 600},   {"PAIR002", 0, 0, 1, false, 600},
@@ -496,7 +519,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             static const Step kDanceW[] = {
                 {"PAIR382,1", 382, 1500, 3, true, 150},
                 {"PAIR003", 3, 1500, 2, false, 400},
-                {"PAIR050,100", 50, 1500, 2, false, 150},
+                {GNSSPROBE_RATE_CMD, 50, 1500, 2, false, 150},
                 {"PAIR513", 513, 2000, 2, false, 300},
                 {"PAIR002", 2, 2500, 2, false, 1200},
             };
@@ -534,7 +557,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
         float hz = windowFixHz(reader, nowMs);
         float sentHz = (reader.passedChecksum() - sentAtStart) / ((nowMs - winStartMs) / 1000.0f);
         LOG_INFO("GnssProbe: GNSS rate %.2f fix/s (%.1f sent/s)%s", hz, sentHz, raised ? " (raised)" : "");
-        if (raised && hz < GNSSPROBE_SUCCESS_HZ * 0.6f) {
+        if (raised && !gnssNearTarget(hz) && hz < GNSSPROBE_TARGET_HZ * 0.6f) {
             if (++sagWindows >= 2 && (nowMs - lastReapplyMs) > GNSSPROBE_REAPPLY_COOLDOWN_MS && rescues < 2) {
                 LOG_WARN("GnssProbe: raised rate sagged to %.2f fix/s — re-running the dance", hz);
                 lastReapplyMs = nowMs;
@@ -542,7 +565,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
                 static const Step kDance2[] = {
                     {"PAIR382,1", 382, 1500, 3, true, 150},
                     {"PAIR003", 3, 1500, 2, false, 400},
-                    {"PAIR050,100", 50, 1500, 2, false, 150},
+                    {GNSSPROBE_RATE_CMD, 50, 1500, 2, false, 150},
                     {"PAIR513", 513, 2000, 2, false, 300},
                     {"PAIR002", 2, 2500, 2, false, 1200},
                 };

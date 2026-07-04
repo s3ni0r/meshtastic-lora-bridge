@@ -28,7 +28,7 @@ class TinyGPSPlus;
  *      verbatim (the missing evidence in every earlier attempt);
  *   2. characterizes $PAIR050,250 vs $PAIR050,100 ACK codes (0 ok / 1 in-process / 2 send fail /
  *      3 unsupported / 4 param error / 5 busy);
- *   3. runs the spec-exact ACK-GATED dance 382,1 -> 003 -> 050,100 -> 513 -> 002 (aborts before
+ *   3. runs the spec-exact ACK-GATED dance 382,1 -> 003 -> 050,<target> -> 513 -> 002 (aborts before
  *      003 if the 382 latch is never ACKed — the deaf-module trap);
  *   4. applies the reboot requirement: $PAIR004 hot start, then a PIN_GPS_RESET hardware reset;
  *   5. rescues a silent module (GPS_RTC_INT pulse + reset) and RESTOREs 1000 ms if a saved rate
@@ -94,9 +94,8 @@ class GnssRateProbe
 
     // evidence + escalation state
     uint8_t measureCtx = CTX_CHAR;
-    int8_t ack250 = -100;      // $PAIR050,250 ACK code (-100 = no ACK seen)
-    int8_t ack100 = -100;      // $PAIR050,100 ACK code (RAM characterization)
-    int8_t danceAck050 = -100; // $PAIR050,100 ACK code inside the dance
+    int8_t ack100 = -100;      // rate-command ACK code, RAM characterization (-100 = no ACK seen)
+    int8_t danceAck050 = -100; // rate-command ACK code inside the dance
     bool danceSaved = false;   // $PAIR513 ACKed code 0 inside the dance
     bool danceRan = false;
     bool restoring = false;

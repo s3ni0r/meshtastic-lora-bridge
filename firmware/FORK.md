@@ -78,10 +78,11 @@ sends can strand the module.
 PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER \
   -DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY" pio run -e tracker-t1000-e
 
-# TAG flavor B — self-contained GPS tag (onboard AG3335 unlocked to 10 Hz, §3/§9).
-# GPS_TAG implies HIGHRATE_POSITION_SENDER + HIGHRATE_TX_ONLY + a 100 ms GPS parser tick;
-# MIN_SPACING 100 lets the LoRa TX ride the full 10 Hz GNSS (bench/US only):
-PLATFORMIO_BUILD_FLAGS="-DGPS_TAG -DHIGHRATE_MIN_SPACING_MS=100" pio run -e tracker-t1000-e
+# TAG flavor B — self-contained GPS tag (onboard AG3335 unlocked, §3/§9). Default GNSS target is
+# 4 Hz (-DGPSTAG_FIX_INTERVAL_MS=250; set 100 for 10 Hz — the probe STEERS to the target, e.g.
+# back down from a flash-persisted 10 Hz). GPS_TAG implies HIGHRATE_POSITION_SENDER +
+# HIGHRATE_TX_ONLY + a 100 ms GPS parser tick; the default 150 ms TX spacing passes 4 Hz untouched:
+PLATFORMIO_BUILD_FLAGS="-DGPS_TAG" pio run -e tracker-t1000-e
 
 # Base (iPhone-side receiver): plain build — a sender-flavor Base would emit pointless heartbeats:
 pio run -e tracker-t1000-e
@@ -197,10 +198,16 @@ Every `GPS_TAG` boot re-runs the unlock, non-blocking off the GPS thread (see §
    codes, $PAIR021 version, $PAIR051 fix-interval reply) — silence vs refusal is finally visible.
 2. **Latch first**: `$PAIR382,1` as the opening step (plus a 6x blast in `probe()` at GNSS
    power-on) keeps the command CPU awake past its boot window; ACK `$PAIR001,382,0` = alive.
-3. Baseline (5 s, sentences-per-fix calibrated), then `$PAIR050,250`/`$PAIR050,100` — on this unit
-   both ACK 0 and 100 ms takes effect immediately: **WINNER at ~10 fix/s**, resident 10 s rate
-   logs, auto re-apply if the rate ever sags.
-4. If a unit ever behaves differently, the fallback ladder still runs on evidence: ACK-gated
+3. **France/Europe GNSS preset** (right after the latch, at 1 Hz so the `$PAIR513` persist is
+   valid): `$PAIR066,1,1,1,1,0,0` = GPS+GLONASS+Galileo+BDS (max usable satellites -> best
+   DOP/TTFF; Galileo is the European system; QZSS/NavIC are regional, off), `$PAIR410,1` = SBAS ON
+   and `$PAIR411`/`$PAIR401` queries. **Verified on-device: `$PAIR411,1` + `$PAIR401,2` — EGNOS
+   corrections active** (typ. 1–2 m class accuracy outdoors).
+4. Baseline (5 s, sentences-per-fix calibrated), then `$PAIR050,<GPSTAG_FIX_INTERVAL_MS>` — ACK 0,
+   effective immediately: **WINNER at the target** (measured 3.99 fix/s @ 250 ms; 10.02 @ 100 ms),
+   resident 10 s rate logs, auto re-steer if the rate ever sags or drifts off-target (a previous
+   session's persisted rate is steered back too).
+5. If a unit ever behaves differently, the fallback ladder still runs on evidence: ACK-gated
    dance (382,1 → 003 → 050,100 → 513 → 002, aborted unless the latch ACKs), $PAIR004 hot start,
    hardware reset, an echo test ($PAIR062,3,1 GSV-on) separating deaf-vs-mute, a reset+latch-spam
    window re-opener, GPS_RTC_INT rescue, and a 1000 ms restore so the module is never left
@@ -208,15 +215,20 @@ Every `GPS_TAG` boot re-runs the unlock, non-blocking off the GPS thread (see §
 
 ### Configure + verify the GPS tag
 
-Node settings are the §6 list (same channel/PSK as Base; `role=TRACKER`,
-`position.gps_update_interval=1`, GPS **enabled** — do *not* reuse the bridge's GPS-off habits).
+Node settings are the §6 list (same channel/PSK as Base) with **`device.role CLIENT_MUTE`**: the
+tag is a pure sender — firmware-side `HIGHRATE_TX_ONLY` already keeps the LR1110 out of RX (deaf
+to LoRa, TX untouched), CLIENT_MUTE keeps it from ever rebroadcasting, and **BLE stays fully
+usable** (unlike the bridge, the GPS tag keeps advertising, so the Meshtastic app connects
+normally). At 4 Hz/ShortTurbo the ~7% channel utilization sits well under CLIENT_MUTE's gate, so
+TRACKER's 40% allowance isn't needed. Plus `position.gps_update_interval=1`, GPS **enabled**.
 Give each node a distinct name for sanity (`meshtastic --set-owner "TAG-GPS"` /
 `"TAG-BRIDGE"` / `"BASE"`).
 
 Watch the serial log after flashing:
 - `GnssProbe: 'PAIR382,1' -> ACK code 0 (ok)` — sleep lock latched (interface alive);
-- `GnssProbe: *** WINNER … ~10 fix/s ***` then `GnssProbe: GNSS rate 10.0 fix/s (20.0 sent/s)`
-  every 10 s — the live ground truth;
+- `GnssProbe: << $PAIR411,1` + `<< $PAIR401,2` — SBAS/EGNOS active;
+- `GnssProbe: *** WINNER … ***` then `GnssProbe: GNSS rate 3.97-4.07 fix/s (8.0 sent/s)` every
+  10 s — the live ground truth at the 4 Hz target;
 - `HighRate: src=2 seq=…` — the stream is flowing with the GPS-tag source type.
 On the receiver, `tools/m2_stream_poc.py recv --csv run.csv` shows `src=gps` rows; outdoors with a
 position lock the iOS per-source "GPS refresh" should read up to ~10 Hz (TX-capped by
