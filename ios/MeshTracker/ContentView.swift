@@ -1,7 +1,7 @@
 import SwiftUI
 import MapKit
 
-private func sourceColor(_ s: PacketSource) -> Color {
+func sourceColor(_ s: PacketSource) -> Color {
     switch s {
     case .bridge: return .blue
     case .gpsTag: return .teal
@@ -9,7 +9,7 @@ private func sourceColor(_ s: PacketSource) -> Color {
     }
 }
 
-private func sourceSymbol(_ s: PacketSource) -> String {
+func sourceSymbol(_ s: PacketSource) -> String {
     switch s {
     case .bridge: return "paperplane.fill"
     case .gpsTag: return "location.circle.fill"
@@ -27,17 +27,21 @@ private struct TrackSnapshot: Identifiable {
     let current: CLLocationCoordinate2D?
     let trail: [CLLocationCoordinate2D]
     let hasLock: Bool
+    let heading: Double
+    let focused: Bool
 }
 
 struct ContentView: View {
     @State private var model: PositionModel
     @State private var ble: BLEManager
     @State private var camera: MapCameraPosition = .automatic
-    @State private var follow = true          // keep the selected tag in view (edge-triggered)
-    @State private var camDistance: Double = 600 // user zoom, preserved when recentering
-    @State private var camRegion: MKCoordinateRegion? // currently visible region (from the map)
+    @State private var follow = true          // keep the focused tag in view (edge-triggered)
+    @State private var camDistance: Double = 400
+    @State private var camRegion: MKCoordinateRegion?
     @State private var centeredOnce = false
+    @State private var panelExpanded = true
     @State private var phone = PhoneLocation()
+    @AppStorage("mapStyleChoice") private var mapStyleChoice = 0 // 0 standard / 1 hybrid / 2 satellite
 
     init() {
         let m = PositionModel()
@@ -45,16 +49,7 @@ struct ContentView: View {
         _ble = State(initialValue: BLEManager(model: m))
     }
 
-    private func distanceString(_ m: Double) -> String {
-        m < 1000 ? "\(Int(m)) m" : String(format: "%.2f km", m / 1000)
-    }
-
-    private func lockText(_ t: SourceTrack?) -> String {
-        guard let t else { return model.packetCount > 0 ? "searching…" : "no signal" }
-        if t.hasLock { return "GPS lock" }
-        if t.current != nil { return "GPS stale" }
-        return "searching…"
-    }
+    // MARK: - Camera
 
     private func centerOnActive() {
         guard let c = model.active?.current else { return }
@@ -62,8 +57,7 @@ struct ContentView: View {
     }
 
     /// Follow = the ICON moves and traces its path on a still map; the camera only glides when the
-    /// tag nears the edge of the visible region (outside the inner 70%). Recentering every packet
-    /// would pin the icon to screen center and scroll the world instead — the bug this replaces.
+    /// tag nears the edge of the visible region (outside the inner 70%).
     private func recenterIfNeeded() {
         guard let c = model.active?.current else { return }
         if !centeredOnce {
@@ -79,153 +73,320 @@ struct ContentView: View {
         }
     }
 
+    /// Frame every visible tag (and the phone) in one view.
+    private func fitAll() {
+        var coords = model.tracks.filter { $0.isVisible }.compactMap { $0.current }
+        if let me = phone.coordinate { coords.append(me) }
+        guard !coords.isEmpty else { return }
+        var minLat = coords[0].latitude, maxLat = minLat
+        var minLon = coords[0].longitude, maxLon = minLon
+        for c in coords {
+            minLat = min(minLat, c.latitude); maxLat = max(maxLat, c.latitude)
+            minLon = min(minLon, c.longitude); maxLon = max(maxLon, c.longitude)
+        }
+        let span = MKCoordinateSpan(latitudeDelta: max((maxLat - minLat) * 1.5, 0.003),
+                                    longitudeDelta: max((maxLon - minLon) * 1.5, 0.003))
+        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
+        follow = false
+        withAnimation(.easeInOut(duration: 0.5)) {
+            camera = .region(MKCoordinateRegion(center: center, span: span))
+        }
+    }
+
+    private var mapStyle: MapStyle {
+        switch mapStyleChoice {
+        case 1: return .hybrid(elevation: .flat)
+        case 2: return .imagery(elevation: .flat)
+        default: return .standard(elevation: .flat, pointsOfInterest: .excludingAll)
+        }
+    }
+
+    private func distanceString(_ m: Double) -> String {
+        m < 1000 ? "\(Int(m)) m" : String(format: "%.2f km", m / 1000)
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        // Register a dependency on the packet counter: SourceTrack is a reference type, so this
-        // is what guarantees body re-evaluates for every packet of the stream.
+        // Dependency on the packet counter: guarantees body re-evaluates for every packet.
         let _ = model.revision
-        // Snapshot the tracks as VALUES here in body (also registers observation on every field
-        // read). Handing these to Map's ForEach is what actually makes the markers move.
-        let snaps = model.tracks.map { t in
-            TrackSnapshot(id: t.from, source: t.source, title: t.title,
-                          current: t.current, trail: t.trail, hasLock: t.hasLock)
+        let snaps = model.tracks.filter { $0.isVisible }.map { t in
+            TrackSnapshot(id: t.from, source: t.source, title: t.title, current: t.current,
+                          trail: t.trail, hasLock: t.hasLock, heading: t.heading,
+                          focused: model.active?.from == t.from)
         }
         return ZStack(alignment: .top) {
-            Map(position: $camera) {
-                // Every tag heard gets its own colored trail + marker — that's how the bridge tag,
-                // the GPS tag and anything else stay visually distinct on one map.
+            Map(position: $camera, bounds: MapCameraBounds(minimumDistance: 15, maximumDistance: 2_000_000)) {
+                UserAnnotation()
                 ForEach(snaps) { track in
                     if track.trail.count > 1 {
                         MapPolyline(coordinates: track.trail)
-                            .stroke(sourceColor(track.source), lineWidth: 3)
+                            .stroke(sourceColor(track.source).opacity(track.focused ? 0.95 : 0.5),
+                                    style: StrokeStyle(lineWidth: track.focused ? 4 : 2.5,
+                                                       lineCap: .round, lineJoin: .round))
                     }
                     if let c = track.current {
-                        Marker(track.title, systemImage: sourceSymbol(track.source), coordinate: c)
-                            .tint(track.hasLock ? sourceColor(track.source) : .orange)
+                        Annotation(track.title, coordinate: c, anchor: .center) {
+                            ZStack {
+                                Circle()
+                                    .fill(track.hasLock ? sourceColor(track.source) : .orange)
+                                    .frame(width: track.focused ? 24 : 16, height: track.focused ? 24 : 16)
+                                    .overlay(Circle().strokeBorder(.white, lineWidth: track.focused ? 3 : 2))
+                                    .shadow(color: .black.opacity(0.35), radius: track.focused ? 5 : 2)
+                                if track.focused {
+                                    Image(systemName: "location.north.fill")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .rotationEffect(.degrees(track.heading))
+                                }
+                            }
+                        }
                     }
                 }
+            }
+            .mapStyle(mapStyle)
+            .mapControls {
+                MapCompass()
+                MapScaleView()
             }
             .ignoresSafeArea()
             .onMapCameraChange(frequency: .continuous) { ctx in
-                camDistance = ctx.camera.distance // remember the user's zoom level
-                camRegion = ctx.region            // and what's visible, for edge detection
+                camDistance = ctx.camera.distance
+                camRegion = ctx.region
             }
             .onChange(of: model.active?.current?.latitude) {
-                if follow { recenterIfNeeded() } // icon moves; camera only steps in near the edge
+                if follow { recenterIfNeeded() }
             }
             .onChange(of: model.selectedFrom) {
-                // Chip tap: always jump to that tag, then its icon moves from there.
                 withAnimation(.easeInOut(duration: 0.4)) { centerOnActive() }
             }
 
-            statsPanel
+            VStack(spacing: 0) {
+                HStack(alignment: .top) {
+                    statusCapsule
+                    Spacer()
+                    mapControlsColumn
+                }
+                .padding(.horizontal, 12)
+                Spacer()
+                bottomPanel
+            }
         }
     }
 
-    private var subtitle: String {
-        switch model.active?.source {
-        case .bridge: return "Dronetag · Remote ID → LoRa"
-        case .gpsTag: return "T1000-E · internal GPS → LoRa"
-        default: return "waiting for a tag…"
-        }
-    }
+    // MARK: - Top status
 
-    private var statsPanel: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(ble.status).font(.headline)
-                    Text(subtitle).font(.caption2).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button {
-                    follow.toggle()
-                    if follow { centerOnActive() }
-                } label: { Image(systemName: follow ? "location.fill" : "location") }
-                .tint(follow ? .blue : .secondary)
-                .disabled(model.active?.current == nil && !follow)
-            }
+    private var connected: Bool { ble.status.hasPrefix("Connected") }
 
-            if !model.tracks.isEmpty {
-                sourceChips
-            }
-
-            let a = model.active
-
-            HStack(alignment: .firstTextBaseline) {
-                Label(lockText(a), systemImage: (a?.hasLock ?? false) ? "location.fill" : "location.slash")
-                    .foregroundStyle((a?.hasLock ?? false) ? .green : .orange)
-                    .font(.subheadline)
-                Spacer()
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(String(format: "%.1f Hz", a?.noveltyHz ?? 0)).font(.title3).bold().monospacedDigit()
-                    Text("GPS refresh").font(.caption2).foregroundStyle(.secondary)
-                }
-            }
-
-            if let c = a?.current {
-                Text(String(format: "%.6f, %.6f", c.latitude, c.longitude))
-                    .font(.caption.monospaced())
-            }
-
-            if let d = phone.distance(to: a?.current) {
-                Label(distanceString(d) + " from you", systemImage: "ruler")
-                    .font(.subheadline).bold()
-            }
-
-            HStack(spacing: 14) {
-                Label("\(a?.speedKmh ?? 0) km/h", systemImage: "speedometer")
-                HStack(spacing: 2) {
-                    Image(systemName: "location.north.fill").rotationEffect(.degrees(a?.heading ?? 0))
-                    Text("\(Int(a?.heading ?? 0))°")
-                }
-                Label("\(a?.altitude ?? 0) m", systemImage: "mountain.2.fill")
-                Spacer()
-                Text((a?.hacc ?? 0) > 0 ? "±\(a!.hacc) m" : "±— m")
-            }
-            .font(.caption).foregroundStyle(.secondary)
-
-            HStack {
-                Text("pkts \(a?.packetCount ?? 0)")
-                Spacer()
-                Text(String(format: "stream %.1f Hz", a?.rateHz ?? 0))
-                Spacer()
-                Text(String(format: "SNR %.0f  RSSI %d", a?.lastSnr ?? 0, a?.lastRssi ?? 0))
-            }
-            .font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .padding()
-    }
-
-    /// One chip per tag heard. Tap to pin the panel (and auto-centering) to that tag; tap again to
-    /// go back to follow-latest. The dot dims when a tag goes quiet for >10 s.
-    private var sourceChips: some View {
+    private var statusCapsule: some View {
         HStack(spacing: 8) {
-            ForEach(model.tracks) { track in
-                let pinned = model.selectedFrom == track.from
-                let isActive = model.active?.from == track.from
-                let quiet = (track.lastHeard.map { Date().timeIntervalSince($0) > 10 }) ?? true
-                Button {
-                    model.selectedFrom = pinned ? nil : track.from
-                } label: {
-                    HStack(spacing: 4) {
-                        Circle().fill(sourceColor(track.source))
-                            .frame(width: 8, height: 8)
-                            .opacity(quiet ? 0.3 : 1)
-                        Text(track.title).font(.caption2).bold()
-                        Text(String(format: "%.1f Hz", track.noveltyHz))
-                            .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                        if pinned { Image(systemName: "pin.fill").font(.system(size: 8)) }
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(isActive ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.clear),
-                                in: Capsule())
-                    .overlay(Capsule().strokeBorder(sourceColor(track.source).opacity(isActive ? 0.8 : 0.3)))
-                }
-                .buttonStyle(.plain)
+            Circle().fill(connected ? .green : .orange).frame(width: 9, height: 9)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("MeshTracker").font(.footnote.bold())
+                Text(ble.status).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer()
         }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+    }
+
+    // MARK: - Map controls (right column)
+
+    private var mapControlsColumn: some View {
+        VStack(spacing: 10) {
+            Menu {
+                Picker("Map style", selection: $mapStyleChoice) {
+                    Label("Standard", systemImage: "map").tag(0)
+                    Label("Hybrid", systemImage: "map.fill").tag(1)
+                    Label("Satellite", systemImage: "globe.europe.africa.fill").tag(2)
+                }
+            } label: {
+                controlIcon("square.3.layers.3d")
+            }
+            Button {
+                follow.toggle()
+                if follow { withAnimation(.easeInOut(duration: 0.4)) { centerOnActive() } }
+            } label: {
+                controlIcon(follow ? "location.fill" : "location")
+                    .foregroundStyle(follow ? Color.accentColor : Color.primary)
+            }
+            Button { fitAll() } label: {
+                controlIcon("arrow.up.left.and.arrow.down.right")
+            }
+        }
+    }
+
+    private func controlIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 16, weight: .semibold))
+            .frame(width: 40, height: 40)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+    }
+
+    // MARK: - Bottom panel
+
+    private var bottomPanel: some View {
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.spring(duration: 0.35)) { panelExpanded.toggle() }
+            } label: {
+                VStack(spacing: 6) {
+                    Capsule().fill(.tertiary).frame(width: 38, height: 5).padding(.top, 8)
+                    focusSummaryRow.padding(.horizontal, 14).padding(.bottom, panelExpanded ? 4 : 12)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if panelExpanded {
+                VStack(spacing: 10) {
+                    Divider()
+                    tagList
+                    if model.active != nil {
+                        metricsGrid
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
+        .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
+    }
+
+    private var focusSummaryRow: some View {
+        HStack(spacing: 10) {
+            if let a = model.active {
+                Image(systemName: sourceSymbol(a.source))
+                    .foregroundStyle(sourceColor(a.source))
+                    .font(.system(size: 20))
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Text(a.title).font(.subheadline.bold())
+                        if a.isFavorite { Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow) }
+                        if model.selectedFrom == a.from { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary) }
+                    }
+                    Text(a.hasLock ? "GPS lock" : (a.current != nil ? "GPS stale" : "searching…"))
+                        .font(.caption2)
+                        .foregroundStyle(a.hasLock ? .green : .orange)
+                }
+                Spacer()
+                if let d = phone.distance(to: a.current) {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(distanceString(d)).font(.subheadline.bold().monospacedDigit())
+                        Text("away").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(String(format: "%.1f Hz", a.noveltyHz)).font(.subheadline.bold().monospacedDigit())
+                    Text("refresh").font(.caption2).foregroundStyle(.secondary)
+                }
+            } else {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .foregroundStyle(.secondary)
+                Text(model.packetCount > 0 ? "Waiting for a position…" : "Waiting for tags…")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+            }
+            Image(systemName: panelExpanded ? "chevron.down" : "chevron.up")
+                .font(.caption.bold()).foregroundStyle(.tertiary)
+        }
+    }
+
+    private var tagList: some View {
+        VStack(spacing: 2) {
+            ForEach(model.tracks) { track in
+                tagRow(track)
+            }
+        }
+    }
+
+    private func tagRow(_ track: SourceTrack) -> some View {
+        let pinned = model.selectedFrom == track.from
+        let isActive = model.active?.from == track.from
+        let quiet = (track.lastHeard.map { Date().timeIntervalSince($0) > 10 }) ?? true
+        return HStack(spacing: 10) {
+            Button {
+                // Tap = focus this tag (auto-reveals it); tap the pinned row again = follow-latest.
+                if pinned {
+                    model.selectedFrom = nil
+                } else {
+                    model.selectedFrom = track.from
+                    if !track.isVisible { model.toggleVisible(track) }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle().fill(sourceColor(track.source).opacity(quiet ? 0.25 : 1))
+                            .frame(width: 12, height: 12)
+                        if quiet { Circle().strokeBorder(.secondary, lineWidth: 1).frame(width: 12, height: 12) }
+                    }
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(track.title).font(.footnote.weight(isActive ? .bold : .regular))
+                        Text(quiet ? "quiet" : String(format: "%.1f Hz · %d pkts", track.noveltyHz, track.packetCount))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    if pinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary) }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button { model.toggleFavorite(track) } label: {
+                Image(systemName: track.isFavorite ? "star.fill" : "star")
+                    .foregroundStyle(track.isFavorite ? .yellow : .secondary)
+            }
+            .buttonStyle(.plain)
+            Button { model.toggleVisible(track) } label: {
+                Image(systemName: track.isVisible ? "eye.fill" : "eye.slash")
+                    .foregroundStyle(track.isVisible ? Color.accentColor : .secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 6).padding(.horizontal, 8)
+        .background(isActive ? AnyShapeStyle(sourceColor(track.source).opacity(0.12)) : AnyShapeStyle(.clear),
+                    in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var metricsGrid: some View {
+        let a = model.active!
+        let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+        return VStack(spacing: 8) {
+            if let c = a.current {
+                Text(String(format: "%.6f, %.6f", c.latitude, c.longitude))
+                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            LazyVGrid(columns: cols, spacing: 8) {
+                metricTile("speedometer", String(format: "%d", a.speedKmh), "km/h")
+                metricTile("safari", String(format: "%d°", Int(a.heading)), "heading")
+                metricTile("mountain.2.fill", "\(a.altitude)", "alt m")
+                metricTile("scope", a.hacc > 0 ? "±\(a.hacc)" : "±—", "acc m")
+                metricTile("antenna.radiowaves.left.and.right", String(format: "%.0f", a.lastSnr), "SNR dB")
+                metricTile("dot.radiowaves.right", "\(a.lastRssi)", "RSSI")
+            }
+            HStack {
+                Text(String(format: "stream %.1f Hz", a.rateHz))
+                Spacer()
+                Text("pkts \(a.packetCount)")
+            }
+            .font(.caption2).foregroundStyle(.tertiary)
+        }
+    }
+
+    private func metricTile(_ icon: String, _ value: String, _ unit: String) -> some View {
+        VStack(spacing: 2) {
+            Image(systemName: icon).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.callout.bold().monospacedDigit())
+            Text(unit).font(.caption2).foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
     }
 }

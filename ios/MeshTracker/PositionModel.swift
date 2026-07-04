@@ -7,8 +7,11 @@ import Observation
 @Observable
 final class SourceTrack: Identifiable {
     let from: UInt32
+    let seenOrder: Int // arrival order, stable sort key behind favorites
     var id: UInt32 { from }
     var source: PacketSource = .legacy
+    var isFavorite = false // pinned to the top of the list (persisted)
+    var isVisible = true   // rendered on the map (persisted); the list always shows every tag
     var current: CLLocationCoordinate2D?
     var trail: [CLLocationCoordinate2D] = []
     var hasLock = false
@@ -34,7 +37,10 @@ final class SourceTrack: Identifiable {
     @ObservationIgnored private var lastNovelLon = Double.nan
     @ObservationIgnored private var lastArrival: Date?
 
-    init(from: UInt32) { self.from = from }
+    init(from: UInt32, seenOrder: Int) {
+        self.from = from
+        self.seenOrder = seenOrder
+    }
 
     func ingest(_ sp: StreamPacket, at now: Date) {
         // A buffered backlog (e.g. the Base flushing its queue on (re)connect) arrives back-to-back
@@ -106,8 +112,15 @@ final class PositionModel {
     }
 
     @ObservationIgnored private var csv: FileHandle?
+    @ObservationIgnored private var favorites: Set<UInt32> = []
+    @ObservationIgnored private var hidden: Set<UInt32> = []
 
-    init() { openCSV() }
+    init() {
+        let d = UserDefaults.standard
+        favorites = Set((d.array(forKey: "favoriteTags") as? [String] ?? []).compactMap { UInt32($0) })
+        hidden = Set((d.array(forKey: "hiddenTags") as? [String] ?? []).compactMap { UInt32($0) })
+        openCSV()
+    }
 
     func ingest(_ sp: StreamPacket) {
         let now = Date()
@@ -115,13 +128,40 @@ final class PositionModel {
         if let t = tracks.first(where: { $0.from == sp.from }) {
             track = t
         } else {
-            track = SourceTrack(from: sp.from)
+            track = SourceTrack(from: sp.from, seenOrder: tracks.count)
+            track.isFavorite = favorites.contains(sp.from)
+            track.isVisible = !hidden.contains(sp.from)
             tracks.append(track)
+            resort()
         }
         track.ingest(sp, at: now)
         packetCount += 1
         revision &+= 1
         writeCSV(sp, now)
+    }
+
+    // MARK: - Favorites / visibility (persisted across launches)
+
+    func toggleFavorite(_ t: SourceTrack) {
+        t.isFavorite.toggle()
+        if t.isFavorite { favorites.insert(t.from) } else { favorites.remove(t.from) }
+        UserDefaults.standard.set(favorites.map(String.init), forKey: "favoriteTags")
+        resort()
+        revision &+= 1
+    }
+
+    func toggleVisible(_ t: SourceTrack) {
+        t.isVisible.toggle()
+        if t.isVisible { hidden.remove(t.from) } else { hidden.insert(t.from) }
+        UserDefaults.standard.set(hidden.map(String.init), forKey: "hiddenTags")
+        revision &+= 1
+    }
+
+    private func resort() {
+        tracks.sort {
+            if $0.isFavorite != $1.isFavorite { return $0.isFavorite }
+            return $0.seenOrder < $1.seenOrder
+        }
     }
 
     // MARK: - CSV logging (Documents/meshtracker_log2.csv — v2 schema adds `src`)
