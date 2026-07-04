@@ -29,13 +29,27 @@ git submodule update --init --recursive
 ## 1. Add the module
 
 ```bash
-cp /path/to/meshtastic-tracker/firmware/src/modules/HighRatePositionModule.h   src/modules/
-cp /path/to/meshtastic-tracker/firmware/src/modules/HighRatePositionModule.cpp src/modules/
-cp /path/to/meshtastic-tracker/firmware/src/gps/GnssRateProbe.h                src/gps/
-cp /path/to/meshtastic-tracker/firmware/src/gps/GnssRateProbe.cpp              src/gps/
+./apply-fork.sh   # clones meshtastic/firmware @ v2.7.15.567b8ea, copies drop-ins, applies the patch
 ```
-(Or just `git apply ../meshtastic-fork.patch` for the vendor-file edits — `sync-fork.sh` keeps both
-in lockstep.)
+
+### How the vendor tree is managed
+
+`meshtastic-firmware/` is **git-ignored** (it has its own .git). The single source of truth for our
+changes is the TRACKED outer repo:
+
+- `meshtastic-fork.patch` — every edit to vendor files, one reviewable diff vs the build tag;
+- `src/modules/…`, `src/gps/…`, `patch_bluefruit_ext.py` — project-owned drop-in files.
+
+Workflow: **edit inside `meshtastic-firmware/` → build/flash → run `./sync-fork.sh`** (regenerates
+the patch + copies the drop-ins) → commit the outer repo. `./apply-fork.sh` is the inverse — it
+rebuilds the clone from the tracked artifacts on a fresh machine (it refuses to touch a dirty
+clone). The clone also keeps a local `t1000e-fork` branch as an on-disk safety net, but it is not
+pushed anywhere — never treat it as the canonical copy.
+
+**Bumping the vendor base:** check out the new tag in the clone, re-apply the patch (fix
+conflicts), rebuild all three flavors, then `sync-fork.sh` and update `TAG` in `apply-fork.sh`.
+Mind the M5 lesson: build on the lineage the devices' SoftDevice matches (2.8.0 hung this
+hardware).
 
 ## 2. Register it — `src/modules/Modules.cpp`
 
