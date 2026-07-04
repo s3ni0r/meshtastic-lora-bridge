@@ -326,7 +326,10 @@ struct ContentView: View {
                     }
                     VStack(alignment: .leading, spacing: 0) {
                         Text(track.title).font(.footnote.weight(isActive ? .bold : .regular))
-                        Text(quiet ? "quiet" : String(format: "%.1f Hz · %d pkts", track.noveltyHz, track.packetCount))
+                        Text(quiet ? "quiet"
+                             : track.hacc > 0
+                             ? String(format: "%.1f Hz · ±%d m · %d pkts", track.noveltyHz, track.hacc, track.packetCount)
+                             : String(format: "%.1f Hz · ±— · %d pkts", track.noveltyHz, track.packetCount))
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     if pinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary) }
