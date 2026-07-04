@@ -127,18 +127,17 @@ struct ContentView: View {
                     }
                     if let c = track.current {
                         Annotation(track.title, coordinate: c, anchor: .center) {
+                            // Every tag gets a live heading arrow; the focused one is just bigger.
                             ZStack {
                                 Circle()
                                     .fill(track.hasLock ? sourceColor(track.source) : .orange)
-                                    .frame(width: track.focused ? 24 : 16, height: track.focused ? 24 : 16)
+                                    .frame(width: track.focused ? 26 : 20, height: track.focused ? 26 : 20)
                                     .overlay(Circle().strokeBorder(.white, lineWidth: track.focused ? 3 : 2))
                                     .shadow(color: .black.opacity(0.35), radius: track.focused ? 5 : 2)
-                                if track.focused {
-                                    Image(systemName: "location.north.fill")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(.white)
-                                        .rotationEffect(.degrees(track.heading))
-                                }
+                                Image(systemName: "location.north.fill")
+                                    .font(.system(size: track.focused ? 10 : 8, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .rotationEffect(.degrees(track.heading))
                             }
                         }
                     }
