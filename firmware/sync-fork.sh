@@ -21,8 +21,11 @@ cp "$CLONE/src/gps/GnssRateProbe.h"                src/gps/GnssRateProbe.h
 cp "$CLONE/src/gps/GnssRateProbe.cpp"              src/gps/GnssRateProbe.cpp
 cp "$CLONE/patch_bluefruit_ext.py"                 patch_bluefruit_ext.py
 
-# Vendor-file edits: one reviewable patch vs the build tag (v2.7.15.567b8ea).
-git -C "$CLONE" diff -- \
+# Vendor-file edits: one reviewable patch vs the build tag — diff against the TAG, not HEAD:
+# the clone keeps a local t1000e-fork branch with changes COMMITTED, so a plain `git diff`
+# (worktree vs HEAD) is empty and would silently wipe the patch.
+BASE_TAG=v2.7.15.567b8ea
+git -C "$CLONE" diff "$BASE_TAG" -- \
     src/main.cpp \
     src/configuration.h \
     src/gps/GPS.cpp \

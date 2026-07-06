@@ -45,6 +45,15 @@ any-motion/no-motion engines at µA cost, INT on P1.02, driver `src/motion/QMA61
 - [ ] Biggest battery lever available (700 mAh cell); also frees channel airtime at rest.
 - [ ] Measure: %/hour parked and moving, before/after (DeviceMetrics logging).
 
+### 3.5 GNSS field-quality follow-ups (from the 2026-07-06 outdoor test)
+- [ ] Verify motion-tuning ACKs on-device ($PAIR080/070/058 — shipped in probe, pending flash).
+- [ ] Walk test: fitness mode + 0.3 m/s static threshold + SNR 14 vs the Dronetag reference.
+- [ ] TTFF: main lever is AGNSS/EPO ephemeris injection (Airoha EPO file over UART at boot —
+      needs a download path via phone/BLE or USB; Dronetag gets assistance from its app, which
+      is why it fixes faster). Design sketch first; non-trivial.
+- [ ] Consider nav mode 5 (Drone) + SBAS for airborne use (fitness kills EGNOS; drone mode
+      keeps it) — flag-only change: -DGPSTAG_NAV_MODE=5.
+
 ### 4. Experiments (cheap, uncertain gain — try when idle)
 - [ ] **Base-as-reference differential**: Base is static with an idle GPS; its wander is the
       local common-mode GPS error (same sats/iono, EGNOS residuals). Subtract Base's

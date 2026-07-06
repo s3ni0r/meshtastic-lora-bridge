@@ -221,6 +221,14 @@ Every `GPS_TAG` boot re-runs the unlock, non-blocking off the GPS thread (see §
    DOP/TTFF; Galileo is the European system; QZSS/NavIC are regional, off), `$PAIR410,1` = SBAS ON
    and `$PAIR411`/`$PAIR401` queries. **Verified on-device: `$PAIR411,1` + `$PAIR401,2` — EGNOS
    corrections active** (typ. 1–2 m class accuracy outdoors).
+   **Motion tuning** (added after the 2026-07-06 field test showed a jittery walking track):
+   `$PAIR080,<GPSTAG_NAV_MODE>` (default **1 = Fitness** — weights low-speed movement < 5 m/s;
+   **5 = Drone**, 0 = Normal; note: Fitness/Swimming disable SBAS/EGNOS by design, so pick 0/5 to
+   keep EGNOS), `$PAIR070,<GPSTAG_STATIC_THR_DMS>` static-nav threshold (default **3** dm/s =
+   0.3 m/s — the chip freezes the output position below that speed: parked wander dies at the
+   source), `$PAIR058,<GPSTAG_MIN_SNR>` (default **14** dB — masks weak multipath satellites;
+   slight TTFF cost). All three carry a "not supported on LC29H(BA)" spec note — like $PAIR050
+   did — so trust the on-device ACK codes in the boot log, not the datasheet.
 4. Baseline (5 s, sentences-per-fix calibrated), then `$PAIR050,<GPSTAG_FIX_INTERVAL_MS>` — ACK 0,
    effective immediately: **WINNER at the target** (measured 3.99 fix/s @ 250 ms; 10.02 @ 100 ms),
    resident 10 s rate logs, auto re-steer if the rate ever sags or drifts off-target (a previous

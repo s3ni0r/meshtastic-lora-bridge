@@ -11,6 +11,23 @@
 #ifndef GPSTAG_FIX_INTERVAL_MS
 #define GPSTAG_FIX_INTERVAL_MS 250
 #endif
+// Motion tuning (field-test 2026-07-06: raw track too jittery vs the Dronetag reference).
+// Nav mode ($PAIR080): 1 = Fitness (low-speed movement <5 m/s weighted for position — walking
+// tests), 5 = Drone, 0 = Normal. NOTE: Fitness/Swimming disable SBAS/EGNOS per spec — jitter
+// filtering beats the EGNOS gain at walking pace; build with 0 or 5 to keep SBAS.
+#ifndef GPSTAG_NAV_MODE
+#define GPSTAG_NAV_MODE 1
+#endif
+// Static-nav threshold ($PAIR070, dm/s, 0-20; 0 = off): below this speed the chip FREEZES the
+// output position and zeroes speed — kills parked wander at the source. 3 = 0.3 m/s.
+#ifndef GPSTAG_STATIC_THR_DMS
+#define GPSTAG_STATIC_THR_DMS 3
+#endif
+// Min satellite SNR in the fix ($PAIR058, dB, 9-37; default 9): mild mask drops the weak
+// multipath satellites that drag the position around. Costs a little TTFF margin.
+#ifndef GPSTAG_MIN_SNR
+#define GPSTAG_MIN_SNR 14
+#endif
 #define GNSSPROBE_STR2(x) #x
 #define GNSSPROBE_STR(x) GNSSPROBE_STR2(x)
 #define GNSSPROBE_RATE_CMD "PAIR050," GNSSPROBE_STR(GPSTAG_FIX_INTERVAL_MS)
@@ -307,9 +324,17 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             {"PAIR410,1", 410, 1200, 1, false, 200}, // SBAS ON -> EGNOS corrections in France
             {"PAIR411", 0, 0, 1, false, 400},        // query SBAS status (tap logs the reply)
             {"PAIR401", 0, 0, 1, false, 400},        // query DGPS mode (2 = SBAS incl. EGNOS)
-            {"PAIR513", 513, 1500, 1, false, 300},   // persist constellation/SBAS config to flash
+            // Motion tuning (see knob comments at top of file; ACK codes reveal per-unit support):
+            {"PAIR080," GNSSPROBE_STR(GPSTAG_NAV_MODE), 80, 1200, 1, false, 200},
+            {"PAIR070," GNSSPROBE_STR(GPSTAG_STATIC_THR_DMS), 70, 1200, 1, false, 200},
+            {"PAIR058," GNSSPROBE_STR(GPSTAG_MIN_SNR), 58, 1200, 1, false, 200},
+            {"PAIR513", 513, 1500, 1, false, 300},   // persist config to flash (still at 1 Hz here)
         };
-        startSeq(kWakeIdent, 8, IDENT);
+        startSeq(kWakeIdent, 11, IDENT);
+#if GPSTAG_NAV_MODE == 1 || GPSTAG_NAV_MODE == 7
+        LOG_INFO("GnssProbe: nav mode %d (fitness/swim) — SBAS/EGNOS is inactive in this mode by design",
+                 GPSTAG_NAV_MODE);
+#endif
         return;
     }
 
