@@ -4,7 +4,7 @@ Real-time GPS over LoRa: moving **Seeed T1000-E tags** (Meshtastic fork) stream 
 T1000-E Base tethered to an **iPhone**, shown live on a map at multi-Hz. Region: **EU868**
 (deployment target); bench-validated on US/ShortTurbo.
 
-## Status (2026-07-04) — two tag flavors, AG3335 unlocked, multi-tag iOS app ✅
+## Status (2026-07-06) — phone-tunable GNSS, direct-to-tag BLE, honest accuracy ✅
 
 ```
 Tag A: BLE5/LoRa bridge (Dronetag Remote ID → LoRa)  ─┐
@@ -25,9 +25,22 @@ Tag B: GPS tag (onboard AG3335 @ 4 Hz → LoRa)        ─┘
 - **iOS app v2**: per-tag colored trails + heading arrows, favorites (persisted), per-tag
   show/hide, stable focus with pin/follow, map styles (standard/hybrid/satellite), fit-all, metric
   tiles (speed/heading/alt/accuracy/SNR/RSSI), CSV logging, app icon.
+- **Live GNSS tuning from the phone** (no reflash): gear on a GPS-tag row → BLE settings sheet —
+  nav mode (Normal/Fitness/Stationary/Drone/Bike; Swimming rejected by our unit), static-freeze
+  threshold, SNR mask, elevation mask, GNSS fix rate, LoRa TX spacing, France/US one-tap
+  profiles. Persisted on the tag (`/prefs/gnsstag.dat`), applied live via `GnssConfigModule`
+  (portnum 260).
+- **Direct-to-tag mode**: no Base alive? The app falls back to the tag's own BLE within ~6 s and
+  receives the stream directly (that tag only, BLE range); the settings sheet rides the same link.
+- **Honest accuracy**: the payload's ±m now carries the receiver's own GST 1-σ error estimate
+  (HDOP heuristic as fallback). Boot diagnostics verified: AIC on, jamming-detect on, EASY
+  genuinely unsupported on this build (TTFF assist = future EPO injection, see TODO).
+- **Versioned releases**: [firmware/releases/](firmware/releases/) v1.0 → v1.2 (uf2 + DFU zip +
+  checksums per flavor); flash any T1000-E with `tools/flash_t1000e.sh <flavor> [port|role]`.
 
 Numbers & raw results: [docs/results.md](docs/results.md). Plan/constraints: [PLAN.md](PLAN.md).
-Worldwide capacity study (presets × regions × rates × fleet size): [docs/CAPACITY.md](docs/CAPACITY.md).
+Worldwide capacity study (presets × regions × distance × fleet size): [docs/CAPACITY.md](docs/CAPACITY.md).
+Sensor-fusion roadmap: [TODO.md](TODO.md). GNSS deep-dive: [docs/gnss/UNLOCK_NOTES.md](docs/gnss/UNLOCK_NOTES.md).
 
 ## Layout
 
@@ -39,7 +52,11 @@ Worldwide capacity study (presets × regions × rates × fleet size): [docs/CAPA
   with a dependency-free protobuf decoder (no SPM deps).
 - [`tools/`](tools/) — `m2_stream_poc.py` (stream + measure), `m1_gps_rate_check.md`,
   `flash_uf2.py`, `serial_monitor.py`.
-- [`docs/`](docs/) — `results.md` + raw CSV logs (logs gitignored).
+- [`docs/`](docs/) — `results.md` (measured milestones), `CAPACITY.md` (worldwide planning),
+  `gnss/` (AG3335 unlock notes + LC29H protocol spec PDF); raw CSV logs gitignored.
+- [`firmware/releases/`](firmware/releases/) — versioned, checksummed binaries (v1.0–v1.2) for
+  fleet flashing via `tools/flash_t1000e.sh`.
+- [`TODO.md`](TODO.md) — accelerometer/battery fusion roadmap + GNSS follow-ups.
 
 ## Build & run
 

@@ -260,6 +260,19 @@ rate-steering ladder (~10 s to confirmation). Wire format + status codes: `GnssC
 Compile-time `GPSTAG_*` macros are first-run defaults only now. Validated end-to-end over the
 serial PhoneAPI (same code path as BLE): GET/SET/reject-invalid/restore all confirmed on-device.
 
+### Accuracy pack (v1.2)
+
+- **GST-backed hacc**: `$PAIR062,8,1` (ACK 0) turns on the receiver's own per-fix error
+  statistics; the probe's raw tap parses `$G?GST` (TinyGPS++ custom fields are compiled out on
+  this platform) and the payload's hacc byte carries the true 1-σ horizontal error — the HDOP×3 m
+  heuristic remains only as fallback.
+- **Elevation mask**: `$PAIR072` (ACK 0 — the spec's BA-lineage "unsupported" note is wrong for
+  this build, same as $PAIR050/070/058) — settings-v2 knob, default 10°, slider in the app.
+- **Boot diagnostics** (verdicts in the `<<` tap log): AIC anti-interference **on**
+  (`$PAIR075,1`); jamming-detect events enabled (`$PAIR391,1`); **EASY predicted ephemeris is
+  genuinely unsupported** (`$PAIR490,1` → ACK 3) — so TTFF assistance requires EPO injection
+  (TODO), not a free toggle. Nav mode 7 (Swimming) is rejected by our unit (ACK 4).
+
 ### Configure + verify the GPS tag
 
 Node settings are the §6 list (same channel/PSK as Base) with **`device.role CLIENT_MUTE`**: the

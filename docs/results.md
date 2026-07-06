@@ -312,3 +312,32 @@ diffed as "unchanged").
 Fleet identity: bridge `!b4dbb54c` (role tag), GPS tag `!18e77545` (role gpstag, TAG-GPS), Base
 `!b0bb9cda` — all in `tools/nodes.py`. Pending: outdoor moving test of the 4 Hz track + EGNOS
 accuracy delta; bridge tag reflash with this branch's build (still labels itself `legacy`).
+
+
+## Phone-tunable GNSS + direct BLE + accuracy pack (2026-07-06)
+
+**Releases v1.1 + v1.2** (`firmware/releases/`, flashed on the GPS tag, app on the iPhone 17 Pro):
+
+- **Live GNSS settings over BLE** (v1.1): `GnssConfigModule` on portnum 260 via the tag's own
+  PhoneAPI; settings persisted at `/prefs/gnsstag.dat`, applied live by the probe (~10 s to
+  confirmation), no reflash/reboot. Verified over serial PhoneAPI (same code path as BLE):
+  GET/SET/reject-invalid/restore all correct; GNSS re-steered to 4 Hz after each apply.
+- **Motion tuning** (field-test response): Fitness nav mode, 0.3 m/s static freeze (chip-level
+  parked-position freeze), 14 dB SNR mask — all ACK 0.
+- **Direct-to-tag mode** (v1.1): sender cc's the stream to the phone queue; the app prefers Base
+  and falls back to the tag's BLE after ~6 s. Verified: 6 heartbeats/12 s received by a client
+  connected directly to the tag, no Base involved. Config sheet reuses the direct link (two
+  PhoneAPI clients on one node would split the FromRadio queue).
+- **Accuracy pack** (v1.2) — on-device ACK verdicts:
+
+| Knob | Verdict |
+|---|---|
+| GST error statistics ($PAIR062,8,1) | ACK 0 — payload ±m now the receiver's own 1-σ estimate |
+| Elevation mask ($PAIR072,10) | ACK 0 (spec said unsupported — wrong again) |
+| AIC anti-interference ($PAIR075) | already enabled |
+| Jamming detect ($PAIR391,1) | ACK 0 — events on |
+| EASY predicted ephemeris ($PAIR490,1) | **ACK 3 — genuinely unsupported**; TTFF assist = EPO only |
+| Nav mode 7 Swimming ($PAIR080,7) | **ACK 4 — rejected by this unit** (app annotated) |
+
+Pending (outdoor): GST ±m vs Dronetag comparison, elevation-mask 10° vs 5° A/B, walk test of the
+fitness+static-freeze track quality. See `TODO.md` §3.5.
