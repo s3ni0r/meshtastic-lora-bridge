@@ -239,6 +239,27 @@ Every `GPS_TAG` boot re-runs the unlock, non-blocking off the GPS thread (see §
    window re-opener, GPS_RTC_INT rescue, and a 1000 ms restore so the module is never left
    half-configured.
 
+### Direct-to-tag mode (no Base needed)
+
+The sender cc's every position to the phone queue (`sendToMesh(..., ccToPhone=true)`), so a phone
+connected **directly to a tag's BLE** receives the stream with no Base alive: the app prefers a
+Base (sees the whole fleet over LoRa), and if none appears within ~6 s it falls back to the
+nearest tag (that one tag only, BLE range). When the stream link is direct, the GNSS settings
+sheet reuses it (a second PhoneAPI client on one node would fight over the FromRadio queue).
+
+### Live GNSS settings over BLE (no reflash)
+
+`GnssConfigModule` (portnum **260**, GPS_TAG builds) makes every GNSS/TX knob runtime-adjustable
+from the phone: the MeshTracker app's gear button on a GPS-tag row opens a settings sheet that
+connects to the TAG's own BLE (the Base link keeps streaming), reads current values, and applies
+changes **live** — nav mode ($PAIR080: normal/fitness/stationary/drone/swimming/bike, with EGNOS
+badges), static-freeze threshold ($PAIR070), SNR mask ($PAIR058), GNSS fix rate ($PAIR050) and
+LoRa TX spacing, plus France-EU868 / US-bench one-tap profiles. Settings persist in the tag's
+flash (`/prefs/gnsstag.dat`, `GnssTagSettings.{h,cpp}`); on SET the probe re-runs its tuning +
+rate-steering ladder (~10 s to confirmation). Wire format + status codes: `GnssConfigModule.h`.
+Compile-time `GPSTAG_*` macros are first-run defaults only now. Validated end-to-end over the
+serial PhoneAPI (same code path as BLE): GET/SET/reject-invalid/restore all confirmed on-device.
+
 ### Configure + verify the GPS tag
 
 Node settings are the §6 list (same channel/PSK as Base) with **`device.role CLIENT_MUTE`**: the

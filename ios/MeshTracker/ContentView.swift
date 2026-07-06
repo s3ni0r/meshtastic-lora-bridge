@@ -40,6 +40,7 @@ struct ContentView: View {
     @State private var camRegion: MKCoordinateRegion?
     @State private var centeredOnce = false
     @State private var panelExpanded = true
+    @State private var configTarget: SourceTrack? // GNSS settings sheet (GPS tags only)
     @State private var phone = PhoneLocation()
     @AppStorage("mapStyleChoice") private var mapStyleChoice = 0 // 0 standard / 1 hybrid / 2 satellite
 
@@ -170,6 +171,9 @@ struct ContentView: View {
                 Spacer()
                 bottomPanel
             }
+        }
+        .sheet(item: $configTarget) { t in
+            TagConfigSheet(track: t, ble: ble)
         }
     }
 
@@ -349,6 +353,12 @@ struct ContentView: View {
                     .foregroundStyle(track.isVisible ? Color.accentColor : .secondary)
             }
             .buttonStyle(.plain)
+            if track.source == .gpsTag {
+                Button { configTarget = track } label: {
+                    Image(systemName: "gearshape.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.vertical, 6).padding(.horizontal, 8)
         .background(isActive ? AnyShapeStyle(sourceColor(track.source).opacity(0.12)) : AnyShapeStyle(.clear),

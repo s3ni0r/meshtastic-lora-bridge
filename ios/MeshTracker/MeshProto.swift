@@ -156,6 +156,111 @@ private func parseData(_ bytes: ArraySlice<UInt8>, into sp: inout StreamPacket) 
     return true
 }
 
+// MARK: - GNSS tag configuration channel (portnum 260 — see firmware GnssConfigModule)
+
+let kGnssConfigPortnum = 260
+
+struct TagSettings: Equatable {
+    var navMode: UInt8 = 1        // $PAIR080: 0 normal / 1 fitness / 4 stationary / 5 drone / 7 swim / 9 bike
+    var staticThrDms: UInt8 = 3   // $PAIR070: 0-20 dm/s
+    var minSnr: UInt8 = 14        // $PAIR058: 9-37 dB
+    var fixIntervalMs: UInt16 = 250
+    var txSpacingMs: UInt16 = 150
+
+    var wire: Data {
+        Data([navMode, staticThrDms, minSnr,
+              UInt8(fixIntervalMs & 0xFF), UInt8(fixIntervalMs >> 8),
+              UInt8(txSpacingMs & 0xFF), UInt8(txSpacingMs >> 8)])
+    }
+    static func fromWire(_ b: [UInt8]) -> TagSettings? {
+        guard b.count >= 7 else { return nil }
+        return TagSettings(navMode: b[0], staticThrDms: b[1], minSnr: b[2],
+                           fixIntervalMs: UInt16(b[3]) | (UInt16(b[4]) << 8),
+                           txSpacingMs: UInt16(b[5]) | (UInt16(b[6]) << 8))
+    }
+}
+
+struct ConfigReply {
+    let op: UInt8      // 0x80 = GET reply, 0x81 = SET reply
+    let status: UInt8  // 0 ok / 1 rejected / 2 malformed
+    let settings: TagSettings
+}
+
+private func pvarint(_ v: UInt64) -> Data {
+    var out = Data(); var x = v
+    repeat { var b = UInt8(x & 0x7f); x >>= 7; if x != 0 { b |= 0x80 }; out.append(b) } while x != 0
+    return out
+}
+private func ptag(_ field: Int, _ wire: Int) -> Data { pvarint(UInt64((field << 3) | wire)) }
+
+/// Encode ToRadio{ packet: MeshPacket{ to, id, decoded: Data{ portnum, payload } } }.
+func encodeToRadioData(to: UInt32, portnum: Int, payload: Data, packetId: UInt32) -> Data {
+    var d = Data()
+    d += ptag(1, 0) + pvarint(UInt64(portnum))                 // Data.portnum
+    d += ptag(2, 2) + pvarint(UInt64(payload.count)) + payload // Data.payload
+    var pkt = Data()
+    pkt += ptag(2, 5) + withUnsafeBytes(of: to.littleEndian) { Data($0) }       // MeshPacket.to
+    pkt += ptag(6, 5) + withUnsafeBytes(of: packetId.littleEndian) { Data($0) } // MeshPacket.id
+    pkt += ptag(4, 2) + pvarint(UInt64(d.count)) + d                            // MeshPacket.decoded
+    var out = Data()
+    out += ptag(1, 2) + pvarint(UInt64(pkt.count)) + pkt                        // ToRadio.packet
+    return out
+}
+
+/// Parse a FromRadio frame as a GNSS config reply (portnum 260, 9-byte payload) — nil otherwise.
+func parseConfigReply(_ data: Data) -> ConfigReply? {
+    var r = ProtoReader(data)
+    while let (field, wire) = r.readTag() {
+        if field == 2, wire == 2 {
+            guard let pkt = r.readBytes() else { return nil }
+            var pr = ProtoReader(pkt)
+            while let (f, w) = pr.readTag() {
+                if f == 4, w == 2 {
+                    guard let dec = pr.readBytes() else { return nil }
+                    var dr = ProtoReader(dec)
+                    var portnum = 0
+                    var payload: ArraySlice<UInt8>?
+                    while let (df, dw) = dr.readTag() {
+                        switch (df, dw) {
+                        case (1, 0): portnum = Int(dr.readVarint() ?? 0)
+                        case (2, 2): payload = dr.readBytes()
+                        default: dr.skip(dw)
+                        }
+                    }
+                    guard portnum == kGnssConfigPortnum, let pl = payload, pl.count >= 9 else { return nil }
+                    let b = Array(pl)
+                    guard b[0] & 0x80 != 0, let st = TagSettings.fromWire(Array(b[2...])) else { return nil }
+                    return ConfigReply(op: b[0], status: b[1], settings: st)
+                }
+                pr.skip(w)
+            }
+            return nil
+        }
+        r.skip(wire)
+    }
+    return nil
+}
+
+/// Parse FromRadio.my_info.my_node_num — tells us WHICH node this BLE link talks to.
+func parseMyNodeNum(_ data: Data) -> UInt32? {
+    var r = ProtoReader(data)
+    while let (field, wire) = r.readTag() {
+        if field == 3, wire == 2 { // FromRadio.my_info (MyNodeInfo)
+            guard let mi = r.readBytes() else { return nil }
+            var m = ProtoReader(mi)
+            while let (mf, mw) = m.readTag() {
+                if mf == 1, mw == 0 { // MyNodeInfo.my_node_num
+                    return m.readVarint().map { UInt32(truncatingIfNeeded: $0) }
+                }
+                m.skip(mw)
+            }
+            return nil
+        }
+        r.skip(wire)
+    }
+    return nil
+}
+
 /// Encode ToRadio{ want_config_id = id } (field 3, varint) to kick off the BLE config session.
 func encodeWantConfig(_ id: UInt32) -> Data {
     var out: [UInt8] = [UInt8((3 << 3) | 0)]

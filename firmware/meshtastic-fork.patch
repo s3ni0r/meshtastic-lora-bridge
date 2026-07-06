@@ -220,26 +220,32 @@ index 3831a38..881c692 100644
  #else
  
 diff --git a/src/modules/Modules.cpp b/src/modules/Modules.cpp
-index e477574..115f238 100644
+index e477574..ff43800 100644
 --- a/src/modules/Modules.cpp
 +++ b/src/modules/Modules.cpp
-@@ -107,6 +107,10 @@
+@@ -107,6 +107,13 @@
  #include "modules/DropzoneModule.h"
  #endif
  
 +#ifdef HIGHRATE_POSITION_SENDER
 +#include "modules/HighRatePositionModule.h"
 +#endif
++#ifdef GPS_TAG
++#include "modules/GnssConfigModule.h"
++#endif
 +
  /**
   * Create module instances here.  If you are adding a new module, you must 'new' it here (or somewhere else)
   */
-@@ -128,6 +132,9 @@ void setupModules()
+@@ -128,6 +135,12 @@ void setupModules()
  #if !MESHTASTIC_EXCLUDE_GPS
      positionModule = new PositionModule();
  #endif
 +#ifdef HIGHRATE_POSITION_SENDER
 +    highRatePositionModule = new HighRatePositionModule();
++#endif
++#ifdef GPS_TAG
++    gnssConfigModule = new GnssConfigModule();
 +#endif
  #if !MESHTASTIC_EXCLUDE_WAYPOINT
      waypointModule = new WaypointModule();

@@ -2,46 +2,40 @@
 
 #ifdef GPS_TAG
 #include "GnssRateProbe.h"
+#include "GnssTagSettings.h" // runtime knobs (defaults are the old GPSTAG_* macros; BLE-configurable)
 #include "TinyGPS++.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-// Target position-fix interval in ms (verified: this unit ACKs any value; 250 = 4 Hz, 100 = 10 Hz).
-#ifndef GPSTAG_FIX_INTERVAL_MS
-#define GPSTAG_FIX_INTERVAL_MS 250
-#endif
-// Motion tuning (field-test 2026-07-06: raw track too jittery vs the Dronetag reference).
-// Nav mode ($PAIR080): 1 = Fitness (low-speed movement <5 m/s weighted for position — walking
-// tests), 5 = Drone, 0 = Normal. NOTE: Fitness/Swimming disable SBAS/EGNOS per spec — jitter
-// filtering beats the EGNOS gain at walking pace; build with 0 or 5 to keep SBAS.
-#ifndef GPSTAG_NAV_MODE
-#define GPSTAG_NAV_MODE 1
-#endif
-// Static-nav threshold ($PAIR070, dm/s, 0-20; 0 = off): below this speed the chip FREEZES the
-// output position and zeroes speed — kills parked wander at the source. 3 = 0.3 m/s.
-#ifndef GPSTAG_STATIC_THR_DMS
-#define GPSTAG_STATIC_THR_DMS 3
-#endif
-// Min satellite SNR in the fix ($PAIR058, dB, 9-37; default 9): mild mask drops the weak
-// multipath satellites that drag the position around. Costs a little TTFF margin.
-#ifndef GPSTAG_MIN_SNR
-#define GPSTAG_MIN_SNR 14
-#endif
-#define GNSSPROBE_STR2(x) #x
-#define GNSSPROBE_STR(x) GNSSPROBE_STR2(x)
-#define GNSSPROBE_RATE_CMD "PAIR050," GNSSPROBE_STR(GPSTAG_FIX_INTERVAL_MS)
+// Command bodies are built at runtime from gnssTagSettings (they used to be compile-time macros).
+// File-scope buffers: sequences run one at a time, and everything runs on the GPS thread.
+static char sRateCmd[16]; // "PAIR050,<ms>"
+static char sNavCmd[16];  // "PAIR080,<mode>"
+static char sThrCmd[16];  // "PAIR070,<dm/s>"
+static char sSnrCmd[16];  // "PAIR058,<dB>"
+
+static void buildCmds()
+{
+    snprintf(sRateCmd, sizeof(sRateCmd), "PAIR050,%u", (unsigned)gnssTagSettings.fixIntervalMs);
+    snprintf(sNavCmd, sizeof(sNavCmd), "PAIR080,%u", (unsigned)gnssTagSettings.navMode);
+    snprintf(sThrCmd, sizeof(sThrCmd), "PAIR070,%u", (unsigned)gnssTagSettings.staticThrDms);
+    snprintf(sSnrCmd, sizeof(sSnrCmd), "PAIR058,%u", (unsigned)gnssTagSettings.minSnr);
+}
 
 // Success = a sustained fix cadence at/above this. With the 250 ms target a win reads ~4.0.
 #ifndef GNSSPROBE_SUCCESS_HZ
 #define GNSSPROBE_SUCCESS_HZ 3.5f
 #endif
 // The goal is the TARGET rate, not just "fast": a persisted 10 Hz from an earlier session must
-// still be steered back to 4 Hz (and vice versa if the target ever changes).
-#define GNSSPROBE_TARGET_HZ (1000.0f / GPSTAG_FIX_INTERVAL_MS)
+// still be steered back to the target (and vice versa when settings change).
+static inline float gnssTargetHz()
+{
+    return 1000.0f / gnssTagSettings.fixIntervalMs;
+}
 static inline bool gnssNearTarget(float hz)
 {
-    return hz >= GNSSPROBE_TARGET_HZ * 0.8f && hz <= GNSSPROBE_TARGET_HZ * 1.25f;
+    return hz >= gnssTargetHz() * 0.8f && hz <= gnssTargetHz() * 1.25f;
 }
 
 #define GNSSPROBE_BOOT_DELAY_MS 15000
@@ -288,6 +282,11 @@ void GnssRateProbe::finalVerdict(float hz)
 
 // ---------------------------------------------------------------- main state machine
 
+void GnssRateProbe::requestApply()
+{
+    pendingApply = true; // picked up by tick() when the probe is idle (RESIDENT, no seq running)
+}
+
 void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
 {
     if (!serial)
@@ -303,6 +302,29 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
         return;
     }
 
+    // Live settings change from the phone (GnssConfigModule): re-tune + re-steer without reboot.
+    if (pendingApply && phase == RESIDENT) {
+        pendingApply = false;
+        buildCmds();
+        LOG_INFO("GnssProbe: applying new settings live — mode=%u thr=%u snr=%u fix=%ums spacing=%ums",
+                 (unsigned)gnssTagSettings.navMode, (unsigned)gnssTagSettings.staticThrDms,
+                 (unsigned)gnssTagSettings.minSnr, (unsigned)gnssTagSettings.fixIntervalMs,
+                 (unsigned)gnssTagSettings.txSpacingMs);
+        if (gnssTagSettings.navMode == 1 || gnssTagSettings.navMode == 7)
+            LOG_INFO("GnssProbe: nav mode %u (fitness/swim) — SBAS/EGNOS inactive in this mode",
+                     (unsigned)gnssTagSettings.navMode);
+        applySeq[0] = {sNavCmd, 80, 1200, 2, false, 200};
+        applySeq[1] = {sThrCmd, 70, 1200, 1, false, 200};
+        applySeq[2] = {sSnrCmd, 58, 1200, 1, false, 200};
+        applySeq[3] = {sRateCmd, 50, 1500, 2, false, 400};
+        raised = false; // force re-evaluation against the (possibly new) target
+        rescues = 0;
+        sagWindows = 0;
+        danceRan = false;
+        startSeq(applySeq, 4, DANCE); // post-seq: MEASURE/steering ladder takes over as usual
+        return;
+    }
+
     switch (phase) {
     case WAIT_FLOW: {
         // Start at the FIRST sign of NMEA flow — the command CPU auto-sleeps a few seconds after
@@ -311,6 +333,11 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
         // alive for the whole session (Seeed's driver does exactly this, 25x blind).
         if (reader.passedChecksum() < 2)
             return;
+        if (!settingsLoaded) {
+            settingsLoaded = true;
+            gnssTagSettingsLoad(); // flash-persisted knobs (BLE-configurable); defaults on first run
+            buildCmds();
+        }
         LOG_INFO("GnssProbe v2: NMEA up at %lums — latching $PAIR382,1 sleep lock + identity queries",
                  (unsigned long)nowMs);
         static const Step kWakeIdent[] = {
@@ -324,17 +351,16 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             {"PAIR410,1", 410, 1200, 1, false, 200}, // SBAS ON -> EGNOS corrections in France
             {"PAIR411", 0, 0, 1, false, 400},        // query SBAS status (tap logs the reply)
             {"PAIR401", 0, 0, 1, false, 400},        // query DGPS mode (2 = SBAS incl. EGNOS)
-            // Motion tuning (see knob comments at top of file; ACK codes reveal per-unit support):
-            {"PAIR080," GNSSPROBE_STR(GPSTAG_NAV_MODE), 80, 1200, 1, false, 200},
-            {"PAIR070," GNSSPROBE_STR(GPSTAG_STATIC_THR_DMS), 70, 1200, 1, false, 200},
-            {"PAIR058," GNSSPROBE_STR(GPSTAG_MIN_SNR), 58, 1200, 1, false, 200},
+            // Motion tuning (runtime knobs; ACK codes reveal per-unit support):
+            {sNavCmd, 80, 1200, 1, false, 200},
+            {sThrCmd, 70, 1200, 1, false, 200},
+            {sSnrCmd, 58, 1200, 1, false, 200},
             {"PAIR513", 513, 1500, 1, false, 300},   // persist config to flash (still at 1 Hz here)
         };
         startSeq(kWakeIdent, 11, IDENT);
-#if GPSTAG_NAV_MODE == 1 || GPSTAG_NAV_MODE == 7
-        LOG_INFO("GnssProbe: nav mode %d (fitness/swim) — SBAS/EGNOS is inactive in this mode by design",
-                 GPSTAG_NAV_MODE);
-#endif
+        if (gnssTagSettings.navMode == 1 || gnssTagSettings.navMode == 7)
+            LOG_INFO("GnssProbe: nav mode %u (fitness/swim) — SBAS/EGNOS is inactive in this mode by design",
+                     (unsigned)gnssTagSettings.navMode);
         return;
     }
 
@@ -357,7 +383,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
         if (sentPerFix < 1.0f)
             sentPerFix = 1.0f;
         LOG_INFO("GnssProbe: baseline %.2f fix/s, %.1f sentences/fix (target %.1f fix/s)", baselineHz, sentPerFix,
-                 GNSSPROBE_TARGET_HZ);
+                 gnssTargetHz());
         if (gnssNearTarget(baselineHz)) {
             winner("already at the target rate (persisted from a previous run)", baselineHz);
             startWindow(reader, nowMs);
@@ -366,7 +392,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
         }
         // Set the target rate (RAM): on this unit it ACKs 0 and takes effect immediately.
         static const Step kChar[] = {
-            {GNSSPROBE_RATE_CMD, 50, 1500, 2, false, 400},
+            {sRateCmd, 50, 1500, 2, false, 400},
         };
         startSeq(kChar, 1, CHAR_RAM);
         return;
@@ -406,8 +432,8 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
 
         switch (measureCtx) {
         case CTX_CHAR: {
-            LOG_INFO("GnssProbe: RAM-set immediate effect: %.2f fix/s (rate cmd ack=%d, target %d ms)", hz, ack100,
-                     GPSTAG_FIX_INTERVAL_MS);
+            LOG_INFO("GnssProbe: RAM-set immediate effect: %.2f fix/s (rate cmd ack=%d, target %u ms)", hz, ack100,
+                     (unsigned)gnssTagSettings.fixIntervalMs);
             if (gnssNearTarget(hz)) {
                 winner("RAM set took effect immediately", hz);
                 startWindow(reader, nowMs);
@@ -416,7 +442,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             }
             if (hz >= GNSSPROBE_SUCCESS_HZ)
                 LOG_WARN("GnssProbe: rate is %.2f fix/s but OFF-TARGET (%.1f wanted) — dance will set + persist it",
-                         hz, GNSSPROBE_TARGET_HZ);
+                         hz, gnssTargetHz());
             if (ack100 == -100) {
                 // Nothing ACKs post-boot. Discriminate DEAF (commands unheard) from MUTE (commands
                 // execute, ACK generation disabled): turn GSV back on and watch the sentence mix.
@@ -429,7 +455,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             static const Step kDance[] = {
                 {"PAIR382,1", 382, 1500, 3, true, 150}, // keep-alive latch — ABORT if never ACKed
                 {"PAIR003", 3, 1500, 2, false, 400},    // engine off (commands stay alive via the latch)
-                {GNSSPROBE_RATE_CMD, 50, 1500, 2, false, 150},
+                {sRateCmd, 50, 1500, 2, false, 150},
                 {"PAIR513", 513, 2000, 2, false, 300},  // save — only valid while powered off
                 {"PAIR002", 2, 2500, 2, false, 1200},   // engine back on
             };
@@ -503,8 +529,8 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
                     {"PAIR382,1", 0, 0, 1, false, 80},  {"PAIR382,1", 0, 0, 1, false, 120},
                     {"PAIR003", 0, 0, 1, false, 250},   {"PAIR003", 0, 0, 1, false, 250},
                     {"PAIR003", 0, 0, 1, false, 350},
-                    {GNSSPROBE_RATE_CMD, 0, 0, 1, false, 150}, {GNSSPROBE_RATE_CMD, 0, 0, 1, false, 150},
-                    {GNSSPROBE_RATE_CMD, 0, 0, 1, false, 200},
+                    {sRateCmd, 0, 0, 1, false, 150}, {sRateCmd, 0, 0, 1, false, 150},
+                    {sRateCmd, 0, 0, 1, false, 200},
                     {"PAIR513", 0, 0, 1, false, 250},   {"PAIR513", 0, 0, 1, false, 250},
                     {"PAIR513", 0, 0, 1, false, 350},
                     {"PAIR002", 0, 0, 1, false, 600},   {"PAIR002", 0, 0, 1, false, 600},
@@ -544,7 +570,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             static const Step kDanceW[] = {
                 {"PAIR382,1", 382, 1500, 3, true, 150},
                 {"PAIR003", 3, 1500, 2, false, 400},
-                {GNSSPROBE_RATE_CMD, 50, 1500, 2, false, 150},
+                {sRateCmd, 50, 1500, 2, false, 150},
                 {"PAIR513", 513, 2000, 2, false, 300},
                 {"PAIR002", 2, 2500, 2, false, 1200},
             };
@@ -582,7 +608,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
         float hz = windowFixHz(reader, nowMs);
         float sentHz = (reader.passedChecksum() - sentAtStart) / ((nowMs - winStartMs) / 1000.0f);
         LOG_INFO("GnssProbe: GNSS rate %.2f fix/s (%.1f sent/s)%s", hz, sentHz, raised ? " (raised)" : "");
-        if (raised && !gnssNearTarget(hz) && hz < GNSSPROBE_TARGET_HZ * 0.6f) {
+        if (raised && !gnssNearTarget(hz) && hz < gnssTargetHz() * 0.6f) {
             if (++sagWindows >= 2 && (nowMs - lastReapplyMs) > GNSSPROBE_REAPPLY_COOLDOWN_MS && rescues < 2) {
                 LOG_WARN("GnssProbe: raised rate sagged to %.2f fix/s — re-running the dance", hz);
                 lastReapplyMs = nowMs;
@@ -590,7 +616,7 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
                 static const Step kDance2[] = {
                     {"PAIR382,1", 382, 1500, 3, true, 150},
                     {"PAIR003", 3, 1500, 2, false, 400},
-                    {GNSSPROBE_RATE_CMD, 50, 1500, 2, false, 150},
+                    {sRateCmd, 50, 1500, 2, false, 150},
                     {"PAIR513", 513, 2000, 2, false, 300},
                     {"PAIR002", 2, 2500, 2, false, 1200},
                 };

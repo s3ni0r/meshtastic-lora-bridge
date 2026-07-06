@@ -41,6 +41,8 @@ class GnssRateProbe
     void tick(Stream *serial, TinyGPSPlus &reader);
     /// Raw UART RX tap (called per byte from GPS::whileActive — same thread as tick()).
     void feedByte(int c);
+    /// Settings changed (GnssConfigModule): re-run tuning + rate steering live, when idle.
+    void requestApply();
 
   private:
     enum Phase : uint8_t {
@@ -103,6 +105,9 @@ class GnssRateProbe
     uint32_t resetMs = 0;      // RESETLATCH: when the hw reset was pulsed
     uint16_t latchSends = 0;   // RESETLATCH: 382,1 spam counter
     bool raised = false; // a winner is active
+    bool settingsLoaded = false;
+    bool pendingApply = false;
+    Step applySeq[4]; // runtime-built live-apply sequence (nav/thr/snr/rate)
     uint8_t rescues = 0;
     uint8_t sagWindows = 0;
     uint32_t lastReapplyMs = 0;

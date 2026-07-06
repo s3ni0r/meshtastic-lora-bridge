@@ -20,6 +20,13 @@
 #ifndef HIGHRATE_MIN_SPACING_MS
 #define HIGHRATE_MIN_SPACING_MS 150
 #endif
+#ifdef GPS_TAG
+// GPS tag: spacing is a runtime setting (BLE-configurable; 500 = EU868-legal 2 Hz).
+#include "gps/GnssTagSettings.h"
+#define HIGHRATE_SPACING ((uint32_t)gnssTagSettings.txSpacingMs)
+#else
+#define HIGHRATE_SPACING ((uint32_t)HIGHRATE_MIN_SPACING_MS)
+#endif
 
 // A fix whose coordinates haven't changed within this window is reported stale (lock=0).
 #ifndef HIGHRATE_FRESH_MS
@@ -113,8 +120,8 @@ int32_t HighRatePositionModule::runOnce()
     uint32_t sinceSend = nowMs - lastSendMs;
     if (lastSendMs != 0) {
         if (novel) {
-            if (sinceSend < HIGHRATE_MIN_SPACING_MS)
-                return HIGHRATE_MIN_SPACING_MS - sinceSend; // re-run exactly when spacing allows
+            if (sinceSend < HIGHRATE_SPACING)
+                return HIGHRATE_SPACING - sinceSend; // re-run exactly when spacing allows
         } else {
             if (sinceSend < HIGHRATE_HEARTBEAT_MS) { // nothing new — sleep toward the heartbeat...
                 uint32_t wait = HIGHRATE_HEARTBEAT_MS - sinceSend;
@@ -178,7 +185,10 @@ int32_t HighRatePositionModule::runOnce()
     p->decoded.payload.size = len;
     memcpy(p->decoded.payload.bytes, buf, len);
     prevPacketId = p->id;
-    service->sendToMesh(p);
+    // ccToPhone: copy every position to the phone queue too, so a phone connected DIRECTLY to
+    // this tag's BLE gets the stream without any Base alive (harmless when no phone: the queue
+    // just recycles). LoRa behavior unchanged.
+    service->sendToMesh(p, RX_SRC_LOCAL, true);
     lastSendMs = nowMs;
 #if defined(ODID_SNIFFER) || defined(GPS_TAG)
     lastSentTs = fixTs;
