@@ -28,10 +28,10 @@ index 75cdac5..8446cc4 100644
  #define GPS_THREAD_INTERVAL 200
  #endif
 diff --git a/src/gps/GPS.cpp b/src/gps/GPS.cpp
-index 6c6cdba..a8b2a50 100644
+index 6c6cdba..f0b6778 100644
 --- a/src/gps/GPS.cpp
 +++ b/src/gps/GPS.cpp
-@@ -32,6 +32,23 @@
+@@ -32,6 +32,27 @@
  #define GPS_RESET_MODE HIGH
  #endif
  
@@ -50,12 +50,16 @@ index 6c6cdba..a8b2a50 100644
 +volatile uint8_t g_gpsTagHacc = 0;    // ~horizontal accuracy, m (HDOP x 3 m UERE; 0 = unknown)
 +volatile uint32_t g_gpsTagMs = 0;     // millis() of the last stash (0 = none yet)
 +volatile uint16_t g_gpsTagTs = 0;     // fix time-of-hour in 0.1 s (incl. centiseconds) — novelty key
++// GST-derived horizontal accuracy, parsed by GnssRateProbe's raw tap (TinyGPS++ custom fields
++// are compiled out on this platform): metres, 0 = none seen; g_gstMs = millis() of last update.
++extern volatile uint8_t g_gstHaccM;
++extern volatile uint32_t g_gstMs;
 +#endif
 +
  // Not all platforms have std::size().
  template <typename T, std::size_t N> std::size_t array_count(const T (&)[N])
  {
-@@ -652,6 +669,10 @@ bool GPS::setup()
+@@ -652,6 +673,10 @@ bool GPS::setup()
  
              delay(250);
              _serial_gps->write("$PAIR513*3D\r\n"); // save configuration
@@ -66,7 +70,7 @@ index 6c6cdba..a8b2a50 100644
          } else if (gnssModel == GNSS_MODEL_UBLOX6) {
              clearBuffer();
              SEND_UBX_PACKET(0x06, 0x02, _message_DISABLE_TXT_INFO, "disable text info messages", 500);
-@@ -1070,6 +1091,31 @@ void GPS::publishUpdate()
+@@ -1070,6 +1095,36 @@ void GPS::publishUpdate()
          if (config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED) {
              positionModule->handleNewPosition();
          }
@@ -84,8 +88,13 @@ index 6c6cdba..a8b2a50 100644
 +            uint32_t spdKmh = p.ground_speed; // stored in km/h by lookForLocation (reader.speed.kmph())
 +            g_gpsTagSpeed = (uint8_t)(spdKmh > 255 ? 255 : spdKmh);
 +            g_gpsTagHeading = (uint8_t)((((p.ground_track / 100000) % 360) * 256) / 360); // deg*1e5 -> deg
-+            uint32_t haccM = ((uint32_t)p.HDOP * 3) / 100; // HDOP (x10^2) x ~3 m UERE
-+            g_gpsTagHacc = (uint8_t)(p.HDOP == 0 ? 0 : (haccM > 255 ? 255 : (haccM < 1 ? 1 : haccM)));
++            // Preferred: the receiver's own GST error estimate (probe tap); fallback: HDOP heuristic.
++            uint32_t haccM = 0;
++            if (g_gstHaccM != 0 && (millis() - g_gstMs) < 1500)
++                haccM = g_gstHaccM;
++            if (haccM == 0 && p.HDOP != 0)
++                haccM = ((uint32_t)p.HDOP * 3) / 100; // HDOP (x10^2) x ~3 m UERE
++            g_gpsTagHacc = (uint8_t)(haccM == 0 ? 0 : (haccM > 255 ? 255 : (haccM < 1 ? 1 : haccM)));
 +            // 0.1 s-in-hour timestamp incl. centiseconds: novelty key that ticks even when parked
 +            // (coords alone can freeze between fixes) — mirrors the ODID Location ts semantics.
 +            g_gpsTagTs = (uint16_t)((((uint32_t)reader.time.minute() * 60 + reader.time.second()) * 10) +
@@ -98,7 +107,7 @@ index 6c6cdba..a8b2a50 100644
      }
  }
  
-@@ -1119,6 +1165,13 @@ int32_t GPS::runOnce()
+@@ -1119,6 +1174,13 @@ int32_t GPS::runOnce()
          setConnected();
      }
  
@@ -112,7 +121,7 @@ index 6c6cdba..a8b2a50 100644
      // If we're due for an update, wake the GPS
      if (!config.position.fixed_position && powerState != GPS_ACTIVE && scheduling.isUpdateDue())
          up();
-@@ -1313,6 +1366,26 @@ GnssModel_t GPS::probe(int serialSpeed)
+@@ -1313,6 +1375,26 @@ GnssModel_t GPS::probe(int serialSpeed)
      }
      case 3: {
          /* Airoha (Mediatek) AG3335A/M/S, A3352Q, Quectel L89 2.0, SimCom SIM65M */
@@ -139,7 +148,7 @@ index 6c6cdba..a8b2a50 100644
          _serial_gps->write("$PAIR062,2,0*3C\r\n"); // GSA OFF to reduce volume
          _serial_gps->write("$PAIR062,3,0*3D\r\n"); // GSV OFF to reduce volume
          _serial_gps->write("$PAIR513*3D\r\n");     // save configuration
-@@ -1570,6 +1643,25 @@ GPS *GPS::createGps()
+@@ -1570,6 +1652,25 @@ GPS *GPS::createGps()
      // Make sure the GPS is awake before performing any init.
      new_gps->up();
  
@@ -165,7 +174,7 @@ index 6c6cdba..a8b2a50 100644
  #ifdef PIN_GPS_RESET
      pinMode(PIN_GPS_RESET, OUTPUT);
      digitalWrite(PIN_GPS_RESET, GPS_RESET_MODE); // assert for 10ms
-@@ -1822,6 +1914,9 @@ bool GPS::whileActive()
+@@ -1822,6 +1923,9 @@ bool GPS::whileActive()
      // First consume any chars that have piled up at the receiver
      while (_serial_gps->available() > 0) {
          int c = _serial_gps->read();

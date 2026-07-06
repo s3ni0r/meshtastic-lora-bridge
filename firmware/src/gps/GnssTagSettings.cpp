@@ -8,16 +8,16 @@ GnssTagSettings gnssTagSettings;
 
 static const char *kPath = "/prefs/gnsstag.dat";
 
-// On-disk layout: [magic][version][7-byte wire payload]
+// On-disk layout: [magic][version][wire payload] — v1 = 7 bytes, v2 adds elevMaskDeg (8 bytes).
 static const uint8_t kMagicByte = 0xA7;
-static const uint8_t kVersion = 1;
+static const uint8_t kVersion = 2;
 
 static bool validNavMode(uint8_t m)
 {
     return m == 0 || m == 1 || m == 4 || m == 5 || m == 7 || m == 9;
 }
 
-void gnssTagSettingsPack(uint8_t out[7])
+void gnssTagSettingsPack(uint8_t out[8])
 {
     out[0] = gnssTagSettings.navMode;
     out[1] = gnssTagSettings.staticThrDms;
@@ -26,6 +26,7 @@ void gnssTagSettingsPack(uint8_t out[7])
     out[4] = gnssTagSettings.fixIntervalMs >> 8;
     out[5] = gnssTagSettings.txSpacingMs & 0xFF;
     out[6] = gnssTagSettings.txSpacingMs >> 8;
+    out[7] = gnssTagSettings.elevMaskDeg;
 }
 
 static bool save()
@@ -37,7 +38,7 @@ static bool save()
     auto f = FSCom.open(kPath, FILE_O_WRITE);
     if (!f)
         return false;
-    uint8_t buf[9] = {kMagicByte, kVersion};
+    uint8_t buf[10] = {kMagicByte, kVersion};
     gnssTagSettingsPack(&buf[2]);
     bool ok = f.write(buf, sizeof(buf)) == sizeof(buf);
     f.close();
@@ -47,15 +48,18 @@ static bool save()
 #endif
 }
 
-bool gnssTagSettingsSetFromWire(const uint8_t in[7])
+bool gnssTagSettingsSetFromWire(const uint8_t *in, uint8_t len)
 {
+    if (len < 7)
+        return false;
     uint8_t navMode = in[0], thr = in[1], snr = in[2];
     uint16_t fixMs = (uint16_t)(in[3] | (in[4] << 8));
     uint16_t spacing = (uint16_t)(in[5] | (in[6] << 8));
+    uint8_t elev = (len >= 8) ? in[7] : gnssTagSettings.elevMaskDeg; // v1 clients keep current mask
     if (!validNavMode(navMode) || thr > 20 || snr < 9 || snr > 37 || fixMs < 100 || fixMs > 1000 ||
-        spacing < 100 || spacing > 5000) {
-        LOG_WARN("GnssTagSettings: REJECTED mode=%u thr=%u snr=%u fix=%u spacing=%u", navMode, thr, snr, fixMs,
-                 spacing);
+        spacing < 100 || spacing > 5000 || elev > 45) {
+        LOG_WARN("GnssTagSettings: REJECTED mode=%u thr=%u snr=%u fix=%u spacing=%u elev=%u", navMode, thr, snr,
+                 fixMs, spacing, elev);
         return false;
     }
     gnssTagSettings.navMode = navMode;
@@ -63,9 +67,10 @@ bool gnssTagSettingsSetFromWire(const uint8_t in[7])
     gnssTagSettings.minSnr = snr;
     gnssTagSettings.fixIntervalMs = fixMs;
     gnssTagSettings.txSpacingMs = spacing;
+    gnssTagSettings.elevMaskDeg = elev;
     bool saved = save();
-    LOG_INFO("GnssTagSettings: set mode=%u thr=%u dm/s snr=%u dB fix=%u ms spacing=%u ms (saved=%d)", navMode, thr,
-             snr, fixMs, spacing, (int)saved);
+    LOG_INFO("GnssTagSettings: set mode=%u thr=%u dm/s snr=%u dB fix=%u ms spacing=%u ms elev=%u deg (saved=%d)",
+             navMode, thr, snr, fixMs, spacing, elev, (int)saved);
     return true;
 }
 
@@ -75,9 +80,11 @@ void gnssTagSettingsLoad()
     auto f = FSCom.open(kPath, FILE_O_READ);
     if (!f)
         return; // first run: compiled defaults stand
-    uint8_t buf[9];
-    bool ok = f.read(buf, sizeof(buf)) == sizeof(buf) && buf[0] == kMagicByte && buf[1] == kVersion;
+    uint8_t buf[10];
+    int n = f.read(buf, sizeof(buf));
     f.close();
+    // v1 file = 9 bytes (7-byte wire), v2 = 10 bytes (8-byte wire) — both accepted.
+    bool ok = n >= 9 && buf[0] == kMagicByte && (buf[1] == 1 || buf[1] == kVersion);
     if (!ok) {
         LOG_WARN("GnssTagSettings: stored file invalid — using defaults");
         return;
@@ -85,12 +92,14 @@ void gnssTagSettingsLoad()
     // Adopt via the same validator (a corrupt-but-well-framed file can't smuggle bad values in).
     uint8_t navMode = gnssTagSettings.navMode, thr = gnssTagSettings.staticThrDms, snr = gnssTagSettings.minSnr;
     uint16_t fixMs = gnssTagSettings.fixIntervalMs, spacing = gnssTagSettings.txSpacingMs;
-    if (!gnssTagSettingsSetFromWire(&buf[2])) { // note: re-saves on success (harmless)
+    uint8_t elevKeep = gnssTagSettings.elevMaskDeg;
+    if (!gnssTagSettingsSetFromWire(&buf[2], (uint8_t)(n - 2))) { // note: re-saves on success (harmless)
         gnssTagSettings.navMode = navMode;
         gnssTagSettings.staticThrDms = thr;
         gnssTagSettings.minSnr = snr;
         gnssTagSettings.fixIntervalMs = fixMs;
         gnssTagSettings.txSpacingMs = spacing;
+        gnssTagSettings.elevMaskDeg = elevKeep;
     }
 #endif
 }

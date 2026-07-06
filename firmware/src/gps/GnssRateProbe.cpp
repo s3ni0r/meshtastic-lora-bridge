@@ -4,6 +4,7 @@
 #include "GnssRateProbe.h"
 #include "GnssTagSettings.h" // runtime knobs (defaults are the old GPSTAG_* macros; BLE-configurable)
 #include "TinyGPS++.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +15,7 @@ static char sRateCmd[16]; // "PAIR050,<ms>"
 static char sNavCmd[16];  // "PAIR080,<mode>"
 static char sThrCmd[16];  // "PAIR070,<dm/s>"
 static char sSnrCmd[16];  // "PAIR058,<dB>"
+static char sElevCmd[16]; // "PAIR072,<deg>"
 
 static void buildCmds()
 {
@@ -21,6 +23,7 @@ static void buildCmds()
     snprintf(sNavCmd, sizeof(sNavCmd), "PAIR080,%u", (unsigned)gnssTagSettings.navMode);
     snprintf(sThrCmd, sizeof(sThrCmd), "PAIR070,%u", (unsigned)gnssTagSettings.staticThrDms);
     snprintf(sSnrCmd, sizeof(sSnrCmd), "PAIR058,%u", (unsigned)gnssTagSettings.minSnr);
+    snprintf(sElevCmd, sizeof(sElevCmd), "PAIR072,%u", (unsigned)gnssTagSettings.elevMaskDeg);
 }
 
 // Success = a sustained fix cadence at/above this. With the 250 ms target a win reads ~4.0.
@@ -48,12 +51,45 @@ static inline bool gnssNearTarget(float hz)
 
 GnssRateProbe gnssRateProbe;
 
+// GST ($G?GST) = the receiver's own pseudorange-error statistics. Terms 6/7 are the 1-sigma
+// lat/lon error in metres; we publish the horizontal RSS for the payload's hacc byte (GPS.cpp).
+// Parsed here because TinyGPS++ custom fields are compiled out on this platform.
+volatile uint8_t g_gstHaccM = 0;
+volatile uint32_t g_gstMs = 0;
+
+static void parseGstLine(const char *line)
+{
+    // $GNGST,time,rms,smjr,smnr,orient,latsd,lonsd,altsd*CS — walk to terms 6 and 7.
+    float latsd = 0, lonsd = 0;
+    uint8_t term = 0;
+    for (const char *c = line; *c && *c != '*'; ++c) {
+        if (*c == ',') {
+            term++;
+            if (term == 6)
+                latsd = atoff(c + 1);
+            else if (term == 7)
+                lonsd = atoff(c + 1);
+        }
+    }
+    float h = sqrtf(latsd * latsd + lonsd * lonsd);
+    if (h > 0.05f && h < 300.0f) {
+        g_gstHaccM = (uint8_t)(h > 254.0f ? 255 : (h < 1.0f ? 1 : (h + 0.5f)));
+        g_gstMs = millis();
+    }
+}
+
 // ---------------------------------------------------------------- raw UART tap
 
 void GnssRateProbe::feedByte(int c)
 {
     lastByteMs = millis();
     if (c == '\r' || c == '\n') {
+        if (lineLen >= 10 && lineBuf[0] == '$' && lineBuf[1] == 'G' && !strncmp(&lineBuf[3], "GST,", 4)) {
+            lineBuf[lineLen] = 0;
+            parseGstLine(lineBuf); // receiver's own error estimate -> payload hacc
+            lineLen = 0;
+            return;
+        }
         if (lineLen >= 6 && lineBuf[0] == '$' && lineBuf[1] == 'P') { // $PAIR / $PMTK traffic only
             lineBuf[lineLen] = 0;
             if (tapLogBudget) {
@@ -316,12 +352,13 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
         applySeq[0] = {sNavCmd, 80, 1200, 2, false, 200};
         applySeq[1] = {sThrCmd, 70, 1200, 1, false, 200};
         applySeq[2] = {sSnrCmd, 58, 1200, 1, false, 200};
-        applySeq[3] = {sRateCmd, 50, 1500, 2, false, 400};
+        applySeq[3] = {sElevCmd, 72, 1200, 1, false, 200};
+        applySeq[4] = {sRateCmd, 50, 1500, 2, false, 400};
         raised = false; // force re-evaluation against the (possibly new) target
         rescues = 0;
         sagWindows = 0;
         danceRan = false;
-        startSeq(applySeq, 4, DANCE); // post-seq: MEASURE/steering ladder takes over as usual
+        startSeq(applySeq, 5, DANCE); // post-seq: MEASURE/steering ladder takes over as usual
         return;
     }
 
@@ -355,9 +392,16 @@ void GnssRateProbe::tick(Stream *serial, TinyGPSPlus &reader)
             {sNavCmd, 80, 1200, 1, false, 200},
             {sThrCmd, 70, 1200, 1, false, 200},
             {sSnrCmd, 58, 1200, 1, false, 200},
+            {sElevCmd, 72, 1200, 1, false, 200},     // elevation mask: cut low-horizon multipath sats
+            // Accuracy pack diagnostics + GST (ACKs/replies land in the << tap log):
+            {"PAIR062,8,1", 62, 1200, 1, false, 200}, // GST ON -> receiver's own error estimate per fix
+            {"PAIR490,1", 490, 1200, 1, false, 200},  // EASY self-predicted ephemeris (TTFF) — ensure on
+            {"PAIR491", 0, 0, 1, false, 300},         // ...and query its status
+            {"PAIR075", 0, 0, 1, false, 300},         // AIC (anti-interference) status
+            {"PAIR391,1", 391, 1200, 1, false, 200},  // jamming-detect events on (diagnostic)
             {"PAIR513", 513, 1500, 1, false, 300},   // persist config to flash (still at 1 Hz here)
         };
-        startSeq(kWakeIdent, 11, IDENT);
+        startSeq(kWakeIdent, 17, IDENT);
         if (gnssTagSettings.navMode == 1 || gnssTagSettings.navMode == 7)
             LOG_INFO("GnssProbe: nav mode %u (fitness/swim) — SBAS/EGNOS is inactive in this mode by design",
                      (unsigned)gnssTagSettings.navMode);

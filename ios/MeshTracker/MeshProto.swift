@@ -166,17 +166,20 @@ struct TagSettings: Equatable {
     var minSnr: UInt8 = 14        // $PAIR058: 9-37 dB
     var fixIntervalMs: UInt16 = 250
     var txSpacingMs: UInt16 = 150
+    var elevMaskDeg: UInt8 = 10   // $PAIR072: 0-45 deg — satellites below are excluded
 
     var wire: Data {
         Data([navMode, staticThrDms, minSnr,
               UInt8(fixIntervalMs & 0xFF), UInt8(fixIntervalMs >> 8),
-              UInt8(txSpacingMs & 0xFF), UInt8(txSpacingMs >> 8)])
+              UInt8(txSpacingMs & 0xFF), UInt8(txSpacingMs >> 8),
+              elevMaskDeg])
     }
     static func fromWire(_ b: [UInt8]) -> TagSettings? {
         guard b.count >= 7 else { return nil }
         return TagSettings(navMode: b[0], staticThrDms: b[1], minSnr: b[2],
                            fixIntervalMs: UInt16(b[3]) | (UInt16(b[4]) << 8),
-                           txSpacingMs: UInt16(b[5]) | (UInt16(b[6]) << 8))
+                           txSpacingMs: UInt16(b[5]) | (UInt16(b[6]) << 8),
+                           elevMaskDeg: b.count >= 8 ? b[7] : 10)
     }
 }
 

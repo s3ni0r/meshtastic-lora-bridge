@@ -17,9 +17,9 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
     uint8_t op = d.payload.bytes[0];
     uint8_t status = 0;
 
-    if (op == 0x01) { // SET
+    if (op == 0x01) { // SET (accepts 7-byte legacy or 8-byte v2 settings after the op byte)
         if (d.payload.size >= 8) {
-            if (gnssTagSettingsSetFromWire(&d.payload.bytes[1])) {
+            if (gnssTagSettingsSetFromWire(&d.payload.bytes[1], (uint8_t)(d.payload.size - 1))) {
                 gnssRateProbe.requestApply(); // live re-tune (no reboot)
             } else {
                 status = 1; // out-of-range / invalid mode
@@ -39,7 +39,7 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
     r->decoded.payload.bytes[0] = 0x80 | op;
     r->decoded.payload.bytes[1] = status;
     gnssTagSettingsPack(&r->decoded.payload.bytes[2]);
-    r->decoded.payload.size = 9;
+    r->decoded.payload.size = 10;
     service->sendToPhone(r); // straight to the BLE/USB client; never queued for LoRa
     LOG_INFO("GnssConfig: op=%u status=%u (reply sent to phone)", op, status);
     return ProcessMessage::STOP;

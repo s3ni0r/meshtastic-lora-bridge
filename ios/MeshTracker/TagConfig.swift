@@ -166,7 +166,7 @@ let kNavModes: [NavModeInfo] = [
     .init(mode: 1, name: "Fitness", detail: "Walking / running (< 5 m/s weighted)", egnos: false),
     .init(mode: 4, name: "Stationary", detail: "Fixed installation, zero dynamics", egnos: true),
     .init(mode: 5, name: "Drone", detail: "Flight dynamics, vertical acceleration", egnos: true),
-    .init(mode: 7, name: "Swimming", detail: "Smooths trajectory at water pace", egnos: false),
+    .init(mode: 7, name: "Swimming", detail: "Rejected by our unit\u{2019}s firmware (ACK 4)", egnos: false),
     .init(mode: 9, name: "Bike", detail: "Cycling dynamics", egnos: true),
 ]
 
@@ -319,6 +319,17 @@ struct TagConfigSheet: View {
                 }
                 Slider(value: Binding(get: { Double(draft.minSnr) },
                                       set: { draft.minSnr = UInt8($0) }), in: 9...37, step: 1)
+            }
+            VStack(alignment: .leading) {
+                HStack {
+                    Text("Elevation mask")
+                    Spacer()
+                    Text("\(draft.elevMaskDeg)°").foregroundStyle(.secondary).monospacedDigit()
+                }
+                Slider(value: Binding(get: { Double(draft.elevMaskDeg) },
+                                      set: { draft.elevMaskDeg = UInt8($0) }), in: 0...30, step: 1)
+                Text("Satellites below this horizon angle are ignored (cuts urban multipath).")
+                    .font(.caption2).foregroundStyle(.tertiary)
             }
         }
 

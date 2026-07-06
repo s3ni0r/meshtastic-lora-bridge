@@ -46,7 +46,11 @@ any-motion/no-motion engines at µA cost, INT on P1.02, driver `src/motion/QMA61
 - [ ] Measure: %/hour parked and moving, before/after (DeviceMetrics logging).
 
 ### 3.5 GNSS field-quality follow-ups (from the 2026-07-06 outdoor test)
-- [ ] Verify motion-tuning ACKs on-device ($PAIR080/070/058 — shipped in probe, pending flash).
+- [x] Motion-tuning ACKs verified on-device ($PAIR080/070/058 all ACK 0; mode 7 Swimming
+      rejected ACK 4 on this unit). Accuracy pack shipped in v1.2: GST-backed hacc ($PAIR062,8,1
+      ACK 0), elevation-mask knob ($PAIR072 ACK 0), AIC confirmed on, jamming events enabled.
+      EASY ($PAIR490) is UNSUPPORTED on this build (ACK 3) — TTFF path is EPO injection only.
+- [ ] Outdoor check: GST-based ± accuracy vs the Dronetag; elevation-mask A/B (10° vs 5°).
 - [ ] Walk test: fitness mode + 0.3 m/s static threshold + SNR 14 vs the Dronetag reference.
 - [ ] TTFF: main lever is AGNSS/EPO ephemeris injection (Airoha EPO file over UART at boot —
       needs a download path via phone/BLE or USB; Dronetag gets assistance from its app, which

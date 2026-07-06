@@ -107,7 +107,7 @@ class GnssRateProbe
     bool raised = false; // a winner is active
     bool settingsLoaded = false;
     bool pendingApply = false;
-    Step applySeq[4]; // runtime-built live-apply sequence (nav/thr/snr/rate)
+    Step applySeq[5]; // runtime-built live-apply sequence (nav/thr/snr/elev/rate)
     uint8_t rescues = 0;
     uint8_t sagWindows = 0;
     uint32_t lastReapplyMs = 0;
