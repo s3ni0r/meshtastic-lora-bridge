@@ -341,3 +341,19 @@ accuracy delta; bridge tag reflash with this branch's build (still labels itself
 
 Pending (outdoor): GST ±m vs Dronetag comparison, elevation-mask 10° vs 5° A/B, walk test of the
 fitness+static-freeze track quality. See `TODO.md` §3.5.
+
+
+## Field approval -> v2.0 defaults (2026-07-07)
+
+Outdoor test of the full tuning stack **APPROVED**: static freeze 0.3 m/s + SNR mask 14 dB +
+elevation mask 10° + 4 Hz GNSS + 150 ms TX spacing, GST-backed ±m. This exact profile ships as
+the v2.0 firmware default (nothing to tune on a fresh flash).
+
+**Nav-mode truth:** the sheet was set to "Swimming" during the test, but this unit rejects
+$PAIR080,7 (ACK 4 — seen at every boot), so the GNSS had silently kept the last accepted mode:
+**Fitness**. The approved behavior therefore IS Fitness, and Fitness is the shipped default.
+(Device hygiene: any tag whose stored settings still say 7 just needs Fitness re-applied once
+from the app sheet to stop the boot-time param-error line.)
+
+Release **v2.0** (major): all three flavors rebuilt from the approved source, tagged `v2.0`,
+branch + tags pushed to origin.

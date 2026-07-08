@@ -4,7 +4,13 @@ Real-time GPS over LoRa: moving **Seeed T1000-E tags** (Meshtastic fork) stream 
 T1000-E Base tethered to an **iPhone**, shown live on a map at multi-Hz. Region: **EU868**
 (deployment target); bench-validated on US/ShortTurbo.
 
-## Status (2026-07-06) — phone-tunable GNSS, direct-to-tag BLE, honest accuracy ✅
+## Status (2026-07-07, **v2.0**) — field-approved defaults, phone-tunable GNSS, direct BLE ✅
+
+**v2.0 = the outdoor-validated release.** Field-approved GNSS profile shipped as default:
+Fitness nav mode (the mode that actually ran during the approval test — this unit rejects
+Swimming, ACK 4), 0.3 m/s static freeze, 14 dB SNR mask, 10° elevation mask, 4 Hz GNSS,
+150 ms TX spacing (~6.7 Hz cap; switch to the EU868 2 Hz profile from the app for legal
+sustained use in France).
 
 ```
 Tag A: BLE5/LoRa bridge (Dronetag Remote ID → LoRa)  ─┐

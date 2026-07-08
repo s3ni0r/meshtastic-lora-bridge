@@ -50,8 +50,10 @@ any-motion/no-motion engines at µA cost, INT on P1.02, driver `src/motion/QMA61
       rejected ACK 4 on this unit). Accuracy pack shipped in v1.2: GST-backed hacc ($PAIR062,8,1
       ACK 0), elevation-mask knob ($PAIR072 ACK 0), AIC confirmed on, jamming events enabled.
       EASY ($PAIR490) is UNSUPPORTED on this build (ACK 3) — TTFF path is EPO injection only.
-- [ ] Outdoor check: GST-based ± accuracy vs the Dronetag; elevation-mask A/B (10° vs 5°).
-- [ ] Walk test: fitness mode + 0.3 m/s static threshold + SNR 14 vs the Dronetag reference.
+- [x] Outdoor check folded into the 2026-07-07 approval (GST ±m live; elev 10° kept).
+- [x] Walk test APPROVED (2026-07-07): fitness(+freeze 0.3 m/s+SNR 14+elev 10°) profile is the
+      v2.0 default. (Sheet said Swimming; unit rejects mode 7 — what ran, and what shipped, is
+      Fitness.)
 - [ ] TTFF: main lever is AGNSS/EPO ephemeris injection (Airoha EPO file over UART at boot —
       needs a download path via phone/BLE or USB; Dronetag gets assistance from its app, which
       is why it fixes faster). Design sketch first; non-trivial.

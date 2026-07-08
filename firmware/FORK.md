@@ -260,6 +260,21 @@ rate-steering ladder (~10 s to confirmation). Wire format + status codes: `GnssC
 Compile-time `GPSTAG_*` macros are first-run defaults only now. Validated end-to-end over the
 serial PhoneAPI (same code path as BLE): GET/SET/reject-invalid/restore all confirmed on-device.
 
+### Field-approved defaults (v2.0, validated outdoors 2026-07-07)
+
+The shipped defaults ARE the field-approved profile — a fresh flash needs no tuning:
+
+| Knob | Default | Note |
+|---|---|---|
+| Navigation mode | **1 Fitness** | The approved behavior. (The sheet read "Swimming" during the test, but this unit REJECTS mode 7 — ACK 4 — so the chip had silently kept Fitness. Honest default = what actually ran.) |
+| Static freeze | **3 dm/s (0.3 m/s)** | chip-level parked-position freeze |
+| Min satellite SNR | **14 dB** | multipath mask |
+| Elevation mask | **10°** | low-horizon multipath cut |
+| GNSS fix rate | **250 ms (4 Hz)** | probe steers to target each boot |
+| LoRa TX spacing | **150 ms (~6.7 Hz cap)** | bench/US-legal; use the France profile (500 ms = 2 Hz) for EU868 sustained |
+
+All remain live-tunable from the app (§ below); these are just the first-run values.
+
 ### Accuracy pack (v1.2)
 
 - **GST-backed hacc**: `$PAIR062,8,1` (ACK 0) turns on the receiver's own per-fix error
