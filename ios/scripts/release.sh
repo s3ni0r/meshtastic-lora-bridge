@@ -162,7 +162,11 @@ echo "   IDENTITY INJECTED ($TRAIN · $BRANCH@$SHA)"
 # no altool/Transporter step. manageAppVersionAndBuildNumber=false: WE own
 # the numbers (train scheme above); silent server-side bumps would desync
 # the build from its commit.
-cat > dist/ExportOptions.plist <<'PLIST'
+# MANUAL export signing: the team API key can create profiles via the raw ASC API but Xcode's
+# cloud-managed signing rejects it ("Cloud signing permission error" — cloud-managed certs need
+# an Admin key). So we pin the locally installed distribution cert + the App Store profile
+# created by ios/scripts/asc_make_profile.swift (one-time; re-run it if the profile ever expires).
+cat > dist/ExportOptions.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -170,6 +174,12 @@ cat > dist/ExportOptions.plist <<'PLIST'
     <key>method</key><string>app-store-connect</string>
     <key>destination</key><string>upload</string>
     <key>manageAppVersionAndBuildNumber</key><false/>
+    <key>signingStyle</key><string>manual</string>
+    <key>teamID</key><string>H6956Z7A2F</string>
+    <key>signingCertificate</key><string>Apple Distribution</string>
+    <key>provisioningProfiles</key><dict>
+        <key>$BUNDLE_ID</key><string>MeshTracker App Store</string>
+    </dict>
 </dict>
 </plist>
 PLIST
