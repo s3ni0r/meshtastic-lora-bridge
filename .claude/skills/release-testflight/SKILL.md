@@ -52,6 +52,13 @@ processing).
   `project.yml` `info.properties`, NOT a hand-edited Info.plist (it's
   generated).
 
+- **Wedged upload/export**: Apple's distribution endpoints sometimes hang while the REST API
+  works. Recovery: DELETE the stale `buildUploads` session (docs §troubleshooting), then either
+  retry, or manually sign (`codesign --timestamp=none`, entitlements from the profile) + zip +
+  `xcrun altool --upload-app` from the already-injected archive — that's how v2.1 shipped.
+- Never kill codesign mid-run (corrupts the Mach-O); recreate `ios/dist/whats_new.txt` if an
+  aborted run removed it.
+
 ## Before releasing
 
 Confirm the release content with the user: train + version + build source

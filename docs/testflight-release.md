@@ -85,7 +85,22 @@ older. Install replaces the current one — app data persists (same bundle
 id). Builds expire after 90 days; expire superseded experiment builds in
 ASC now and then so the picker stays readable.
 
-## Troubleshooting
+## Troubleshooting (incl. lessons from the first release, 2026-07-11)
+
+- **Upload/export hangs at "Contacting Apple Services" or codesign stalls** — Xcode's
+  distribution stack (and codesign's cert checks) can wedge on degraded Apple endpoints while
+  the ASC REST API works fine. Fallback that shipped v2.1: export/sign manually from the
+  already-injected archive and upload with `altool` (different transport):
+  `codesign --force --timestamp=none --sign "Apple Distribution: …" --entitlements <from profile>`
+  → zip Payload → `xcrun altool --upload-app -f app.ipa -t ios --apiKey … --apiIssuer …`.
+- **A killed upload poisons retries** — the half-open ASC buildUpload session (state
+  AWAITING_UPLOAD) gets adopted by the next attempt, which wedges identically. List it via
+  `GET /v1/apps/<id>/buildUploads`, then `DELETE /v1/buildUploads/<uuid>` (the API key can).
+- **Never kill codesign mid-run** — signatures embed into the Mach-O; a killed signing pass
+  corrupts the binary ("a sealed resource is missing or invalid"). Re-copy from the archive.
+- **`ios/dist/whats_new.txt` is transient** — aborted runs may leave it missing; recreate it
+  (note + `— branch@sha · built …` footer) before re-running the What-to-Test step.
+
 
 - **"HEAD carries no v* tag"** — mainline releases are cut from tags only;
   experiments only need a *reachable* tag (for the `MAJOR.MINOR` base).
