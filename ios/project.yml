@@ -23,6 +23,11 @@ targets:
     info:
       path: MeshTracker/Info.plist
       properties:
+        # Version keys MUST reference the build settings — release.sh injects the train's
+        # numbers at archive time via MARKETING_VERSION/CURRENT_PROJECT_VERSION overrides.
+        # (xcodegen otherwise hardcodes 1.0/1 here, which shipped a mislabeled first build.)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSBluetoothAlwaysUsageDescription: "Connects to the Meshtastic tracker over Bluetooth to display its live GPS position."
         NSLocationWhenInUseUsageDescription: "Uses your location to show how far away the tracked tag is."
         UILaunchScreen: {}
