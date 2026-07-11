@@ -45,6 +45,7 @@ struct ContentView: View {
     @State private var library = SessionLibrary()
     @State private var analysis = AnalysisModel()
     @State private var showLibrary = false
+    @State private var showAbout = false
     @State private var uiTick = Date() // drives the REC elapsed readout
     @State private var phone = PhoneLocation()
     private let playTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
@@ -117,8 +118,10 @@ struct ContentView: View {
     // MARK: - Body
 
     var body: some View {
-        // Dependency on the packet counter: guarantees body re-evaluates for every packet.
+        // Dependencies: the packet counter (live stream) and the playhead (scrubber playback) —
+        // both mutate outside the view; reading them here guarantees the map re-evaluates.
         let _ = model.revision
+        let _ = analysis.playhead
         let snaps = model.tracks.filter { $0.isVisible }.map { t in
             TrackSnapshot(id: t.from, source: t.source, title: t.title, current: t.current,
                           trail: t.trail, hasLock: t.hasLock, heading: t.heading,
@@ -202,6 +205,9 @@ struct ContentView: View {
         .sheet(isPresented: $showLibrary) {
             SessionLibraryView(library: library, analysis: analysis)
         }
+        .sheet(isPresented: $showAbout) {
+            AboutView()
+        }
     }
 
     // MARK: - Top status
@@ -234,6 +240,8 @@ struct ContentView: View {
         .padding(.horizontal, 12).padding(.vertical, 7)
         .background(.regularMaterial, in: Capsule())
         .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+        .contentShape(Capsule())
+        .onTapGesture { showAbout = true }
     }
 
     // MARK: - Map controls (right column)
