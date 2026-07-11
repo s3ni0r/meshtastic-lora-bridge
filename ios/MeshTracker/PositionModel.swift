@@ -104,6 +104,9 @@ final class PositionModel {
     /// Bumped on every packet. The view reads this so a 10 Hz stream re-renders the map content
     /// even when only reference-type SourceTrack properties mutate.
     var revision = 0
+    /// Session recorder — while armed, EVERY parsed packet is written to disk verbatim
+    /// (measurement-grade capture; see SessionStore.swift).
+    let recorder = SessionRecorder()
 
     /// The tag the header/metrics/camera follow: the pinned one, else a STABLE default — the
     /// first visible entry of the sorted list (favorites sort first). Never "most recently
@@ -137,6 +140,7 @@ final class PositionModel {
             resort()
         }
         track.ingest(sp, at: now)
+        recorder.ingest(sp, title: track.title)
         packetCount += 1
         revision &+= 1
         writeCSV(sp, now)

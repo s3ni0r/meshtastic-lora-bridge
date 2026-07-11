@@ -33,3 +33,6 @@ observer/
 
 # Versioned firmware releases are tracked (general *.uf2 stays ignored)
 !firmware/releases/**/*.uf2
+
+# xcodegen-generated Info.plist for the iOS app
+ios/MeshTracker/Info.plist

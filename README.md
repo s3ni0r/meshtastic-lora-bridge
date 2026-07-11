@@ -41,6 +41,13 @@ Tag B: GPS tag (onboard AG3335 @ 4 Hz → LoRa)        ─┘
 - **Honest accuracy**: the payload's ±m now carries the receiver's own GST 1-σ error estimate
   (HDOP heuristic as fallback). Boot diagnostics verified: AIC on, jamming-detect on, EASY
   genuinely unsupported on this build (TTFF assist = future EPO injection, see TODO).
+- **Session recording & analysis** (measurement-grade): record button captures EVERY received
+  packet verbatim (crash-safe JSONL under `Documents/sessions/`, background-BLE keeps capturing
+  pocketed); sessions library (rename/delete/stats); **full-resolution projection** of any number
+  of past sessions on the map (zero smoothing — raw fixes as received); **moment explorer**:
+  slider/playback with per-tag exact-fix markers, reported-accuracy circles, ±15 s fix scatter,
+  and raw packet readouts; exports: GPX 1.1 + analysis CSV (every packet, all fields); everything
+  visible in the Files app.
 - **Versioned releases**: [firmware/releases/](firmware/releases/) v1.0 → v1.2 (uf2 + DFU zip +
   checksums per flavor); flash any T1000-E with `tools/flash_t1000e.sh <flavor> [port|role]`.
 
