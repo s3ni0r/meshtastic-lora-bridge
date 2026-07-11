@@ -49,12 +49,27 @@ func request(_ method: String, _ path: String, body: [String: Any]? = nil) throw
     return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
 }
 
-// 1. bundle id resource
-let bid = try request("GET", "/v1/bundleIds?filter[identifier]=\(bundleIdentifier)")
-guard let bidData = (bid["data"] as? [[String: Any]])?.first, let bidId = bidData["id"] as? String else {
-    print("✗ bundle id \(bundleIdentifier) not registered"); exit(4)
+// 0. idempotency: drop any existing profile with our name (a bad one blocks manual signing).
+// filter[name] is unreliable with spaces — list and match client-side.
+let existing = try request("GET", "/v1/profiles?limit=200")
+for item in (existing["data"] as? [[String: Any]]) ?? [] {
+    let nm = (item["attributes"] as? [String: Any])?["name"] as? String
+    if nm == "MeshTracker App Store", let id = item["id"] as? String {
+        _ = try request("DELETE", "/v1/profiles/\(id)")
+        print("deleted stale profile \(id) (\(nm ?? ""))")
+    }
 }
-print("bundleId resource: \(bidId)")
+
+// 1. bundle id resource — filter[identifier] PREFIX-matches (it also returns
+// com.s3ni0r.meshtrackerwatch), so select the EXACT identifier explicitly.
+let bid = try request("GET", "/v1/bundleIds?filter[identifier]=\(bundleIdentifier)")
+let bidData = ((bid["data"] as? [[String: Any]]) ?? []).first { item in
+    ((item["attributes"] as? [String: Any])?["identifier"] as? String) == bundleIdentifier
+}
+guard let bidData, let bidId = bidData["id"] as? String else {
+    print("✗ bundle id \(bundleIdentifier) not registered (exact match)"); exit(4)
+}
+print("bundleId resource: \(bidId) (exact: \(bundleIdentifier))")
 
 // 2. distribution certificates (Apple Distribution + legacy iOS Distribution)
 var certIds: [String] = []
