@@ -36,3 +36,7 @@ observer/
 
 # xcodegen-generated Info.plist for the iOS app
 ios/MeshTracker/Info.plist
+
+# TestFlight release pipeline (docs/testflight-release.md)
+.release-env
+ios/dist/

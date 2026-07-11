@@ -32,6 +32,9 @@ targets:
         # Expose Documents/ (sessions, CSV logs) in the Files app / Finder.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        # TestFlight (docs/testflight-release.md): no proprietary encryption —
+        # internal builds skip the per-build compliance question entirely.
+        ITSAppUsesNonExemptEncryption: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "com.s3ni0r.meshtracker"
