@@ -152,214 +152,29 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     }
 }
 
-// MARK: - UI
+// MARK: - Navigation mode catalog (shared by the Tag Setup screen)
 
-struct NavModeInfo {
+struct NavModeInfo: Identifiable {
     let mode: UInt8
     let name: String
+    let icon: String
     let detail: String
-    let egnos: Bool // SBAS/EGNOS stays active in this mode
+    let egnos: Bool     // SBAS/EGNOS stays active in this mode
+    let supported: Bool // our unit's firmware ACKs it (Swimming is rejected, ACK 4)
+    var id: UInt8 { mode }
 }
 
 let kNavModes: [NavModeInfo] = [
-    .init(mode: 0, name: "Normal", detail: "General purpose", egnos: true),
-    .init(mode: 1, name: "Fitness", detail: "Walking / running (< 5 m/s weighted)", egnos: false),
-    .init(mode: 4, name: "Stationary", detail: "Fixed installation, zero dynamics", egnos: true),
-    .init(mode: 5, name: "Drone", detail: "Flight dynamics, vertical acceleration", egnos: true),
-    .init(mode: 7, name: "Swimming", detail: "Rejected by our unit\u{2019}s firmware (ACK 4)", egnos: false),
-    .init(mode: 9, name: "Bike", detail: "Cycling dynamics", egnos: true),
+    .init(mode: 1, name: "Fitness", icon: "figure.walk",
+          detail: "Walking / running — weights movement under 5 m/s", egnos: false, supported: true),
+    .init(mode: 5, name: "Drone", icon: "airplane",
+          detail: "Flight dynamics, vertical acceleration", egnos: true, supported: true),
+    .init(mode: 0, name: "Normal", icon: "globe.europe.africa",
+          detail: "General purpose", egnos: true, supported: true),
+    .init(mode: 9, name: "Bike", icon: "bicycle",
+          detail: "Cycling dynamics", egnos: true, supported: true),
+    .init(mode: 4, name: "Stationary", icon: "mappin.and.ellipse",
+          detail: "Fixed installation, zero dynamics", egnos: true, supported: true),
+    .init(mode: 7, name: "Swimming", icon: "figure.pool.swim",
+          detail: "Rejected by this unit's firmware (ACK 4)", egnos: false, supported: false),
 ]
-
-struct TagConfigSheet: View {
-    let track: SourceTrack
-    let ble: BLEManager
-    @State private var mgr = TagConfigManager()
-    @State private var draft = TagSettings()
-    @State private var loadedFromTag = false
-    @Environment(\.dismiss) private var dismiss
-
-    /// The stream link already goes straight to THIS tag (no Base alive): reuse it for config —
-    /// a second PhoneAPI client on the same node would fight over the FromRadio queue.
-    private var direct: Bool { ble.directTag && ble.connectedNodeNum == track.from }
-    private var currentSettings: TagSettings? { direct ? ble.lastConfigReply?.settings : mgr.settings }
-    private var dirty: Bool { loadedFromTag && draft != (currentSettings ?? draft) }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                connectionSection
-                if loadedFromTag {
-                    settingsSections
-                }
-            }
-            .navigationTitle("GNSS settings · \(track.shortId)")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { mgr.stop(); dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") {
-                        if direct { ble.sendTagConfig(Data([0x01]) + draft.wire) } else { mgr.apply(draft) }
-                    }
-                    .disabled(!dirty || mgr.stage == .applying)
-                    .bold()
-                }
-            }
-            .onAppear {
-                if direct { ble.sendTagConfig(Data([0x00])) } else { mgr.begin(targetNode: track.from) }
-            }
-            .onDisappear { if !direct { mgr.stop() } }
-            .onChange(of: currentSettings) {
-                if let s = currentSettings {
-                    draft = s
-                    loadedFromTag = true
-                }
-            }
-        }
-        .presentationDetents([.large])
-    }
-
-    @ViewBuilder private var connectionSection: some View {
-        Section("Tag connection (BLE)") {
-            if direct {
-                HStack {
-                    Label("\(ble.nodeName) — direct link", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Spacer()
-                    if let st = ble.lastConfigReply?.status, ble.lastConfigReply?.op == 0x81 {
-                        Text(st == 0 ? "applied ✓" : "rejected (\(st))")
-                            .foregroundStyle(st == 0 ? .green : .red).font(.caption)
-                    }
-                }
-            } else {
-                nonDirectConnectionRows
-            }
-        }
-    }
-
-    @ViewBuilder private var nonDirectConnectionRows: some View {
-            switch mgr.stage {
-            case .scanning:
-                if mgr.discovered.isEmpty {
-                    HStack { ProgressView(); Text("Scanning for the tag…").foregroundStyle(.secondary) }
-                } else {
-                    ForEach(mgr.discovered, id: \.id) { d in
-                        Button { mgr.connect(d.id) } label: {
-                            Label(d.name, systemImage: "dot.radiowaves.left.and.right")
-                        }
-                    }
-                }
-            case .connecting, .handshaking:
-                HStack { ProgressView(); Text("Connecting to \(mgr.deviceName)…").foregroundStyle(.secondary) }
-            case .ready, .applying:
-                HStack {
-                    Label(mgr.deviceName, systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                    Spacer()
-                    if mgr.stage == .applying { ProgressView() }
-                    else if mgr.lastStatus == 0 { Text("applied ✓").foregroundStyle(.green).font(.caption) }
-                    else if let st = mgr.lastStatus, st != 0 {
-                        Text("rejected (\(st))").foregroundStyle(.red).font(.caption)
-                    }
-                }
-            case .failed(let why):
-                Label(why, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                Button("Retry") { mgr.begin(targetNode: track.from) }
-            case .idle:
-                Text("—").foregroundStyle(.secondary)
-            }
-    }
-
-    @ViewBuilder private var settingsSections: some View {
-        Section {
-            ForEach(kNavModes, id: \.mode) { m in
-                Button {
-                    draft.navMode = m.mode
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 6) {
-                                Text(m.name).foregroundStyle(.primary)
-                                if m.egnos {
-                                    Text("EGNOS").font(.caption2.bold()).padding(.horizontal, 5).padding(.vertical, 1)
-                                        .background(.green.opacity(0.15), in: Capsule()).foregroundStyle(.green)
-                                }
-                            }
-                            Text(m.detail).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if draft.navMode == m.mode {
-                            Image(systemName: "checkmark").foregroundStyle(.tint)
-                        }
-                    }
-                }
-            }
-        } header: {
-            Text("Navigation mode ($PAIR080)")
-        } footer: {
-            Text("Fitness/Swimming trade EGNOS corrections for stronger low-speed filtering.")
-        }
-
-        Section("Motion filtering") {
-            VStack(alignment: .leading) {
-                HStack {
-                    Text("Static freeze below")
-                    Spacer()
-                    Text(draft.staticThrDms == 0 ? "off" : String(format: "%.1f m/s", Double(draft.staticThrDms) / 10))
-                        .foregroundStyle(.secondary).monospacedDigit()
-                }
-                Slider(value: Binding(get: { Double(draft.staticThrDms) },
-                                      set: { draft.staticThrDms = UInt8($0) }), in: 0...20, step: 1)
-            }
-            VStack(alignment: .leading) {
-                HStack {
-                    Text("Min satellite SNR")
-                    Spacer()
-                    Text("\(draft.minSnr) dB").foregroundStyle(.secondary).monospacedDigit()
-                }
-                Slider(value: Binding(get: { Double(draft.minSnr) },
-                                      set: { draft.minSnr = UInt8($0) }), in: 9...37, step: 1)
-            }
-            VStack(alignment: .leading) {
-                HStack {
-                    Text("Elevation mask")
-                    Spacer()
-                    Text("\(draft.elevMaskDeg)°").foregroundStyle(.secondary).monospacedDigit()
-                }
-                Slider(value: Binding(get: { Double(draft.elevMaskDeg) },
-                                      set: { draft.elevMaskDeg = UInt8($0) }), in: 0...30, step: 1)
-                Text("Satellites below this horizon angle are ignored (cuts urban multipath).")
-                    .font(.caption2).foregroundStyle(.tertiary)
-            }
-        }
-
-        Section {
-            Picker("GNSS fix rate", selection: $draft.fixIntervalMs) {
-                Text("1 Hz").tag(UInt16(1000))
-                Text("2 Hz").tag(UInt16(500))
-                Text("4 Hz").tag(UInt16(250))
-                Text("5 Hz").tag(UInt16(200))
-                Text("10 Hz").tag(UInt16(100))
-            }
-            Picker("LoRa TX spacing", selection: $draft.txSpacingMs) {
-                Text("2 Hz — EU868 legal").tag(UInt16(500))
-                Text("4 Hz").tag(UInt16(250))
-                Text("6.7 Hz").tag(UInt16(150))
-                Text("10 Hz").tag(UInt16(100))
-            }
-        } header: {
-            Text("Rates")
-        } footer: {
-            Text("Sustained TX above 2 Hz exceeds the EU868 duty cycle — bench/US only.")
-        }
-
-        Section("Deployment profiles") {
-            Button {
-                draft.fixIntervalMs = 250; draft.txSpacingMs = 500
-            } label: { Label("France · EU868 (4 Hz GNSS, 2 Hz TX)", systemImage: "flag.fill") }
-            Button {
-                draft.fixIntervalMs = 250; draft.txSpacingMs = 150
-            } label: { Label("US bench (4 Hz GNSS, fast TX)", systemImage: "hare.fill") }
-        }
-    }
-}

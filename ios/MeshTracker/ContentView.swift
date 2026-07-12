@@ -33,15 +33,15 @@ private struct TrackSnapshot: Identifiable {
 }
 
 struct ContentView: View {
-    @State private var model: PositionModel
-    @State private var ble: BLEManager
+    let model: PositionModel
+    let ble: BLEManager
+    let ui: UIState
     @State private var camera: MapCameraPosition = .automatic
     @State private var follow = true          // keep the focused tag in view (edge-triggered)
     @State private var camDistance: Double = 400
     @State private var camRegion: MKCoordinateRegion?
     @State private var centeredOnce = false
     @State private var panelExpanded = true
-    @State private var configTarget: SourceTrack? // GNSS settings sheet (GPS tags only)
     @State private var library = SessionLibrary()
     @State private var analysis = AnalysisModel()
     @State private var showLibrary = false
@@ -50,12 +50,6 @@ struct ContentView: View {
     @State private var phone = PhoneLocation()
     private let playTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
     @AppStorage("mapStyleChoice") private var mapStyleChoice = 0 // 0 standard / 1 hybrid / 2 satellite
-
-    init() {
-        let m = PositionModel()
-        _model = State(initialValue: m)
-        _ble = State(initialValue: BLEManager(model: m))
-    }
 
     // MARK: - Camera
 
@@ -198,9 +192,6 @@ struct ContentView: View {
                     bottomPanel
                 }
             }
-        }
-        .sheet(item: $configTarget) { t in
-            TagConfigSheet(track: t, ble: ble)
         }
         .sheet(isPresented: $showLibrary) {
             SessionLibraryView(library: library, analysis: analysis)
@@ -425,7 +416,11 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             if track.source == .gpsTag {
-                Button { configTarget = track } label: {
+                // Shortcut into the dedicated Tag Setup tab, pre-targeted at this tag.
+                Button {
+                    ui.setupTarget = track.from
+                    ui.tab = 1
+                } label: {
                     Image(systemName: "gearshape.fill").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
