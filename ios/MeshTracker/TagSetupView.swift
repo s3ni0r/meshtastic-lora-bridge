@@ -58,7 +58,9 @@ struct TagSetupView: View {
             .safeAreaInset(edge: .bottom) { if dirty { applyBar } }
             .onAppear { engage() }
             .onDisappear { if !direct { mgr.stop() } }
-            .onChange(of: ui.setupTarget) { engage() }
+            .onChange(of: ui.setupTarget) {
+                if ui.setupTarget != nil { engage() } // engage() nils it — don't re-trigger
+            }
             .onChange(of: confirmed) {
                 if let s = confirmed {
                     baseline = s
@@ -75,7 +77,14 @@ struct TagSetupView: View {
         baseline = nil
         guard let t = newTarget else { return }
         if ble.directTag && ble.connectedNodeNum == t {
-            ble.sendTagConfig(Data([0x00])) // reuse the live direct link
+            ble.sendTagConfig(Data([0x00])) // refresh over the live direct link
+            // Adopt the cached reply immediately: the fresh GET usually echoes IDENTICAL values,
+            // so onChange(of: confirmed) would never fire and the view would wait forever
+            // ("Reading settings…" on every re-entry). A genuinely newer reply still updates us.
+            if let s = confirmed {
+                baseline = s
+                draft = s
+            }
         } else {
             mgr.begin(targetNode: t)
         }
