@@ -26,10 +26,15 @@ any-motion/no-motion engines at µA cost, INT on P1.02, driver `src/motion/QMA61
 ## Roadmap (priority order)
 
 ### 1. Payload v3: `moving` bit + battery byte  [firmware + iOS + tools]
+- [x] **Battery byte SHIPPED (2026-07-13, firmware v3.0)**: byte 17 = battery % (101 = USB,
+      255 = unknown) in every stream packet from both tag flavors → 18-byte payload; Base battery
+      via DeviceTelemetry-to-phone every 15 s (fork tweak); iOS badges (status capsule, tag rows,
+      Tag Setup card + voltage/age), portnum-67 fallback for pre-v3 tags; sessions record `bt`
+      per point; CSV/GPX exports + tools/m2_stream_poc.py updated. ShortFast airtime 45 → 48 ms
+      (EU 2 Hz = 9.5% duty, still legal — CAPACITY.md recomputed).
 - [ ] Firmware: motion state machine on QMA6100P (variance + hysteresis as above), publish
-      **flags bit1 = moving**; append **byte 17 = battery %** → 18-byte payload.
-- [ ] iOS: decode both; show battery per tag (list row + metric tile), "parked/moving" state.
-- [ ] tools/m2_stream_poc.py: parse v3 (graceful for 17/12-byte).
+      **flags bit1 = moving** (bit already reserved in the v3 layout — no wire change needed).
+- [ ] iOS: decode `moving`; show "parked/moving" state.
 - Risk to test on-device: QMA I²C init timing/contention was flagged as risky in earlier work —
   validate boot stability before shipping.
 
@@ -43,7 +48,8 @@ any-motion/no-motion engines at µA cost, INT on P1.02, driver `src/motion/QMA61
 - [ ] Full 4 Hz stream while `moving`, drop to the 2 s heartbeat while parked (keep the
       any-motion interrupt path so the first fix after departure goes out in ~ms).
 - [ ] Biggest battery lever available (700 mAh cell); also frees channel airtime at rest.
-- [ ] Measure: %/hour parked and moving, before/after (DeviceMetrics logging).
+- [ ] Measure: %/hour parked and moving, before/after — the instrument exists since v3: session
+      recordings carry per-packet `bt`, so a long parked + long moving session gives both slopes.
 
 ### 3.5 GNSS field-quality follow-ups (from the 2026-07-06 outdoor test)
 - [x] Motion-tuning ACKs verified on-device ($PAIR080/070/058 all ACK 0; mode 7 Swimming

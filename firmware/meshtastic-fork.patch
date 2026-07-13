@@ -259,6 +259,23 @@ index e477574..ff43800 100644
  #if !MESHTASTIC_EXCLUDE_WAYPOINT
      waypointModule = new WaypointModule();
  #endif
+diff --git a/src/modules/Telemetry/DeviceTelemetry.h b/src/modules/Telemetry/DeviceTelemetry.h
+index a1d55a5..fe8114c 100644
+--- a/src/modules/Telemetry/DeviceTelemetry.h
++++ b/src/modules/Telemetry/DeviceTelemetry.h
+@@ -45,7 +45,11 @@ class DeviceTelemetryModule : private concurrency::OSThread, public ProtobufModu
+     meshtastic_Telemetry getLocalStatsTelemetry();
+ 
+     void sendLocalStatsToPhone();
+-    uint32_t sendToPhoneIntervalMs = SECONDS_IN_MINUTE * 1000;           // Send to phone every minute
++    // Fork: 15 s instead of stock 60 s — the MeshTracker app shows the connected node's battery,
++    // and the Base has no other channel for it (it never emits the PRIVATE_APP position stream).
++    // BLE-only push, so faster costs no LoRa airtime; 15 s also caps the blank-gauge window
++    // right after the phone connects.
++    uint32_t sendToPhoneIntervalMs = 15 * 1000;
+     uint32_t sendStatsToPhoneIntervalMs = 15 * SECONDS_IN_MINUTE * 1000; // Send stats to phone every 15 minutes
+     uint32_t lastSentStatsToPhone = 0;
+     uint32_t lastSentToMesh = 0;
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
 index 4f7fb47..c22c41f 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp

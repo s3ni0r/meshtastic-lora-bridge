@@ -18,6 +18,39 @@ func sourceSymbol(_ s: PacketSource) -> String {
     }
 }
 
+/// Compact battery readout used everywhere a node's power shows up (status capsule, tag rows,
+/// Tag Setup). Level 101 = externally powered (firmware magic) — rendered as a bolt + "USB".
+struct BatteryBadge: View {
+    let power: NodePower
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: symbol)
+            Text(power.isPowered ? "USB" : "\(power.level)%")
+        }
+        .font(.caption2.bold().monospacedDigit())
+        .foregroundStyle(color)
+    }
+
+    private var color: Color {
+        if power.isPowered { return .green }
+        if power.level <= 10 { return .red }
+        if power.level <= 20 { return .orange }
+        return .secondary
+    }
+
+    private var symbol: String {
+        if power.isPowered { return "battery.100percent.bolt" }
+        switch power.level {
+        case ..<13: return "battery.0percent"
+        case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"
+        case ..<88: return "battery.75percent"
+        default: return "battery.100percent"
+        }
+    }
+}
+
 /// Value snapshot of a track for Map content. Map's content diffing can skip re-evaluating rows
 /// whose ForEach element is an unchanged REFERENCE (SourceTrack is a class mutated in place), which
 /// froze the markers. Fresh value structs per body pass make every coordinate change visible.
@@ -219,6 +252,10 @@ struct ContentView: View {
                 Text("MeshTracker").font(.footnote.bold())
                 Text(ble.status).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
+            // The node this BLE link talks to — the Base normally, the tag itself when direct.
+            if ble.connectedNodeNum != 0, let pw = model.batteryInfo(ble.connectedNodeNum) {
+                BatteryBadge(power: pw).padding(.leading, 2)
+            }
             if model.recorder.isRecording {
                 HStack(spacing: 4) {
                     Circle().fill(.red).frame(width: 7, height: 7)
@@ -399,6 +436,9 @@ struct ContentView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     if pinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary) }
+                    if let pw = model.batteryInfo(track.from) {
+                        BatteryBadge(power: pw)
+                    }
                     Spacer()
                 }
                 .contentShape(Rectangle())
@@ -651,6 +691,9 @@ struct ContentView: View {
                     Text(String(format: "SNR %.0f", p.sn))
                     Text("RSSI \(p.rs)")
                     Text("seq \(p.sq)")
+                    if let bt = p.bt {
+                        Text(bt > 100 ? "USB" : "bat \(bt)%")
+                    }
                 }
                 .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
             } else {

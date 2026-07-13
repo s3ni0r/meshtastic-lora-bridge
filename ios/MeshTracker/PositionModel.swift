@@ -26,6 +26,7 @@ final class SourceTrack: Identifiable {
     var speedKmh = 0
     var heading: Double = 0     // degrees
     var hacc = 0                // horizontal accuracy, metres (0 = unknown)
+    var battery = -1            // v3 per-packet battery: 0-100 %, 101 = powered, -1 = unknown
 
     /// Short display id, e.g. "9cda" — enough to tell two physical tags apart.
     var shortId: String { String(String(format: "%08x", from).suffix(4)) }
@@ -60,6 +61,7 @@ final class SourceTrack: Identifiable {
         speedKmh = sp.speedKmh
         heading = sp.heading
         hacc = sp.hacc
+        if sp.battery >= 0 { battery = sp.battery } // keep the last known level across heartbeats
         packetCount += 1
         lastHeard = now
 
@@ -94,10 +96,21 @@ final class SourceTrack: Identifiable {
     }
 }
 
+/// One node's latest battery snapshot. Two producers feed it: the v3 stream byte (per packet,
+/// tags only) and stock portnum-67 device telemetry (every node — the Base's ONLY battery path).
+struct NodePower {
+    var level: Int      // 0-100 %; 101 = externally powered (firmware magic)
+    var voltage: Float  // volts; 0 = not reported (the stream byte carries no voltage)
+    var updated: Date
+    var isPowered: Bool { level > 100 }
+}
+
 @Observable
 final class PositionModel {
     /// All tags heard this session, in first-seen order.
     var tracks: [SourceTrack] = []
+    /// Latest portnum-67 telemetry per node id (Base + any tag whose telemetry reaches us).
+    var power: [UInt32: NodePower] = [:]
     /// User-pinned tag (tap a chip); nil = follow whichever tag spoke last.
     var selectedFrom: UInt32?
     var packetCount = 0
@@ -146,6 +159,22 @@ final class PositionModel {
         writeCSV(sp, now)
     }
 
+    /// Device telemetry (portnum 67) — battery/voltage for nodes that don't stream positions
+    /// (the Base) or run pre-v3 firmware.
+    func ingestPower(_ r: PowerReading) {
+        power[r.from] = NodePower(level: r.level, voltage: r.voltage, updated: Date())
+        revision &+= 1
+    }
+
+    /// Best battery estimate for a node: the per-packet stream byte when the node streams
+    /// (live at up to 6.7 Hz), else its last telemetry. Voltage only ever comes from telemetry.
+    func batteryInfo(_ from: UInt32) -> NodePower? {
+        if let t = tracks.first(where: { $0.from == from }), t.battery >= 0, let heard = t.lastHeard {
+            return NodePower(level: t.battery, voltage: power[from]?.voltage ?? 0, updated: heard)
+        }
+        return power[from]
+    }
+
     // MARK: - Favorites / visibility (persisted across launches)
 
     func toggleFavorite(_ t: SourceTrack) {
@@ -170,13 +199,13 @@ final class PositionModel {
         }
     }
 
-    // MARK: - CSV logging (Documents/meshtracker_log2.csv — v2 schema adds `src`)
+    // MARK: - CSV logging (Documents/meshtracker_log3.csv — v3 schema adds `bat`)
 
     private func openCSV() {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let url = dir.appendingPathComponent("meshtracker_log2.csv")
+        let url = dir.appendingPathComponent("meshtracker_log3.csv")
         if !FileManager.default.fileExists(atPath: url.path) {
-            try? "host_time,from,src,seq,lat,lon,ms_in_sec,flags,rx_snr,rx_rssi,alt_m,speed_kmh,heading,hacc_m\n"
+            try? "host_time,from,src,seq,lat,lon,ms_in_sec,flags,rx_snr,rx_rssi,alt_m,speed_kmh,heading,hacc_m,bat\n"
                 .write(to: url, atomically: true, encoding: .utf8)
         }
         csv = try? FileHandle(forWritingTo: url)
@@ -186,7 +215,7 @@ final class PositionModel {
     private func writeCSV(_ sp: StreamPacket, _ now: Date) {
         let line = "\(now.timeIntervalSince1970),\(sp.from),\(sp.source.rawValue),\(sp.seq),\(sp.lat),\(sp.lon)," +
             "\(sp.msInSec),\(sp.flags),\(sp.rxSnr),\(sp.rxRssi),\(sp.altitude),\(sp.speedKmh)," +
-            "\(Int(sp.heading)),\(sp.hacc)\n"
+            "\(Int(sp.heading)),\(sp.hacc),\(sp.battery >= 0 ? "\(sp.battery)" : "")\n"
         if let d = line.data(using: .utf8) { csv?.write(d) }
     }
 }

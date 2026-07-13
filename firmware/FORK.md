@@ -1,7 +1,8 @@
 # Firmware fork — high-rate position stream on the T1000-E
 
 Turns a T1000-E into a sub-second position streamer on `PRIVATE_APP (256)` (bypassing
-PositionModule). **Two interchangeable TAG flavors** share the same 17-byte payload and the same
+PositionModule). **Two interchangeable TAG flavors** share the same 18-byte payload (v3: byte 17
+carries the sender's live battery — 0-100 %, 101 = USB-powered, 255 = unknown) and the same
 Base/iOS receiver — flags bits 5–7 carry the source type so receivers can tell them apart (§9):
 
 | Flavor | Build flag | Position source | src bits |
@@ -191,11 +192,22 @@ tick); it is mutually exclusive with `ODID_SNIFFER` (compile error if combined).
 
 ### Payload identity — telling the tags apart
 
-`flags` byte (offset 11): bit0 = lock, **bits 5–7 = source type** — `1` = ODID bridge, `2` = GPS
-tag, `0` = legacy/pre-fork. Old 12-byte clients keep working (they only mask bit0). Receivers thus
-distinguish tags two independent ways: the LoRa `from` node id (unique per device) and the source
-type (which *kind* of tag). The iOS app tracks each `from` as its own colored trail and shows the
-flavor label; `tools/m2_stream_poc.py recv` prints/logs both.
+`flags` byte (offset 11): bit0 = lock, bit1 reserved for `moving` (QMA6100P gate, `TODO.md`),
+**bits 5–7 = source type** — `1` = ODID bridge, `2` = GPS tag, `0` = legacy/pre-fork. Old clients
+keep working: receivers key on length (12 = position only, 17 = +alt/speed/heading/hacc,
+18 = +battery byte, v3). Receivers thus distinguish tags two independent ways: the LoRa `from`
+node id (unique per device) and the source type (which *kind* of tag). The iOS app tracks each
+`from` as its own colored trail and shows the flavor label; `tools/m2_stream_poc.py recv`
+prints/logs both.
+
+### Battery telemetry (v3 + Base path)
+
+Both tag flavors put their **own cell's** level in byte 17 of every packet — the bridge reports
+the bridge's battery, not the Dronetag's (Remote ID broadcasts carry no battery). The Base never
+streams positions, so its battery reaches the phone via stock DeviceMetrics telemetry, with one
+fork tweak: `DeviceTelemetry.h` pushes to the phone every **15 s** instead of 60 s (BLE-only, no
+LoRa cost). The app also decodes that portnum-67 path as the fallback for tags on pre-v3
+firmware (their LoRa telemetry broadcast, default every 30 min, relayed by the Base).
 
 ### Event-driven internal GPS (mirror of the sniffer path)
 

@@ -149,6 +149,10 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
             if connectedNodeNum == 0, let me = parseMyNodeNum(v) { connectedNodeNum = me }
             if let sp = parseFromRadio(v) { model.ingest(sp) }
             if let cr = parseConfigReply(v) { lastConfigReply = cr }
+            if var pw = parseTelemetry(v) {                  // battery: Base every 15 s, tags via LoRa
+                if pw.from == 0 { pw.from = connectedNodeNum }
+                if pw.from != 0 { model.ingestPower(pw) }
+            }
             if let fr = fromRadio { p.readValue(for: fr) }    // keep draining
         }
     }

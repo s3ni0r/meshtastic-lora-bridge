@@ -2,6 +2,7 @@
 #include "GPSStatus.h"
 #include "MeshService.h"
 #include "NodeDB.h"
+#include "PowerStatus.h" // payload v3: live battery byte in every stream packet
 #include "configuration.h"
 #include "main.h" // concurrency::mainDelay — woken from wakeFreshFix()
 #include <string.h>
@@ -41,8 +42,10 @@
 // Payload (little-endian, must match tools/m2_stream_poc.py + iOS MeshProto.swift):
 //   0 lat int32 (deg*1e7) | 4 lon int32 | 8 ms uint16 | 10 seq uint8 | 11 flags uint8
 //   12 alt int16 (m) | 14 speed uint8 (km/h) | 15 heading uint8 (deg*256/360) | 16 hacc uint8 (m)
-// flags: bit0 = lock, bits 5-7 = source type (SRC_*) so a receiver can tell WHICH tag flavor sent
-// this even before looking at the LoRa `from` node id. Legacy 12-byte builds leave bits 5-7 = 0.
+//   17 battery uint8 (v3: 0-100 %, 101 = externally powered, 255 = unknown)
+// flags: bit0 = lock, bit1 reserved for `moving` (QMA6100P gate, TODO.md), bits 5-7 = source type
+// (SRC_*) so a receiver can tell WHICH tag flavor sent this even before looking at the LoRa `from`
+// node id. Receivers key on length: 12 = position only, 17 = +telemetry, 18 = +battery (v3).
 #define HIGHRATE_SRC_LEGACY 0 // pre-fork / bench counter build
 #define HIGHRATE_SRC_ODID 1   // BLE5 Remote ID bridge (Dronetag is the position source)
 #define HIGHRATE_SRC_GPS 2    // self-contained tag: onboard AG3335 is the position source
@@ -155,7 +158,7 @@ int32_t HighRatePositionModule::runOnce()
     uint16_t offsetMs = (uint16_t)(nowMs % 1000);
     uint8_t flags = (hasLock ? 0x01 : 0x00) | (uint8_t)(HIGHRATE_SRC_TYPE << 5);
 
-    uint8_t buf[17];
+    uint8_t buf[18];
     memcpy(&buf[0], &lat, 4);
     memcpy(&buf[4], &lon, 4);
     memcpy(&buf[8], &offsetMs, 2);
@@ -169,7 +172,16 @@ int32_t HighRatePositionModule::runOnce()
     buf[14] = extSpeed;
     buf[15] = extHeading;
     buf[16] = extHacc;
-    len = 17;
+    // v3: this unit's OWN battery in every packet — real-time gauge with zero extra airtime
+    // packets (one byte at ShortFast doesn't change the symbol count in practice). Same 101
+    // "externally powered" magic as stock DeviceTelemetry so all consumers read one convention.
+    uint8_t batt = 255; // unknown — power status not sampled yet (first seconds after boot)
+    if (powerStatus && powerStatus->getHasBattery())
+        batt = powerStatus->getIsCharging() ? 101 : powerStatus->getBatteryChargePercent();
+    else if (powerStatus)
+        batt = 101; // no cell detected = running on USB
+    buf[17] = batt;
+    len = 18;
 #endif
 
     // Latest-wins (stock PositionModule pattern): if the previous position is still queued (channel

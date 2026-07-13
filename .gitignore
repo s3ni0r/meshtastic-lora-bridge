@@ -40,3 +40,6 @@ ios/MeshTracker/Info.plist
 # TestFlight release pipeline (docs/testflight-release.md)
 .release-env
 ios/dist/
+
+# transient per-flavor build copies (releases/ carries the shipped artifacts)
+firmware/build-out/

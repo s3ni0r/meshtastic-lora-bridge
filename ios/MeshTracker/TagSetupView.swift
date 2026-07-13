@@ -139,7 +139,26 @@ struct TagSetupView: View {
                 Spacer()
                 connectionAccessory
             }
+            // Battery: per-packet when the tag streams v3 firmware; telemetry otherwise.
+            if let t = target, let pw = model.batteryInfo(t) {
+                HStack(spacing: 8) {
+                    BatteryBadge(power: pw)
+                    if pw.voltage > 0 {
+                        Text(String(format: "%.2f V", pw.voltage))
+                            .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    Text(powerAge(pw.updated)).font(.caption2).foregroundStyle(.tertiary)
+                    Spacer()
+                }
+            }
         }
+    }
+
+    private func powerAge(_ d: Date) -> String {
+        let s = Int(Date().timeIntervalSince(d))
+        if s < 90 { return "updated just now" }
+        if s < 3600 { return "updated \(s / 60) min ago" }
+        return "updated \(s / 3600) h ago"
     }
 
     private var connectionSubtitle: String {
@@ -316,8 +335,9 @@ struct TagSetupView: View {
     // MARK: - Rates + computed consequences
 
     private var dutyPercent: Double {
-        // ShortFast airtime for our 40 B packet ≈ 45 ms (docs/CAPACITY.md) — the EU-relevant case.
-        45.0 / Double(draft.txSpacingMs) * 100
+        // ShortFast airtime for our 41 B v3 packet ≈ 48 ms (docs/CAPACITY.md) — the EU-relevant
+        // case. 2 Hz = 9.6%: still legal, but there is no headroom below 500 ms spacing.
+        48.0 / Double(draft.txSpacingMs) * 100
     }
 
     private var ratesCard: some View {

@@ -28,11 +28,14 @@ import sys
 import time
 
 PRIVATE_APP = 256
-# Payload formats (little-endian). Extended adds alt/speed/heading/hacc; base = lat/lon/ms/seq/flags.
+# Payload formats (little-endian). v2 adds alt/speed/heading/hacc; v3 adds battery
+# (0-100 %, 101 = externally powered, 255 = unknown); base = lat/lon/ms/seq/flags.
 PAYLOAD_FMT_V1 = "<iiHBB"
 PAYLOAD_FMT_V2 = "<iiHBBhBBB"
+PAYLOAD_FMT_V3 = "<iiHBBhBBBB"
 V1_LEN = struct.calcsize(PAYLOAD_FMT_V1)  # 12
 V2_LEN = struct.calcsize(PAYLOAD_FMT_V2)  # 17
+V3_LEN = struct.calcsize(PAYLOAD_FMT_V3)  # 18
 WARMUP_S = 4.0  # let the receiver's serial interface connect before streaming
 
 
@@ -57,9 +60,9 @@ def open_iface(port):
 
 def pack(lat, lon, seq):
     ms_in_sec = int((time.time() % 1.0) * 1000) & 0xFFFF
-    # v2 payload; metrics are simulated for host-injection tests
-    return struct.pack(PAYLOAD_FMT_V2, int(lat * 1e7), int(lon * 1e7), ms_in_sec, seq & 0xFF, 0x01,
-                       12, 5, 64, 3)  # alt=12m speed=5km/h heading=64(->90deg) hacc=3m
+    # v3 payload; metrics are simulated for host-injection tests
+    return struct.pack(PAYLOAD_FMT_V3, int(lat * 1e7), int(lon * 1e7), ms_in_sec, seq & 0xFF, 0x01,
+                       12, 5, 64, 3, 87)  # alt=12m speed=5km/h heading=64(->90deg) hacc=3m bat=87%
 
 
 class Receiver:
@@ -75,7 +78,7 @@ class Receiver:
         self.rssis = []
         self.csv = open(csv_path, "w") if csv_path else None
         if self.csv:
-            self.csv.write("host_time,from,src,seq,lat,lon,alt_m,speed_kmh,heading,hacc_m,ms_in_sec,flags,rx_snr,rx_rssi\n")
+            self.csv.write("host_time,from,src,seq,lat,lon,alt_m,speed_kmh,heading,hacc_m,ms_in_sec,flags,rx_snr,rx_rssi,bat\n")
 
     def on_receive(self, packet, interface=None):
         if self.only_iface is not None and interface is not self.only_iface:
@@ -88,7 +91,11 @@ class Receiver:
             return
         alt = spd = hacc = 0
         heading = 0.0
-        if len(payload) >= V2_LEN:
+        bat = 255  # v3 battery; 255 = unknown (pre-v3 firmware or not sampled yet)
+        if len(payload) >= V3_LEN:
+            lat_i, lon_i, off, seq, flags, alt, spd, hdg, hacc, bat = struct.unpack(PAYLOAD_FMT_V3, payload[:V3_LEN])
+            heading = hdg * 360.0 / 256.0
+        elif len(payload) >= V2_LEN:
             lat_i, lon_i, off, seq, flags, alt, spd, hdg, hacc = struct.unpack(PAYLOAD_FMT_V2, payload[:V2_LEN])
             heading = hdg * 360.0 / 256.0
         else:
@@ -108,11 +115,13 @@ class Receiver:
             self.snrs.append(snr)
         if rssi is not None:
             self.rssis.append(rssi)
+        bat_s = "?" if bat == 255 else ("USB" if bat == 101 else f"{bat}%")
         print(f"  rx {src_name}!{(packet.get('from') or 0) & 0xffff:04x} seq={seq:3d} lat={lat:.6f} lon={lon:.6f} "
-              f"spd={spd}km/h hdg={heading:3.0f} alt={alt}m ±{hacc}m snr={snr} rssi={rssi}")
+              f"spd={spd}km/h hdg={heading:3.0f} alt={alt}m ±{hacc}m bat={bat_s} snr={snr} rssi={rssi}")
         if self.csv:
             self.csv.write(f"{time.time():.3f},{packet.get('from')},{src},{seq},{lat:.7f},{lon:.7f},"
-                           f"{alt},{spd},{heading:.0f},{hacc},{off},{flags},{snr},{rssi}\n")
+                           f"{alt},{spd},{heading:.0f},{hacc},{off},{flags},{snr},{rssi},"
+                           f"{'' if bat == 255 else bat}\n")
             self.csv.flush()
 
     def summary(self, sent=None):

@@ -18,9 +18,15 @@ Tag A: BLE5/LoRa bridge (Dronetag Remote ID → LoRa)  ─┐
 Tag B: GPS tag (onboard AG3335 @ 4 Hz → LoRa)        ─┘
 ```
 
-- **Two interchangeable tag firmwares**, same 17-byte `PRIVATE_APP(256)` payload; flags bits 5–7
-  identify the source (1 = bridge, 2 = GPS tag) on top of the LoRa `from` node id
+- **Two interchangeable tag firmwares**, same 18-byte `PRIVATE_APP(256)` payload (v3); flags bits
+  5–7 identify the source (1 = bridge, 2 = GPS tag) on top of the LoRa `from` node id
   ([firmware/FORK.md](firmware/FORK.md)).
+- **Live battery everywhere** (v3, 2026-07-13): every stream packet carries the sending tag's own
+  cell % (byte 17; 101 = USB-powered), so tag battery updates at the position rate; the Base —
+  which never streams — pushes stock DeviceMetrics over BLE every 15 s (fork tweak) and the app
+  decodes portnum 67 (also the fallback for tags on pre-v3 firmware). Badges in the status
+  capsule, tag rows and Tag Setup; recorded per point in sessions (`bt`) for %/hour drain
+  analysis.
 - **AG3335 GNSS unlocked to 10 Hz** — the historical "1 Hz firmware lock" was a misdiagnosis (the
   command CPU auto-sleeps post-boot; the fix is a boot-window `$PAIR382,1` latch + `$PAIR050`).
   Deployed at a **4 Hz target**, steered per boot by `GnssRateProbe`, with a France/Europe GNSS

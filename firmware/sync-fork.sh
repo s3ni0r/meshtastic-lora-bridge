@@ -35,6 +35,7 @@ git -C "$CLONE" diff "$BASE_TAG" -- \
     src/gps/GPS.cpp \
     src/mesh/LR11x0Interface.cpp \
     src/modules/Modules.cpp \
+    src/modules/Telemetry/DeviceTelemetry.h \
     src/platform/nrf52/NRF52Bluetooth.cpp \
     variants/nrf52840/tracker-t1000-e/platformio.ini \
     > meshtastic-fork.patch

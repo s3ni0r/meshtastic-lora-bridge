@@ -40,6 +40,7 @@ struct StreamPacket {
     var speedKmh: Int = 0
     var heading: Double = 0 // degrees
     var hacc: Int = 0       // horizontal accuracy, metres (0 = unknown)
+    var battery: Int = -1   // v3 (18-byte payload): 0-100 %, 101 = externally powered, -1 = unknown
 
     var hasLock: Bool { flags & 0x01 != 0 }
     var source: PacketSource { PacketSource(rawValue: Int((flags >> 5) & 0x7)) ?? .legacy }
@@ -153,7 +154,75 @@ private func parseData(_ bytes: ArraySlice<UInt8>, into sp: inout StreamPacket) 
         sp.heading = Double(p[15]) * 360.0 / 256.0
         sp.hacc = Int(p[16])
     }
+    if p.count >= 18, p[17] != 255 { // v3: live battery (101 = externally powered)
+        sp.battery = Int(p[17])
+    }
     return true
+}
+
+// MARK: - Device telemetry (portnum 67 — battery/voltage for every T1000-E role)
+
+let kTelemetryPortnum = 67
+
+/// Battery snapshot decoded from a stock Meshtastic DeviceMetrics telemetry packet. Every role
+/// emits these unmodified-firmware-style: the BLE-connected node (Base, or a tag when direct)
+/// pushes its own every 60 s, and tags broadcast theirs over LoRa on the telemetry module's mesh
+/// interval (default 30 min) — the Base relays those to the phone like any mesh packet.
+struct PowerReading {
+    var from: UInt32 = 0
+    var level: Int = -1     // 0-100; the firmware sends 101 when externally powered (USB)
+    var voltage: Float = 0  // volts; 0 = not reported
+}
+
+/// Parse a FromRadio frame as device telemetry — nil unless it carries DeviceMetrics with a
+/// battery level (the LocalStats / environment telemetry variants are ignored).
+func parseTelemetry(_ data: Data) -> PowerReading? {
+    var r = ProtoReader(data)
+    while let (field, wire) = r.readTag() {
+        if field == 2, wire == 2 {                    // FromRadio.packet (MeshPacket)
+            guard let pkt = r.readBytes() else { return nil }
+            var pr = ProtoReader(pkt)
+            var out = PowerReading()
+            var decoded: ArraySlice<UInt8>?
+            while let (f, w) = pr.readTag() {
+                switch (f, w) {
+                case (1, 5): out.from = pr.readFixed32() ?? 0
+                case (4, 2): decoded = pr.readBytes()
+                default: pr.skip(w)
+                }
+            }
+            guard let dec = decoded else { return nil }
+            var dr = ProtoReader(dec)
+            var portnum = 0
+            var payload: ArraySlice<UInt8>?
+            while let (df, dw) = dr.readTag() {
+                switch (df, dw) {
+                case (1, 0): portnum = Int(dr.readVarint() ?? 0)
+                case (2, 2): payload = dr.readBytes()
+                default: dr.skip(dw)
+                }
+            }
+            guard portnum == kTelemetryPortnum, let pl = payload else { return nil }
+            var tr = ProtoReader(pl)
+            var metrics: ArraySlice<UInt8>?
+            while let (tf, tw) = tr.readTag() {
+                if tf == 2, tw == 2 { metrics = tr.readBytes() } // Telemetry.device_metrics
+                else { tr.skip(tw) }
+            }
+            guard let dm = metrics else { return nil }
+            var mr = ProtoReader(dm)
+            while let (mf, mw) = mr.readTag() {
+                switch (mf, mw) {
+                case (1, 0): out.level = Int(mr.readVarint() ?? 0) // DeviceMetrics.battery_level
+                case (2, 5): if let b = mr.readFixed32() { out.voltage = Float(bitPattern: b) }
+                default: mr.skip(mw)
+                }
+            }
+            return out.level >= 0 ? out : nil
+        }
+        r.skip(wire)
+    }
+    return nil
 }
 
 // MARK: - GNSS tag configuration channel (portnum 260 — see firmware GnssConfigModule)
