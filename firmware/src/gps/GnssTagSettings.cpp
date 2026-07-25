@@ -5,6 +5,7 @@
 #include "FSCommon.h"
 
 GnssTagSettings gnssTagSettings;
+GnssTagMode gnssTagMode; // runtime-only; deliberately NOT part of the persisted file
 
 static const char *kPath = "/prefs/gnsstag.dat";
 

@@ -23,6 +23,8 @@ cp "$CLONE/src/gps/GnssTagSettings.h"              src/gps/GnssTagSettings.h
 cp "$CLONE/src/gps/GnssTagSettings.cpp"            src/gps/GnssTagSettings.cpp
 cp "$CLONE/src/modules/GnssConfigModule.h"         src/modules/GnssConfigModule.h
 cp "$CLONE/src/modules/GnssConfigModule.cpp"       src/modules/GnssConfigModule.cpp
+cp "$CLONE/src/modules/GnssSignaler.h"             src/modules/GnssSignaler.h
+cp "$CLONE/src/modules/GnssSignaler.cpp"           src/modules/GnssSignaler.cpp
 cp "$CLONE/patch_bluefruit_ext.py"                 patch_bluefruit_ext.py
 
 # Vendor-file edits: one reviewable patch vs the build tag — diff against the TAG, not HEAD:

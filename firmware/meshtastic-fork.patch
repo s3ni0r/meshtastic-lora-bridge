@@ -1,8 +1,8 @@
 diff --git a/src/configuration.h b/src/configuration.h
-index 75cdac5..8446cc4 100644
+index 75cdac5..7961e5c 100644
 --- a/src/configuration.h
 +++ b/src/configuration.h
-@@ -292,6 +292,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+@@ -292,6 +292,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
  #define GPS_BAUDRATE_FIXED 1
  #endif
  
@@ -16,9 +16,10 @@ index 75cdac5..8446cc4 100644
 +#ifndef HIGHRATE_POSITION_SENDER
 +#define HIGHRATE_POSITION_SENDER 1
 +#endif
-+#ifndef HIGHRATE_TX_ONLY
-+#define HIGHRATE_TX_ONLY 1 // pure sender: LR1110 idles in standby, never RX (see LR11x0Interface.cpp)
-+#endif
++// tag-downlink branch: the GPS tag LISTENS now (no HIGHRATE_TX_ONLY) — the Base relays
++// mode-switch and signal commands to it over LoRa (GnssConfigModule ops 0x02/0x03).
++// CLIENT_MUTE still guarantees it never rebroadcasts mesh traffic. The ODID bridge keeps
++// TX-only via its explicit -DHIGHRATE_TX_ONLY build flag.
 +#ifndef GPS_THREAD_INTERVAL
 +#define GPS_THREAD_INTERVAL 100 // 4 Hz+ fixes shouldn't wait on the stock 200 ms parser tick
 +#endif
@@ -229,10 +230,10 @@ index 3831a38..881c692 100644
  #else
  
 diff --git a/src/modules/Modules.cpp b/src/modules/Modules.cpp
-index e477574..ff43800 100644
+index e477574..bebb46c 100644
 --- a/src/modules/Modules.cpp
 +++ b/src/modules/Modules.cpp
-@@ -107,6 +107,13 @@
+@@ -107,6 +107,14 @@
  #include "modules/DropzoneModule.h"
  #endif
  
@@ -241,12 +242,13 @@ index e477574..ff43800 100644
 +#endif
 +#ifdef GPS_TAG
 +#include "modules/GnssConfigModule.h"
++#include "modules/GnssSignaler.h"
 +#endif
 +
  /**
   * Create module instances here.  If you are adding a new module, you must 'new' it here (or somewhere else)
   */
-@@ -128,6 +135,12 @@ void setupModules()
+@@ -128,6 +136,13 @@ void setupModules()
  #if !MESHTASTIC_EXCLUDE_GPS
      positionModule = new PositionModule();
  #endif
@@ -255,6 +257,7 @@ index e477574..ff43800 100644
 +#endif
 +#ifdef GPS_TAG
 +    gnssConfigModule = new GnssConfigModule();
++    gnssSignaler = new GnssSignaler(); // one signal owner: every LED/buzzer write goes through it
 +#endif
  #if !MESHTASTIC_EXCLUDE_WAYPOINT
      waypointModule = new WaypointModule();

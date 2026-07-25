@@ -49,6 +49,38 @@ struct GnssTagSettings {
 
 extern GnssTagSettings gnssTagSettings;
 
+// ---- Downlink-controlled TX mode (tag-downlink branch) -------------------------------------
+// Runtime-only, NEVER persisted: a reboot or an expired TTL always lands in ADAPTIVE — the
+// EU-duty-safe state. Set over portnum 260 op 0x02 (phone direct or Base-relayed LoRa).
+
+#ifndef GPSTAG_IDLE_SPACING_MS
+#define GPSTAG_IDLE_SPACING_MS 3000 // adaptive slow tier: 1 packet / 3 s while quasi-stationary
+#endif
+#ifndef GPSTAG_ADAPT_FAST_KMH
+#define GPSTAG_ADAPT_FAST_KMH 5 // >= this speed -> full rate immediately (eager upshift)
+#endif
+#ifndef GPSTAG_ADAPT_SLOW_KMH
+#define GPSTAG_ADAPT_SLOW_KMH 3 // < this speed, sustained, -> slow tier (skeptical downshift)
+#endif
+#ifndef GPSTAG_ADAPT_SLOW_SUSTAIN_MS
+#define GPSTAG_ADAPT_SLOW_SUSTAIN_MS 15000
+#endif
+#ifndef GPSTAG_CALIB_TTL_DEFAULT_S
+#define GPSTAG_CALIB_TTL_DEFAULT_S 90 // dead-man: calibration mode reverts unless the app refreshes
+#endif
+
+struct GnssTagMode {
+    static constexpr uint8_t CALIBRATION = 0; // fixed max rate (settings.txSpacingMs), TTL-guarded
+    static constexpr uint8_t ADAPTIVE = 1;    // speed-gated: fast tier = settings, slow tier = idle spacing
+
+    uint8_t mode = ADAPTIVE;      // boot default IS the safe state
+    uint32_t calibDeadlineMs = 0; // millis() deadline while mode == CALIBRATION
+    bool slowTier = false;        // adaptive state (echoed in stream flags bit3)
+    uint32_t belowSinceMs = 0;    // when speed first dropped under the slow threshold (0 = it hasn't)
+};
+
+extern GnssTagMode gnssTagMode;
+
 /// Load from flash (no-op if the file is absent/invalid — defaults stay). Call once, early.
 void gnssTagSettingsLoad();
 /// Pack the current settings into the 8-byte wire format.

@@ -22,9 +22,13 @@
 #define HIGHRATE_MIN_SPACING_MS 150
 #endif
 #ifdef GPS_TAG
-// GPS tag: spacing is a runtime setting (BLE-configurable; 500 = EU868-legal 2 Hz).
+// GPS tag: spacing is a runtime setting (BLE-configurable; 500 = EU868-legal 2 Hz), further
+// governed by the downlink-controlled TX mode (tag-downlink branch): ADAPTIVE swaps in the
+// idle spacing while the speed gate says quasi-stationary. sModeSpacing is recomputed every
+// runOnce pass; 0 = "use the configured setting".
 #include "gps/GnssTagSettings.h"
-#define HIGHRATE_SPACING ((uint32_t)gnssTagSettings.txSpacingMs)
+static uint32_t sModeSpacing = 0;
+#define HIGHRATE_SPACING (sModeSpacing ? sModeSpacing : (uint32_t)gnssTagSettings.txSpacingMs)
 #else
 #define HIGHRATE_SPACING ((uint32_t)HIGHRATE_MIN_SPACING_MS)
 #endif
@@ -43,9 +47,11 @@
 //   0 lat int32 (deg*1e7) | 4 lon int32 | 8 ms uint16 | 10 seq uint8 | 11 flags uint8
 //   12 alt int16 (m) | 14 speed uint8 (km/h) | 15 heading uint8 (deg*256/360) | 16 hacc uint8 (m)
 //   17 battery uint8 (v3: 0-100 %, 101 = externally powered, 255 = unknown)
-// flags: bit0 = lock, bit1 reserved for `moving` (QMA6100P gate, TODO.md), bits 5-7 = source type
-// (SRC_*) so a receiver can tell WHICH tag flavor sent this even before looking at the LoRa `from`
-// node id. Receivers key on length: 12 = position only, 17 = +telemetry, 18 = +battery (v3).
+// flags: bit0 = lock, bit1 reserved for `moving` (QMA6100P gate, TODO.md), bit2 = ADAPTIVE TX
+// mode active, bit3 = adaptive slow tier engaged (bits 2-3 = the downlink mode echo, tag-downlink
+// branch), bits 5-7 = source type (SRC_*) so a receiver can tell WHICH tag flavor sent this even
+// before looking at the LoRa `from` node id. Receivers key on length: 12 = position only,
+// 17 = +telemetry, 18 = +battery (v3).
 #define HIGHRATE_SRC_LEGACY 0 // pre-fork / bench counter build
 #define HIGHRATE_SRC_ODID 1   // BLE5 Remote ID bridge (Dronetag is the position source)
 #define HIGHRATE_SRC_GPS 2    // self-contained tag: onboard AG3335 is the position source
@@ -116,6 +122,39 @@ int32_t HighRatePositionModule::runOnce()
 #endif
     bool hasLock = (fixMs != 0) && (nowMs - fixMs) < HIGHRATE_FRESH_MS && (lat != 0 || lon != 0);
 
+#if defined(GPS_TAG)
+    // ---- Downlink-controlled TX mode (tag-downlink branch) --------------------------------
+    // Dead-man TTL: an expired CALIBRATION always lands back in ADAPTIVE — the EU-safe state.
+    if (gnssTagMode.mode == GnssTagMode::CALIBRATION && (int32_t)(nowMs - gnssTagMode.calibDeadlineMs) >= 0) {
+        gnssTagMode.mode = GnssTagMode::ADAPTIVE;
+        gnssTagMode.slowTier = false;
+        gnssTagMode.belowSinceMs = 0;
+        LOG_INFO("HighRate: calibration TTL expired -> ADAPTIVE");
+    }
+    sModeSpacing = 0; // calibration/fixed: the configured txSpacingMs rules
+    if (gnssTagMode.mode == GnssTagMode::ADAPTIVE) {
+        // Speed gate on the payload's own km/h byte (the receiver sees exactly this value).
+        // Eager up: >= fast threshold flips to full rate on the very next packet. Skeptical
+        // down: < slow threshold sustained before dropping to the idle spacing. In between:
+        // hysteresis — hold the current tier.
+        if (extSpeed >= GPSTAG_ADAPT_FAST_KMH) {
+            if (gnssTagMode.slowTier)
+                LOG_INFO("HighRate: adaptive -> FAST tier (speed %u km/h)", extSpeed);
+            gnssTagMode.slowTier = false;
+            gnssTagMode.belowSinceMs = 0;
+        } else if (extSpeed < GPSTAG_ADAPT_SLOW_KMH) {
+            if (gnssTagMode.belowSinceMs == 0) {
+                gnssTagMode.belowSinceMs = nowMs;
+            } else if (!gnssTagMode.slowTier && nowMs - gnssTagMode.belowSinceMs >= GPSTAG_ADAPT_SLOW_SUSTAIN_MS) {
+                gnssTagMode.slowTier = true;
+                LOG_INFO("HighRate: adaptive -> SLOW tier (idle %u ms)", (unsigned)GPSTAG_IDLE_SPACING_MS);
+            }
+        }
+        if (gnssTagMode.slowTier)
+            sModeSpacing = GPSTAG_IDLE_SPACING_MS;
+    }
+#endif
+
     // Event-driven TX: send when the fix is NOVEL (the source wakes us per new fix), spacing-guarded;
     // otherwise just a slow heartbeat. Duplicate fixes never burn airtime, and a fresh fix goes out
     // in ~ms instead of aging up to a full poll interval.
@@ -157,6 +196,15 @@ int32_t HighRatePositionModule::runOnce()
 
     uint16_t offsetMs = (uint16_t)(nowMs % 1000);
     uint8_t flags = (hasLock ? 0x01 : 0x00) | (uint8_t)(HIGHRATE_SRC_TYPE << 5);
+#if defined(GPS_TAG)
+    // Mode echo (tag-downlink): bit2 = ADAPTIVE mode active, bit3 = slow tier engaged. This is
+    // the downlink's confirmation channel — the app re-sends a MODE command until the stream
+    // reflects it, so no ack machinery is needed on a lossy link.
+    if (gnssTagMode.mode == GnssTagMode::ADAPTIVE)
+        flags |= 0x04;
+    if (gnssTagMode.slowTier)
+        flags |= 0x08;
+#endif
 
     uint8_t buf[18];
     memcpy(&buf[0], &lat, 4);
