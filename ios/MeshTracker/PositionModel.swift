@@ -31,6 +31,7 @@ final class SourceTrack: Identifiable {
     var slowTier = false        // adaptive slow tier engaged (flags bit3)
     var motionMg = -1           // v4 accel energy envelope, mg (-1 = unknown)
     var moving = false          // v4 QMA6100P classifier (flags bit1)
+    var simulated = false       // flags bit4: synthetic fixes from the tag's indoor simulator
 
     /// Short display id, e.g. "9cda" — enough to tell two physical tags apart.
     var shortId: String { String(String(format: "%08x", from).suffix(4)) }
@@ -70,6 +71,7 @@ final class SourceTrack: Identifiable {
         slowTier = sp.slowTier
         if sp.motionMg >= 0 { motionMg = sp.motionMg }
         moving = sp.moving
+        simulated = sp.simulated
         packetCount += 1
         lastHeard = now
 

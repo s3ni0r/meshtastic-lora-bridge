@@ -5,6 +5,28 @@ import SwiftUI
 /// actions; every knob explained in plain language next to its value; consequences computed
 /// (duty-cycle legality), not implied; a sticky Apply/Revert bar so pending changes are
 /// unmistakable; the tag's own echoed values as the source of truth.
+/// One simulator program segment (speed × duration); the program persists across launches.
+struct SimSeg: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var speedKmh: Double
+    var durS: Double
+
+    static func loadSaved() -> [SimSeg] {
+        if let d = UserDefaults.standard.data(forKey: "simProgram"),
+           let s = try? JSONDecoder().decode([SimSeg].self, from: d), !s.isEmpty {
+            return s
+        }
+        // Default rehearses one full adaptive cycle: idle -> instant fast -> back to idle.
+        return [SimSeg(speedKmh: 1, durS: 30), SimSeg(speedKmh: 12, durS: 20)]
+    }
+
+    static func save(_ segs: [SimSeg]) {
+        if let d = try? JSONEncoder().encode(segs) {
+            UserDefaults.standard.set(d, forKey: "simProgram")
+        }
+    }
+}
+
 struct TagSetupView: View {
     let model: PositionModel
     let ble: BLEManager
@@ -16,6 +38,9 @@ struct TagSetupView: View {
     @State private var target: UInt32?
     @State private var signalSeq = UInt8.random(in: 0...255) // dedupe counter for op 0x03
     @State private var heldMode: UInt8? // 0 = holding CALIBRATION (auto-refresh its TTL); nil = not commanding
+    @State private var simSegs: [SimSeg] = SimSeg.loadSaved()
+    @State private var simLoop = true
+    @State private var simCommanded: UInt8 = 0 // last commanded sim source (for TTL keep-alive)
     private let ttlRefresh = Timer.publish(every: 45, on: .main, in: .common).autoconnect()
 
     // MARK: - Connection routing (single PhoneAPI client per node — see BLEManager)
@@ -45,6 +70,7 @@ struct TagSetupView: View {
                     // they don't need the settings handshake, only a link and a target.
                     if target != nil && ble.connectedNodeNum != 0 {
                         modeCard
+                        simulatorCard
                         signalsCard
                     }
                     if baseline != nil {
@@ -243,8 +269,12 @@ struct TagSetupView: View {
         }
         .onReceive(ttlRefresh) { _ in
             if heldMode == 0 { sendMode(0) }
+            // Sim keep-alive: extend the dead-man WITHOUT restarting playback (sub-op 0xFF).
+            if simCommanded != 0, simActive, let t = target {
+                ble.sendGnssCommand(to: t, payload: Data([0x04, 0xFF, 0, 0x58, 0x02]))
+            }
         }
-        .onDisappear { heldMode = nil } // stop refreshing: the tag's TTL takes over
+        .onDisappear { heldMode = nil } // stop refreshing: the tag's TTLs take over
     }
 
     private func modeButton(_ label: String, _ icon: String, _ tint: Color, active: Bool,
@@ -301,6 +331,88 @@ struct TagSetupView: View {
                        display: "\(draft.adaptSustainS) s",
                        caption: "Downshift is skeptical — a wave lull shouldn't drop the rate too eagerly.")
         }
+    }
+
+    // MARK: - Indoor simulator (op 0x04 — synthetic fixes generated ON the tag)
+
+    private var simActive: Bool { targetTrack?.simulated == true }
+
+    private func sendSim(_ source: UInt8) {
+        guard let t = target else { return }
+        simCommanded = source
+        var p = Data([0x04, source, simLoop ? 1 : 0, 0x58, 0x02]) // TTL 600 s (0x0258)
+        if source == 1 {
+            p += Data([UInt8(simSegs.count)])
+            for s in simSegs {
+                p += Data([UInt8(s.speedKmh), UInt8(s.durS)])
+            }
+        }
+        ble.sendGnssCommand(to: t, payload: p)
+        SimSeg.save(simSegs)
+    }
+
+    private var simulatorCard: some View {
+        card {
+            sectionHeader("Indoor simulator", "wave.3.forward.circle")
+            HStack(spacing: 6) {
+                Circle().fill(simActive ? Color.orange : Color(.systemGray4)).frame(width: 8, height: 8)
+                Text(simActive
+                     ? "SIMULATING — synthetic fixes, marked in every packet"
+                     : "Off — real GPS. Fakes movement indoors to exercise the modes.")
+                    .font(.caption.bold())
+                Spacer()
+            }
+            // Segment program editor (≤8 rows; one command packet)
+            ForEach($simSegs) { $seg in
+                HStack(spacing: 8) {
+                    Text("\(Int(seg.speedKmh)) km/h")
+                        .font(.caption.monospacedDigit()).frame(width: 58, alignment: .leading)
+                    Slider(value: $seg.speedKmh, in: 0...25, step: 1)
+                    Text("\(Int(seg.durS)) s")
+                        .font(.caption.monospacedDigit()).frame(width: 34, alignment: .leading)
+                    Slider(value: $seg.durS, in: 5...180, step: 5)
+                    Button {
+                        simSegs.removeAll { $0.id == seg.id }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(simSegs.count <= 1)
+                }
+            }
+            HStack {
+                Button {
+                    if simSegs.count < 8 { simSegs.append(SimSeg(speedKmh: 5, durS: 30)) }
+                } label: {
+                    Label("Add segment", systemImage: "plus.circle").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .disabled(simSegs.count >= 8)
+                Spacer()
+                Toggle(isOn: $simLoop) { Text("Loop").font(.caption) }
+                    .toggleStyle(.switch).controlSize(.mini).fixedSize()
+            }
+            HStack(spacing: 8) {
+                Button { sendSim(1) } label: { simButtonLabel("Run program", "play.circle.fill", .orange) }
+                    .buttonStyle(.plain)
+                Button { sendSim(2) } label: { simButtonLabel("Shake mode", "hand.wave.fill", .teal) }
+                    .buttonStyle(.plain)
+                Button { sendSim(0) } label: { simButtonLabel("Stop", "stop.circle.fill", .gray) }
+                    .buttonStyle(.plain)
+            }
+            Text("Runs ON the tag through the real firmware path — the map, tiers and modes react exactly as outdoors. Auto-stops via dead-man TTL; a reboot always returns to real GPS. Shake mode drives speed from the accelerometer.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func simButtonLabel(_ label: String, _ icon: String, _ tint: Color) -> some View {
+        VStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 16)).foregroundStyle(tint)
+            Text(label).font(.caption2.bold())
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Operator signals (calibration language v2 — beeper-first, tag-side)

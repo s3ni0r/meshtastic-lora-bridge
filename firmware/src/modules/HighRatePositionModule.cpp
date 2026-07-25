@@ -9,6 +9,9 @@
 #if defined(GPS_TAG) || defined(ODID_SNIFFER)
 #include "gps/GnssMotion.h" // payload v4: motion energy byte + `moving` flag
 #endif
+#if defined(GPS_TAG)
+#include "gps/GnssSim.h" // indoor simulator: flags bit4 self-declaration
+#endif
 
 // Poll/fallback tick in ms. With an event-driven fix source (ODID_SNIFFER or GPS_TAG) the send is
 // wake-on-novel-fix; this is only the safety-net poll, so a (rare) missed cross-task wake costs at
@@ -205,6 +208,10 @@ int32_t HighRatePositionModule::runOnce()
 #if defined(GPS_TAG) || defined(ODID_SNIFFER)
     if (g_isMoving)
         flags |= 0x02; // bit1 = moving (v4 — provisional land thresholds, see GnssMotion.cpp)
+#endif
+#if defined(GPS_TAG)
+    if (g_gnssSimActive)
+        flags |= 0x10; // bit4 = SIMULATED fix (GnssSim) — every fake packet self-declares
 #endif
 #if defined(GPS_TAG)
     // Mode echo (tag-downlink): bit2 = ADAPTIVE mode active, bit3 = slow tier engaged. This is

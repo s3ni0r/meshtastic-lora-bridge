@@ -49,6 +49,8 @@ struct StreamPacket {
     /// Downlink mode echo (tag-downlink firmware): bit2 = ADAPTIVE TX mode, bit3 = slow tier.
     var adaptive: Bool { flags & 0x04 != 0 }
     var slowTier: Bool { flags & 0x08 != 0 }
+    /// bit4: this fix is SYNTHETIC (GnssSim indoor simulator) — never mistake it for a real track.
+    var simulated: Bool { flags & 0x10 != 0 }
     var source: PacketSource { PacketSource(rawValue: Int((flags >> 5) & 0x7)) ?? .legacy }
 }
 

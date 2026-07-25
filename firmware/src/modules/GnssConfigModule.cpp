@@ -6,6 +6,7 @@
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "gps/GnssRateProbe.h"
+#include "gps/GnssSim.h"
 #include "gps/GnssTagSettings.h"
 
 GnssConfigModule *gnssConfigModule;
@@ -54,6 +55,30 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
         } else {
             status = d.payload.size >= 2 ? 1 : 2;
         }
+    } else if (op == 0x04) { // SIM: [src, flags(bit0 loop), ttl_s u16 LE, nSeg, nSeg×(speed,dur)]
+        // src 0 = off, 1 = program, 2 = accel-coupled, 3 = track replay (phase 2),
+        // 0xFF = TTL keep-alive only (doesn't disturb playback).
+        if (d.payload.size >= 2 && d.payload.bytes[1] == 0x00) {
+            gnssSim->stop("app command");
+        } else if (d.payload.size >= 5) {
+            uint16_t ttl = (uint16_t)(d.payload.bytes[3] | (d.payload.bytes[4] << 8));
+            uint8_t srcReq = d.payload.bytes[1];
+            bool loopReq = d.payload.bytes[2] & 1;
+            bool ok = false;
+            if (srcReq == 0xFF) {
+                ok = gnssSim->refreshTtl(ttl);
+            } else if (srcReq == GnssSim::PROGRAM && d.payload.size >= 6) {
+                uint8_t n = d.payload.bytes[5];
+                if (d.payload.size >= (uint16_t)(6 + 2 * n))
+                    ok = gnssSim->startProgram(&d.payload.bytes[6], n, loopReq, ttl);
+            } else if (srcReq == GnssSim::ACCEL) {
+                ok = gnssSim->startAccel(ttl);
+            }
+            if (!ok)
+                status = 1;
+        } else {
+            status = 2;
+        }
     } else if (op == 0x03) { // SIGNAL: [pattern u8, seq u8] — LED/buzzer, AutoShot grammar
         if (d.payload.size >= 3) {
             // The latency-measurement line: host timestamps its send, this stamps the arrival.
@@ -64,7 +89,7 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
         } else {
             status = 2;
         }
-    } else if (op != 0x00) { // GET(0)/SET(1)/MODE(2)/SIGNAL(3)
+    } else if (op != 0x00) { // GET(0)/SET(1)/MODE(2)/SIGNAL(3)/SIM(4)
         status = 2;
     }
 

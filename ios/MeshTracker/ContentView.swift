@@ -410,7 +410,8 @@ struct ContentView: View {
     /// Downlink-mode suffix for GPS tags: which TX mode/tier the tag itself reports (flags echo).
     private func modeSuffix(_ track: SourceTrack) -> String {
         guard track.source == .gpsTag else { return "" }
-        return track.adaptive ? (track.slowTier ? " · idle" : " · fast") : " · cal"
+        let mode = track.adaptive ? (track.slowTier ? " · idle" : " · fast") : " · cal"
+        return track.simulated ? mode + " · SIM" : mode
     }
 
     private func tagRow(_ track: SourceTrack) -> some View {

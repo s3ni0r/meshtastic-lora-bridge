@@ -23,6 +23,8 @@ cp "$CLONE/src/gps/GnssTagSettings.h"              src/gps/GnssTagSettings.h
 cp "$CLONE/src/gps/GnssTagSettings.cpp"            src/gps/GnssTagSettings.cpp
 cp "$CLONE/src/gps/GnssMotion.h"                   src/gps/GnssMotion.h
 cp "$CLONE/src/gps/GnssMotion.cpp"                 src/gps/GnssMotion.cpp
+cp "$CLONE/src/gps/GnssSim.h"                      src/gps/GnssSim.h
+cp "$CLONE/src/gps/GnssSim.cpp"                    src/gps/GnssSim.cpp
 cp "$CLONE/src/modules/GnssConfigModule.h"         src/modules/GnssConfigModule.h
 cp "$CLONE/src/modules/GnssConfigModule.cpp"       src/modules/GnssConfigModule.cpp
 cp "$CLONE/src/modules/GnssSignaler.h"             src/modules/GnssSignaler.h

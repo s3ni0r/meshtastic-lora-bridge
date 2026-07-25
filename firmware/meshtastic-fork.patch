@@ -29,7 +29,7 @@ index 75cdac5..7961e5c 100644
  #define GPS_THREAD_INTERVAL 200
  #endif
 diff --git a/src/gps/GPS.cpp b/src/gps/GPS.cpp
-index 6c6cdba..f0b6778 100644
+index 6c6cdba..b9b4344 100644
 --- a/src/gps/GPS.cpp
 +++ b/src/gps/GPS.cpp
 @@ -32,6 +32,27 @@
@@ -71,7 +71,7 @@ index 6c6cdba..f0b6778 100644
          } else if (gnssModel == GNSS_MODEL_UBLOX6) {
              clearBuffer();
              SEND_UBX_PACKET(0x06, 0x02, _message_DISABLE_TXT_INFO, "disable text info messages", 500);
-@@ -1070,6 +1095,36 @@ void GPS::publishUpdate()
+@@ -1070,6 +1095,38 @@ void GPS::publishUpdate()
          if (config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED) {
              positionModule->handleNewPosition();
          }
@@ -80,8 +80,10 @@ index 6c6cdba..f0b6778 100644
 +        // Project fork: stash the fix for the PRIVATE_APP(256) sender and wake it NOW (event-driven
 +        // send, same cross-task pattern as the ODID sniffer). Only real fixes — the loss-of-lock
 +        // publish (p reset to defaults) must not overwrite the last good stash; the sender's own
-+        // freshness window handles going stale.
-+        if (hasValidLocation && (p.latitude_i != 0 || p.longitude_i != 0)) {
++        // freshness window handles going stale. While the indoor simulator runs (GnssSim), real
++        // stashes are gated off so the two fix sources can never interleave.
++        extern volatile bool g_gnssSimActive;
++        if (hasValidLocation && !g_gnssSimActive && (p.latitude_i != 0 || p.longitude_i != 0)) {
 +            g_gpsTagLat = p.latitude_i;
 +            g_gpsTagLon = p.longitude_i;
 +            int32_t altM = p.altitude;
@@ -108,7 +110,7 @@ index 6c6cdba..f0b6778 100644
      }
  }
  
-@@ -1119,6 +1174,13 @@ int32_t GPS::runOnce()
+@@ -1119,6 +1176,13 @@ int32_t GPS::runOnce()
          setConnected();
      }
  
@@ -122,7 +124,7 @@ index 6c6cdba..f0b6778 100644
      // If we're due for an update, wake the GPS
      if (!config.position.fixed_position && powerState != GPS_ACTIVE && scheduling.isUpdateDue())
          up();
-@@ -1313,6 +1375,26 @@ GnssModel_t GPS::probe(int serialSpeed)
+@@ -1313,6 +1377,26 @@ GnssModel_t GPS::probe(int serialSpeed)
      }
      case 3: {
          /* Airoha (Mediatek) AG3335A/M/S, A3352Q, Quectel L89 2.0, SimCom SIM65M */
@@ -149,7 +151,7 @@ index 6c6cdba..f0b6778 100644
          _serial_gps->write("$PAIR062,2,0*3C\r\n"); // GSA OFF to reduce volume
          _serial_gps->write("$PAIR062,3,0*3D\r\n"); // GSV OFF to reduce volume
          _serial_gps->write("$PAIR513*3D\r\n");     // save configuration
-@@ -1570,6 +1652,25 @@ GPS *GPS::createGps()
+@@ -1570,6 +1654,25 @@ GPS *GPS::createGps()
      // Make sure the GPS is awake before performing any init.
      new_gps->up();
  
@@ -175,7 +177,7 @@ index 6c6cdba..f0b6778 100644
  #ifdef PIN_GPS_RESET
      pinMode(PIN_GPS_RESET, OUTPUT);
      digitalWrite(PIN_GPS_RESET, GPS_RESET_MODE); // assert for 10ms
-@@ -1822,6 +1923,9 @@ bool GPS::whileActive()
+@@ -1822,6 +1925,9 @@ bool GPS::whileActive()
      // First consume any chars that have piled up at the receiver
      while (_serial_gps->available() > 0) {
          int c = _serial_gps->read();
@@ -289,10 +291,10 @@ index 2002676..8f3f6db 100644
      } else {
          while (stream->available()) { // Currently we never want to block
 diff --git a/src/modules/Modules.cpp b/src/modules/Modules.cpp
-index e477574..bebb46c 100644
+index e477574..2c608bb 100644
 --- a/src/modules/Modules.cpp
 +++ b/src/modules/Modules.cpp
-@@ -107,6 +107,14 @@
+@@ -107,6 +107,15 @@
  #include "modules/DropzoneModule.h"
  #endif
  
@@ -300,6 +302,7 @@ index e477574..bebb46c 100644
 +#include "modules/HighRatePositionModule.h"
 +#endif
 +#ifdef GPS_TAG
++#include "gps/GnssSim.h"
 +#include "modules/GnssConfigModule.h"
 +#include "modules/GnssSignaler.h"
 +#endif
@@ -307,7 +310,7 @@ index e477574..bebb46c 100644
  /**
   * Create module instances here.  If you are adding a new module, you must 'new' it here (or somewhere else)
   */
-@@ -128,6 +136,13 @@ void setupModules()
+@@ -128,6 +137,14 @@ void setupModules()
  #if !MESHTASTIC_EXCLUDE_GPS
      positionModule = new PositionModule();
  #endif
@@ -317,6 +320,7 @@ index e477574..bebb46c 100644
 +#ifdef GPS_TAG
 +    gnssConfigModule = new GnssConfigModule();
 +    gnssSignaler = new GnssSignaler(); // one signal owner: every LED/buzzer write goes through it
++    gnssSim = new GnssSim();           // indoor synthetic-fix generator (off until commanded)
 +#endif
  #if !MESHTASTIC_EXCLUDE_WAYPOINT
      waypointModule = new WaypointModule();
