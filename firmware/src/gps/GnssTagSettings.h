@@ -16,6 +16,13 @@
  *   [3..4] fixIntervalMs  $PAIR050: 100-1000 ms
  *   [5..6] txSpacingMs    LoRa TX min spacing: 100-5000 ms (500 = EU868-legal 2 Hz)
  *   [7] elevMaskDeg    $PAIR072: 0-45 deg — satellites below are excluded (multipath cut)
+ *  v3 (tag-downlink — the ADAPTIVE mode's knobs, phone-tunable for field tuning):
+ *   [8..9] idleSpacingMs  slow-tier TX spacing: 1000-30000 ms
+ *   [10] adaptFastKmh     >= this speed -> full rate immediately (2-30)
+ *   [11] adaptSlowKmh     < this speed sustained -> slow tier (1..fast-1)
+ *   [12] adaptSustainS    sustain window before downshift: 3-120 s
+ *  Clients send 7 (v1), 8 (v2) or 13 (v3) bytes; shorter writes keep current values for the
+ *  missing fields. GET replies are always 13 — reply length tells the app the tag speaks v3.
  */
 
 // First-run defaults (overridable with -D at build time, as before).
@@ -38,17 +45,6 @@
 #define GPSTAG_ELEV_MASK_DEG 10
 #endif
 
-struct GnssTagSettings {
-    uint8_t navMode = GPSTAG_NAV_MODE;
-    uint8_t staticThrDms = GPSTAG_STATIC_THR_DMS;
-    uint8_t minSnr = GPSTAG_MIN_SNR;
-    uint16_t fixIntervalMs = GPSTAG_FIX_INTERVAL_MS;
-    uint16_t txSpacingMs = GPSTAG_TX_SPACING_MS;
-    uint8_t elevMaskDeg = GPSTAG_ELEV_MASK_DEG;
-};
-
-extern GnssTagSettings gnssTagSettings;
-
 // ---- Downlink-controlled TX mode (tag-downlink branch) -------------------------------------
 // Runtime-only, NEVER persisted: a reboot or an expired TTL always lands in ADAPTIVE — the
 // EU-duty-safe state. Set over portnum 260 op 0x02 (phone direct or Base-relayed LoRa).
@@ -69,6 +65,22 @@ extern GnssTagSettings gnssTagSettings;
 #define GPSTAG_CALIB_TTL_DEFAULT_S 90 // dead-man: calibration mode reverts unless the app refreshes
 #endif
 
+struct GnssTagSettings {
+    uint8_t navMode = GPSTAG_NAV_MODE;
+    uint8_t staticThrDms = GPSTAG_STATIC_THR_DMS;
+    uint8_t minSnr = GPSTAG_MIN_SNR;
+    uint16_t fixIntervalMs = GPSTAG_FIX_INTERVAL_MS;
+    uint16_t txSpacingMs = GPSTAG_TX_SPACING_MS;
+    uint8_t elevMaskDeg = GPSTAG_ELEV_MASK_DEG;
+    // v3 — adaptive-mode knobs, phone-tunable (defaults from the macros above)
+    uint16_t idleSpacingMs = GPSTAG_IDLE_SPACING_MS;
+    uint8_t adaptFastKmh = GPSTAG_ADAPT_FAST_KMH;
+    uint8_t adaptSlowKmh = GPSTAG_ADAPT_SLOW_KMH;
+    uint8_t adaptSustainS = GPSTAG_ADAPT_SLOW_SUSTAIN_MS / 1000;
+};
+
+extern GnssTagSettings gnssTagSettings;
+
 struct GnssTagMode {
     static constexpr uint8_t CALIBRATION = 0; // fixed max rate (settings.txSpacingMs), TTL-guarded
     static constexpr uint8_t ADAPTIVE = 1;    // speed-gated: fast tier = settings, slow tier = idle spacing
@@ -83,9 +95,9 @@ extern GnssTagMode gnssTagMode;
 
 /// Load from flash (no-op if the file is absent/invalid — defaults stay). Call once, early.
 void gnssTagSettingsLoad();
-/// Pack the current settings into the 8-byte wire format.
-void gnssTagSettingsPack(uint8_t out[8]);
-/// Validate a 7- (legacy) or 8-byte wire payload; on success adopt + persist and return true.
+/// Pack the current settings into the 13-byte v3 wire format.
+void gnssTagSettingsPack(uint8_t out[13]);
+/// Validate a 7- (v1) / 8- (v2) / 13-byte (v3) wire payload; on success adopt + persist.
 bool gnssTagSettingsSetFromWire(const uint8_t *in, uint8_t len);
 
 #endif // GPS_TAG

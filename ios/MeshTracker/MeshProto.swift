@@ -43,6 +43,9 @@ struct StreamPacket {
     var battery: Int = -1   // v3 (18-byte payload): 0-100 %, 101 = externally powered, -1 = unknown
 
     var hasLock: Bool { flags & 0x01 != 0 }
+    /// Downlink mode echo (tag-downlink firmware): bit2 = ADAPTIVE TX mode, bit3 = slow tier.
+    var adaptive: Bool { flags & 0x04 != 0 }
+    var slowTier: Bool { flags & 0x08 != 0 }
     var source: PacketSource { PacketSource(rawValue: Int((flags >> 5) & 0x7)) ?? .legacy }
 }
 
@@ -236,19 +239,40 @@ struct TagSettings: Equatable {
     var fixIntervalMs: UInt16 = 250
     var txSpacingMs: UInt16 = 150
     var elevMaskDeg: UInt8 = 10   // $PAIR072: 0-45 deg — satellites below are excluded
+    // v3 — adaptive-mode knobs (tag-downlink firmware)
+    var idleSpacingMs: UInt16 = 3000 // slow-tier TX spacing while quasi-stationary
+    var adaptFastKmh: UInt8 = 5      // >= this speed -> full rate immediately
+    var adaptSlowKmh: UInt8 = 3      // < this speed sustained -> slow tier
+    var adaptSustainS: UInt8 = 15
+    var isV3 = false                 // the tag's reply carried v3 fields (13-byte settings)
 
+    /// Wire sized to the tag's capability: 8 bytes for v2 firmware, 13 for v3 — a v2 tag must
+    /// never receive bytes it would misparse.
     var wire: Data {
-        Data([navMode, staticThrDms, minSnr,
-              UInt8(fixIntervalMs & 0xFF), UInt8(fixIntervalMs >> 8),
-              UInt8(txSpacingMs & 0xFF), UInt8(txSpacingMs >> 8),
-              elevMaskDeg])
+        var d = Data([navMode, staticThrDms, minSnr,
+                      UInt8(fixIntervalMs & 0xFF), UInt8(fixIntervalMs >> 8),
+                      UInt8(txSpacingMs & 0xFF), UInt8(txSpacingMs >> 8),
+                      elevMaskDeg])
+        if isV3 {
+            d += Data([UInt8(idleSpacingMs & 0xFF), UInt8(idleSpacingMs >> 8),
+                       adaptFastKmh, adaptSlowKmh, adaptSustainS])
+        }
+        return d
     }
     static func fromWire(_ b: [UInt8]) -> TagSettings? {
         guard b.count >= 7 else { return nil }
-        return TagSettings(navMode: b[0], staticThrDms: b[1], minSnr: b[2],
-                           fixIntervalMs: UInt16(b[3]) | (UInt16(b[4]) << 8),
-                           txSpacingMs: UInt16(b[5]) | (UInt16(b[6]) << 8),
-                           elevMaskDeg: b.count >= 8 ? b[7] : 10)
+        var s = TagSettings(navMode: b[0], staticThrDms: b[1], minSnr: b[2],
+                            fixIntervalMs: UInt16(b[3]) | (UInt16(b[4]) << 8),
+                            txSpacingMs: UInt16(b[5]) | (UInt16(b[6]) << 8),
+                            elevMaskDeg: b.count >= 8 ? b[7] : 10)
+        if b.count >= 13 { // reply length IS the capability signal
+            s.idleSpacingMs = UInt16(b[8]) | (UInt16(b[9]) << 8)
+            s.adaptFastKmh = b[10]
+            s.adaptSlowKmh = b[11]
+            s.adaptSustainS = b[12]
+            s.isV3 = true
+        }
+        return s
     }
 }
 

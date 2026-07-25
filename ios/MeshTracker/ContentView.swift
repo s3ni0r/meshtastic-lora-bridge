@@ -407,6 +407,12 @@ struct ContentView: View {
         }
     }
 
+    /// Downlink-mode suffix for GPS tags: which TX mode/tier the tag itself reports (flags echo).
+    private func modeSuffix(_ track: SourceTrack) -> String {
+        guard track.source == .gpsTag else { return "" }
+        return track.adaptive ? (track.slowTier ? " · idle" : " · fast") : " · cal"
+    }
+
     private func tagRow(_ track: SourceTrack) -> some View {
         let pinned = model.selectedFrom == track.from
         let isActive = model.active?.from == track.from
@@ -431,8 +437,8 @@ struct ContentView: View {
                         Text(track.title).font(.footnote.weight(isActive ? .bold : .regular))
                         Text(quiet ? "quiet"
                              : track.hacc > 0
-                             ? String(format: "%.1f Hz · ±%d m · %d pkts", track.noveltyHz, track.hacc, track.packetCount)
-                             : String(format: "%.1f Hz · ±— · %d pkts", track.noveltyHz, track.packetCount))
+                             ? String(format: "%.1f Hz · ±%d m · %d pkts", track.noveltyHz, track.hacc, track.packetCount) + modeSuffix(track)
+                             : String(format: "%.1f Hz · ±— · %d pkts", track.noveltyHz, track.packetCount) + modeSuffix(track))
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     if pinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary) }

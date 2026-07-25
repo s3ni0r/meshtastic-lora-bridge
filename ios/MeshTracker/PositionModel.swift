@@ -27,6 +27,8 @@ final class SourceTrack: Identifiable {
     var heading: Double = 0     // degrees
     var hacc = 0                // horizontal accuracy, metres (0 = unknown)
     var battery = -1            // v3 per-packet battery: 0-100 %, 101 = powered, -1 = unknown
+    var adaptive = false        // downlink mode echo: ADAPTIVE TX mode active (flags bit2)
+    var slowTier = false        // adaptive slow tier engaged (flags bit3)
 
     /// Short display id, e.g. "9cda" — enough to tell two physical tags apart.
     var shortId: String { String(String(format: "%08x", from).suffix(4)) }
@@ -62,6 +64,8 @@ final class SourceTrack: Identifiable {
         heading = sp.heading
         hacc = sp.hacc
         if sp.battery >= 0 { battery = sp.battery } // keep the last known level across heartbeats
+        adaptive = sp.adaptive
+        slowTier = sp.slowTier
         packetCount += 1
         lastHeard = now
 

@@ -78,7 +78,7 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
     r->decoded.payload.bytes[0] = 0x80 | op;
     r->decoded.payload.bytes[1] = status;
     gnssTagSettingsPack(&r->decoded.payload.bytes[2]);
-    r->decoded.payload.size = 10;
+    r->decoded.payload.size = 15; // 13-byte v3 settings — the length tells the app the tag speaks v3
     if (fromPhone) {
         service->sendToPhone(r); // straight to the BLE/USB client; never queued for LoRa
     } else {

@@ -15,6 +15,8 @@ struct TagSetupView: View {
     @State private var baseline: TagSettings? // last state confirmed by the tag
     @State private var target: UInt32?
     @State private var signalSeq = UInt8.random(in: 0...255) // dedupe counter for op 0x03
+    @State private var heldMode: UInt8? // 0 = holding CALIBRATION (auto-refresh its TTL); nil = not commanding
+    private let ttlRefresh = Timer.publish(every: 45, on: .main, in: .common).autoconnect()
 
     // MARK: - Connection routing (single PhoneAPI client per node — see BLEManager)
 
@@ -39,9 +41,10 @@ struct TagSetupView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     deviceCard
-                    // Signals ride the MAIN link (Base-relayed LoRa downlink, or direct) — they
-                    // don't need the settings handshake, only a link and a target.
+                    // Mode + signals ride the MAIN link (Base-relayed LoRa downlink, or direct) —
+                    // they don't need the settings handshake, only a link and a target.
                     if target != nil && ble.connectedNodeNum != 0 {
+                        modeCard
                         signalsCard
                     }
                     if baseline != nil {
@@ -49,6 +52,9 @@ struct TagSetupView: View {
                         navModeCard
                         filtersCard
                         ratesCard
+                        if draft.isV3 {
+                            adaptiveCard
+                        }
                         onTagFooter
                     } else if connected {
                         ProgressView("Reading settings from the tag…")
@@ -192,6 +198,108 @@ struct TagSetupView: View {
             Button("Retry") { engage() }.font(.caption.bold())
         } else if mgr.stage == .connecting || mgr.stage == .handshaking {
             ProgressView().controlSize(.small)
+        }
+    }
+
+    // MARK: - TX mode (downlink op 0x02 — calibration vs adaptive, confirmed via stream flags)
+
+    private var targetTrack: SourceTrack? {
+        model.tracks.first { $0.from == target }
+    }
+
+    private func sendMode(_ m: UInt8) {
+        guard let t = target else { return }
+        heldMode = m == 0 ? 0 : nil
+        // CALIBRATION carries a 120 s dead-man TTL; this screen refreshes it every 45 s while
+        // held, so leaving the screen (or the app dying) always lands the tag back in ADAPTIVE.
+        ble.sendGnssCommand(to: t, payload: m == 0 ? Data([0x02, 0, 120, 0]) : Data([0x02, 1]))
+    }
+
+    private var modeCard: some View {
+        card {
+            sectionHeader("TX mode", "dot.radiowaves.up.forward")
+            // Live state — the tag stamps its mode into every stream packet (flags bits 2-3).
+            if let t = targetTrack, let heard = t.lastHeard, Date().timeIntervalSince(heard) < 30 {
+                HStack(spacing: 6) {
+                    Circle().fill(t.adaptive ? Color.green : Color.orange).frame(width: 8, height: 8)
+                    Text(t.adaptive
+                         ? "Tag reports: ADAPTIVE — \(t.slowTier ? "idle tier (slow while still)" : "fast tier (full rate)")"
+                         : "Tag reports: CALIBRATION — fixed full rate")
+                        .font(.caption.bold())
+                    Spacer()
+                }
+            } else {
+                Text("No live stream from this tag yet — mode unknown until a packet arrives.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 10) {
+                modeButton("Calibration", "bolt.fill", .orange, active: targetTrack?.adaptive == false,
+                           subtitle: "max fixed rate") { sendMode(0) }
+                modeButton("Adaptive", "figure.walk.motion", .green, active: targetTrack?.adaptive == true,
+                           subtitle: "speed-gated rate") { sendMode(1) }
+            }
+            Text("Calibration auto-reverts on the tag (dead-man TTL): this screen refreshes it every 45 s while open. Adaptive is the boot default and the EU-legal sustained mode.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .onReceive(ttlRefresh) { _ in
+            if heldMode == 0 { sendMode(0) }
+        }
+        .onDisappear { heldMode = nil } // stop refreshing: the tag's TTL takes over
+    }
+
+    private func modeButton(_ label: String, _ icon: String, _ tint: Color, active: Bool,
+                            subtitle: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 16))
+                Text(label).font(.footnote.bold())
+                Text(subtitle).font(.caption2)
+                    .foregroundStyle(active ? .white.opacity(0.85) : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(active ? tint : Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12))
+            .foregroundStyle(active ? .white : .primary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Adaptive tuning (v3 firmware only — the reply length announces capability)
+
+    private var adaptiveCard: some View {
+        card {
+            sectionHeader("Adaptive mode tuning", "gauge.with.needle")
+            knobSlider(title: "When stationary, send every",
+                       value: Binding(get: { Double(draft.idleSpacingMs) },
+                                      set: { draft.idleSpacingMs = UInt16($0) }),
+                       range: 1000...10000,
+                       display: String(format: "%.1f s", Double(draft.idleSpacingMs) / 1000),
+                       caption: "Idle-tier spacing — the whole airtime/battery saving lives here.",
+                       step: 500)
+            Divider()
+            knobSlider(title: "Full rate above",
+                       value: Binding(get: { Double(draft.adaptFastKmh) },
+                                      set: { draft.adaptFastKmh = UInt8($0)
+                                             if draft.adaptSlowKmh >= draft.adaptFastKmh {
+                                                 draft.adaptSlowKmh = draft.adaptFastKmh - 1
+                                             } }),
+                       range: 2...15,
+                       display: "\(draft.adaptFastKmh) km/h",
+                       caption: "Upshift is instant — first fast packet on the next fix.")
+            Divider()
+            knobSlider(title: "Slow down below",
+                       value: Binding(get: { Double(draft.adaptSlowKmh) },
+                                      set: { draft.adaptSlowKmh = UInt8(min($0, Double(draft.adaptFastKmh) - 1)) }),
+                       range: 1...14,
+                       display: "\(draft.adaptSlowKmh) km/h",
+                       caption: "Must stay under the upshift speed (hysteresis gap between them).")
+            Divider()
+            knobSlider(title: "…after being slow for",
+                       value: Binding(get: { Double(draft.adaptSustainS) },
+                                      set: { draft.adaptSustainS = UInt8($0) }),
+                       range: 3...60,
+                       display: "\(draft.adaptSustainS) s",
+                       caption: "Downshift is skeptical — a wave lull shouldn't drop the rate too eagerly.")
         }
     }
 
@@ -378,14 +486,14 @@ struct TagSetupView: View {
     }
 
     private func knobSlider(title: String, value: Binding<Double>, range: ClosedRange<Double>,
-                            display: String, caption: String) -> some View {
+                            display: String, caption: String, step: Double = 1) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title).font(.footnote)
                 Spacer()
                 Text(display).font(.footnote.bold().monospacedDigit()).foregroundStyle(.teal)
             }
-            Slider(value: value, in: range, step: 1)
+            Slider(value: value, in: range, step: step)
             Text(caption).font(.caption2).foregroundStyle(.secondary)
         }
     }

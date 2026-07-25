@@ -19,11 +19,19 @@ and drive its LED/buzzer at any tracking distance — no reflash, no BLE proximi
 | Op | Payload after op byte | Meaning |
 |---|---|---|
 | `0x00` GET | — | reply echoes current settings |
-| `0x01` SET | 8-byte settings wire | unchanged (nav mode, thresholds, rates) |
+| `0x01` SET | 8-byte (v2) or **13-byte (v3)** settings wire | v3 appends the adaptive knobs: `idleSpacingMs u16` (1000–30000), `adaptFastKmh u8` (2–30), `adaptSlowKmh u8` (1..fast−1), `adaptSustainS u8` (3–120) — persisted, live-applied |
 | `0x02` MODE | `mode u8` (+ `ttl_s u16 LE`, CALIBRATION only; 0 → 90 s default) | `0` = **CALIBRATION**: fixed max rate (the configured `txSpacingMs`), guarded by the TTL dead-man; `1` = **ADAPTIVE**: speed-gated throughput |
 | `0x03` SIGNAL | `pattern u8, seq u8` | render an operator signal (table below); duplicate `seq` is acknowledged but not replayed — re-sends are safe |
 
-Reply (all ops): `[0x80|op, status, 8-byte settings]` — status 0 ok / 1 rejected / 2 malformed.
+Reply (all ops): `[0x80|op, status, settings]` — status 0 ok / 1 rejected / 2 malformed. v3
+firmware always replies with 13-byte settings; **the reply length is the capability signal**
+(apps must send 8-byte SETs to tags that reply with 8).
+
+**iOS (MeshTracker Tag Setup)**: TX-mode card — Calibration/Adaptive buttons with the live mode
+read back from the stream-flags echo, calibration TTL (120 s) auto-refreshed every 45 s while
+the screen is open; "Adaptive mode tuning" card (v3 tags only) exposes all four knobs; the map's
+tag rows append the live tier (`· idle / · fast / · cal`). Field observation 2026-07-26: a
+static balcony tag shows 0.1–0.3 Hz — the idle tier working as designed (3 s spacing ceiling).
 
 **How the sender must build the packet** (this IS the phone-app contract):
 `priority = HIGH`, `hop_limit = 1`, `want_ack = false`, direct-addressed to the tag's node id.

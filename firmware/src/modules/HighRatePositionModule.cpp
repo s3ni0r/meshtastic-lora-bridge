@@ -137,21 +137,22 @@ int32_t HighRatePositionModule::runOnce()
         // Eager up: >= fast threshold flips to full rate on the very next packet. Skeptical
         // down: < slow threshold sustained before dropping to the idle spacing. In between:
         // hysteresis — hold the current tier.
-        if (extSpeed >= GPSTAG_ADAPT_FAST_KMH) {
+        if (extSpeed >= gnssTagSettings.adaptFastKmh) {
             if (gnssTagMode.slowTier)
                 LOG_INFO("HighRate: adaptive -> FAST tier (speed %u km/h)", extSpeed);
             gnssTagMode.slowTier = false;
             gnssTagMode.belowSinceMs = 0;
-        } else if (extSpeed < GPSTAG_ADAPT_SLOW_KMH) {
+        } else if (extSpeed < gnssTagSettings.adaptSlowKmh) {
             if (gnssTagMode.belowSinceMs == 0) {
                 gnssTagMode.belowSinceMs = nowMs;
-            } else if (!gnssTagMode.slowTier && nowMs - gnssTagMode.belowSinceMs >= GPSTAG_ADAPT_SLOW_SUSTAIN_MS) {
+            } else if (!gnssTagMode.slowTier &&
+                       nowMs - gnssTagMode.belowSinceMs >= (uint32_t)gnssTagSettings.adaptSustainS * 1000UL) {
                 gnssTagMode.slowTier = true;
-                LOG_INFO("HighRate: adaptive -> SLOW tier (idle %u ms)", (unsigned)GPSTAG_IDLE_SPACING_MS);
+                LOG_INFO("HighRate: adaptive -> SLOW tier (idle %u ms)", (unsigned)gnssTagSettings.idleSpacingMs);
             }
         }
         if (gnssTagMode.slowTier)
-            sModeSpacing = GPSTAG_IDLE_SPACING_MS;
+            sModeSpacing = gnssTagSettings.idleSpacingMs;
     }
 #endif
 
