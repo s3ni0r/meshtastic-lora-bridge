@@ -6,32 +6,31 @@
 #include <Arduino.h>
 
 /**
- * GnssSignaler — tag-downlink branch. Renders operator feedback patterns on the T1000-E's
- * green LED (P0.24) and piezo buzzer (P0.25), commanded over portnum 260 op 0x03 (Base-relayed
- * LoRa or direct BLE). The vocabulary is AutoShot's torch grammar verbatim (autoshot
- * docs/feedback-signals.md): blip = 0.12 s ON, blips spaced 0.2 s; burn = 2 s ON / 2 s OFF.
+ * GnssSignaler — tag-downlink branch, language v2 (BEEP-FIRST, 2026-07-25 owner direction).
+ * Renders operator feedback on the T1000-E's piezo (P0.25) with the green LED (P0.24)
+ * mirroring every beep, commanded over portnum 260 op 0x03 (Base-relayed LoRa or direct BLE).
  *
- * Patterns (wire ids — FROZEN, additions need the same sign-off as AutoShot torch signatures):
- *   1  single blip                        resection ack (lock / window / spot / walk started)
- *   2  double blip                        band converged (2nd occurrence of the walk = stop)
- *   3  triple blip + triple beep (D6)     RECORDING STARTED — also arms the local heartbeat
- *   4  failure burns (2 s ON/OFF loop)    calibration failed, come back — hard-capped 120 s
- *   5  cancel                             stop everything (burns, heartbeat, pending blips)
+ * The calibration language (wire ids — additions need owner sign-off):
+ *   1..8  COUNTED: N short beeps (D6 1175 Hz — AutoShot's CalibrationBeeper pitch) + N blips.
+ *         Convergence progress etc.: "how many" IS the message (1 = first band, 2 = second…).
+ *   10    RECORDING STARTED: one long HIGH beep (G6 1568 Hz, 600 ms) + long flash — unmistakably
+ *         different from any counted signal — then arms the local LED heartbeat (a low blip
+ *         every 3 s, zero airtime; its absence = not recording).
+ *   11    PROBLEM: LOW-tone beep (D5 587 Hz, 500 ms) + LED burn every 2 s, self-capped 120 s.
+ *         Low pitch = bad news; repeats so a distracted operator can't miss it.
+ *   0     CANCEL: stop everything (problem loop, heartbeat, pending beeps). Doubles as
+ *         "recording stopped" — the heartbeat's silence is the signal.
  *
- * Heartbeat: after pattern 3, one low blip every 3 s, locally generated (zero airtime),
- * until pattern 5 — its absence means "recording stopped", exactly like AutoShot's torch.
- *
- * ONE signal owner: every LED/buzzer write on the tag goes through this thread (the
- * TorchSignaler rule). Duplicate-seq commands are acknowledged but not replayed, so the
- * app can re-send lossy fire-and-forget signals safely.
+ * ONE signal owner: every LED/buzzer write on the tag goes through this thread. Duplicate-seq
+ * commands are acknowledged but not replayed, so lossy fire-and-forget re-sends are safe.
  */
 class GnssSignaler : private concurrency::OSThread
 {
   public:
     GnssSignaler();
 
-    /// Handle a SIGNAL command. Returns false for an unknown pattern id (caller reports
-    /// status 1); a duplicate seq returns true without replaying (idempotent re-send).
+    /// Handle a SIGNAL command. False = unknown pattern id (caller replies status 1);
+    /// duplicate seq returns true without replaying.
     bool play(uint8_t pattern, uint8_t seq);
 
   protected:
@@ -39,17 +38,18 @@ class GnssSignaler : private concurrency::OSThread
 
   private:
     void ledWrite(bool on);
-    void beep(uint16_t ms);
     void stopAll();
 
-    // One-shot blip trains
-    uint8_t blipsLeft = 0;
-    bool blipWithBeep = false;
+    // Counted beep trains (ids 1..8)
+    uint8_t beepsLeft = 0;
     bool phaseOn = false;
 
+    // One-shot record-start (id 10)
+    bool recStartPending = false;
+
     // Looping states
-    bool burnsActive = false;
-    uint32_t burnsStartedMs = 0;
+    bool problemActive = false; // id 11
+    uint32_t problemStartedMs = 0;
     bool heartbeatActive = false;
     uint32_t lastHeartbeatMs = 0;
 

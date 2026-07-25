@@ -14,6 +14,7 @@ struct TagSetupView: View {
     @State private var draft = TagSettings()
     @State private var baseline: TagSettings? // last state confirmed by the tag
     @State private var target: UInt32?
+    @State private var signalSeq = UInt8.random(in: 0...255) // dedupe counter for op 0x03
 
     // MARK: - Connection routing (single PhoneAPI client per node — see BLEManager)
 
@@ -38,6 +39,11 @@ struct TagSetupView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     deviceCard
+                    // Signals ride the MAIN link (Base-relayed LoRa downlink, or direct) — they
+                    // don't need the settings handshake, only a link and a target.
+                    if target != nil && ble.connectedNodeNum != 0 {
+                        signalsCard
+                    }
                     if baseline != nil {
                         profilesCard
                         navModeCard
@@ -187,6 +193,58 @@ struct TagSetupView: View {
         } else if mgr.stage == .connecting || mgr.stage == .handshaking {
             ProgressView().controlSize(.small)
         }
+    }
+
+    // MARK: - Operator signals (calibration language v2 — beeper-first, tag-side)
+
+    private func sendSignal(_ id: UInt8) {
+        guard let t = target else { return }
+        signalSeq &+= 1
+        ble.sendGnssCommand(to: t, payload: Data([0x03, id, signalSeq]))
+    }
+
+    private var signalsCard: some View {
+        card {
+            sectionHeader("Operator signals (test)", "bell.and.waves.left.and.right")
+            Text(ble.directTag
+                 ? "Plays on the tag you're directly linked to."
+                 : "Sent through the Base over LoRa — expect a fraction of a second.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                ForEach([1, 2, 3], id: \.self) { n in
+                    Button { sendSignal(UInt8(n)) } label: {
+                        VStack(spacing: 2) {
+                            Text("\(n)×").font(.callout.bold())
+                            Text(n == 1 ? "beep" : "beeps").font(.caption2).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            HStack(spacing: 8) {
+                signalButton("Record start", "record.circle.fill", .green, id: 10)
+                signalButton("Problem", "exclamationmark.triangle.fill", .red, id: 11)
+                signalButton("Stop", "stop.circle.fill", .gray, id: 0)
+            }
+            Text("Counted beeps = convergence progress. Record start = one long high beep, then the LED heartbeats every 3 s. Problem = low beep every 2 s until Stop (auto-stops after 2 min).")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func signalButton(_ label: String, _ icon: String, _ tint: Color, id: UInt8) -> some View {
+        Button { sendSignal(id) } label: {
+            VStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 16)).foregroundStyle(tint)
+                Text(label).font(.caption2.bold())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Deployment profiles (one-tap primary actions)

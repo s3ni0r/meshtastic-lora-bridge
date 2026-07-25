@@ -36,6 +36,8 @@ git -C "$CLONE" diff "$BASE_TAG" -- \
     src/configuration.h \
     src/gps/GPS.cpp \
     src/mesh/LR11x0Interface.cpp \
+    src/mesh/RadioLibInterface.cpp \
+    src/mesh/StreamAPI.cpp \
     src/modules/Modules.cpp \
     src/modules/Telemetry/DeviceTelemetry.h \
     src/platform/nrf52/NRF52Bluetooth.cpp \

@@ -266,7 +266,10 @@ private func pvarint(_ v: UInt64) -> Data {
 private func ptag(_ field: Int, _ wire: Int) -> Data { pvarint(UInt64((field << 3) | wire)) }
 
 /// Encode ToRadio{ packet: MeshPacket{ to, id, decoded: Data{ portnum, payload } } }.
-func encodeToRadioData(to: UInt32, portnum: Int, payload: Data, packetId: UInt32) -> Data {
+/// hopLimit/priority 0 = omit (device defaults). Downlink commands relayed by the Base use
+/// hopLimit 1 + priority 100 (HIGH) — the Base firmware's fast lane keys on priority >= HIGH.
+func encodeToRadioData(to: UInt32, portnum: Int, payload: Data, packetId: UInt32,
+                       hopLimit: Int = 0, priority: Int = 0) -> Data {
     var d = Data()
     d += ptag(1, 0) + pvarint(UInt64(portnum))                 // Data.portnum
     d += ptag(2, 2) + pvarint(UInt64(payload.count)) + payload // Data.payload
@@ -274,6 +277,8 @@ func encodeToRadioData(to: UInt32, portnum: Int, payload: Data, packetId: UInt32
     pkt += ptag(2, 5) + withUnsafeBytes(of: to.littleEndian) { Data($0) }       // MeshPacket.to
     pkt += ptag(6, 5) + withUnsafeBytes(of: packetId.littleEndian) { Data($0) } // MeshPacket.id
     pkt += ptag(4, 2) + pvarint(UInt64(d.count)) + d                            // MeshPacket.decoded
+    if hopLimit > 0 { pkt += ptag(9, 0) + pvarint(UInt64(hopLimit)) }           // MeshPacket.hop_limit
+    if priority > 0 { pkt += ptag(11, 0) + pvarint(UInt64(priority)) }          // MeshPacket.priority
     var out = Data()
     out += ptag(1, 2) + pvarint(UInt64(pkt.count)) + pkt                        // ToRadio.packet
     return out

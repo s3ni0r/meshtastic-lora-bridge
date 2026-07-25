@@ -43,43 +43,49 @@ source type). Re-send the idempotent command until the stream reflects it.
   `GPSTAG_ADAPT_FAST_KMH 5`, `GPSTAG_ADAPT_SLOW_KMH 3`, `GPSTAG_ADAPT_SLOW_SUSTAIN_MS 15000`,
   `GPSTAG_CALIB_TTL_DEFAULT_S 90`.
 
-### Signals (AutoShot's torch grammar, transplanted — docs/feedback-signals.md over there)
+### Signals — language v2 (BEEP-FIRST, owner direction 2026-07-25)
 
-Blip = 0.12 s ON (0.2 s gaps) on the green LED (P0.24); burn = 2 s ON/OFF. Beeper (P0.25) plays
-D6 1175 Hz — the same pitch as AutoShot's CalibrationBeeper. **Vocabulary frozen** (additions
-need the same owner sign-off as AutoShot torch signatures):
+The beeper (P0.25) is the primary channel; the green LED (P0.24) mirrors every beep.
+**Vocabulary frozen** (additions need owner sign-off):
 
-| id | Pattern | Meaning |
+| id | Sound | Meaning |
 |---|---|---|
-| 1 | single blip | resection ack (lock / read window / spot / walk started) |
-| 2 | double blip | band converged (2nd of the walk = stop walking) |
-| 3 | triple blip **+ triple beep** | **recording started** — also arms the local heartbeat |
-| 4 | repeating burns | calibration failed, come back — self-capped at 120 s |
-| 5 | cancel | stop everything (burns, heartbeat, pending blips) — "recording stopped" |
+| 1..8 | **N short beeps** (D6 1175 Hz — AutoShot's CalibrationBeeper pitch) + N blips | counted progress: convergence steps etc. — "how many" IS the message |
+| 10 | **one long HIGH beep** (G6, 600 ms) + long flash | **recording started** — then the LED heartbeat (silent blip / 3 s, locally generated, zero airtime; its absence = not recording) |
+| 11 | **LOW beep** (D5, 500 ms) + LED burn every 2 s | problem / calibration failed — repeats, self-capped 120 s |
+| 0 | silence | cancel everything — doubles as "recording stopped" |
 
-Heartbeat (after pattern 3): one low blip / 3 s, generated **locally** — zero airtime; its
-absence = not recording, exactly like AutoShot's torch heartbeat. Disable the stock status blink
-once per tag: `meshtastic --set device.led_heartbeat_disabled true`.
+Pitch encodes meaning: counted mid-tone = progress, long high = go, repeating low = bad news.
+Disable the stock status blink once per tag: `meshtastic --set device.led_heartbeat_disabled true`.
+**iOS**: the MeshTracker Tag Setup tab has an "Operator signals (test)" card (1×/2×/3×, Record
+start, Problem, Stop) — works via the Base over LoRa or on a direct tag link.
 
 ## Measured results (bench, 2026-07-25, tag streaming throughout)
 
-- **Delivery: 20/20 signal commands, zero losses** (`tools/downlink_latency.py signal --n 20`).
-- **Phone→tag hop latency** (host-clock send → tag console `SIGRX`, includes ~ms serial print):
-  **min 317 / median 445 / p90 547 / max 713 ms**. The floor is the Base's *stock* transmit
-  path (CAD + contention backoff + main-loop scheduling), not packet construction — priority
-  HIGH / hop 1 / no-ack alone did **not** beat the historical ~0.5 s buzz measurement. Good
-  enough for fire-and-forget cues; if a crisper recording-start beep is ever wanted, the next
-  lever is Base-side (tighten its TX backoff for this packet class).
-- **Mode machinery**: CALIBRATION command echoed in the stream after 1.6 s (bounded by the
-  slow-tier packet cadence, as designed); **TTL dead-man reverted after exactly 20.0 s** with
-  no refresh; idempotent ADAPTIVE re-send confirmed instantly; **slow tier self-engaged after
-  17.7 s** quasi-stationary (15 s sustain + cadence).
-- Open item for the field: indoor bench had no stable GPS lock, so tier *flags* are validated
-  but the actual pkt/s effect of slow-vs-fast tier (0.33 vs 2–6.7 Hz) needs one outdoor walk;
-  bench stream hovered ~1.1 pkt/s on heartbeats/partial fixes.
+Leg decomposition via `rawlat` (raw serial injection; Base logs FastQ/FastTX stamps for
+HIGH-priority packets — fork instrumentation):
+
+| Stage of the fix | total median | ingest (host→queued) | queue (→TX start) | air+dispatch |
+|---|---|---|---|---|
+| Stock TX path (baseline) | **445 ms** (max 713) | — | — | — |
+| + priority fast-lane (skip contention for HIGH+ local) | 411 ms | 189 ms | **20 ms** | 174 ms |
+| + 15 ms API idle poll (was a 250 ms lottery) | **335 ms** (max 474) | **137 ms** | 20 ms | 157 ms |
+
+- Delivery: 20/20 and 12/12 across runs, zero losses; dup-seq dedupe verified on-device.
+- Measured numbers INCLUDE ~50–100 ms of measurement overhead (console prints + host serial
+  reads on both ends). True USB command→beep ≈ **~250 ms**.
+- **The phone-BLE path is faster still**: BLE `toRadio` writes ingest inside the write callback
+  (no poll at all), so iPhone-tap→beep ≈ **~200 ms** — verify by feel with the iOS signals card.
+- Remaining lever if ever needed: tag-side RX dispatch (~50–80 ms through the main-loop pass).
+- **Mode machinery**: CALIBRATION echoed in-stream in 1.6 s (bounded by packet cadence);
+  **TTL dead-man reverted at exactly 20.0 s** unrefreshed; idempotent re-send confirmed;
+  **slow tier self-engaged at 17.7 s** quasi-stationary.
+- Open item for the field: tier *flags* validated indoors; the actual pkt/s effect of
+  slow-vs-fast tier (0.33 vs 2–6.7 Hz) needs one outdoor walk with a stable lock.
 
 ## Test harness
 
-`tools/downlink_latency.py` (run with the meshtastic pipx python) — `signal` (N-trial latency
-distribution), `mode` (echo + TTL + tier timings), `beep` / `cancel` (audible pattern 3 / stop).
-Keep the phone app disconnected from the Base during tests (single PhoneAPI client).
+`tools/downlink_latency.py` (run with the meshtastic pipx python) — `signal` (N-trial latency),
+`rawlat` (leg decomposition), `mode` (echo + TTL + tier timings), `count --pattern N` /
+`record` / `problem` / `cancel` (audible checks). Keep the phone app disconnected from the Base
+during USB tests (single PhoneAPI client).

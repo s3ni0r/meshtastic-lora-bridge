@@ -166,4 +166,16 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         p.writeValue(frame, for: tr, type: .withResponse)
         if let fr = fromRadio { p.readValue(for: fr) }
     }
+
+    /// GNSS command to any tag over WHATEVER link is up: through the Base it rides the LoRa
+    /// downlink (priority HIGH + hop 1 — the Base firmware's fast lane); on a direct tag link
+    /// it's local delivery. Fire-and-forget: confirmation is the tag's stream/flags echo.
+    func sendGnssCommand(to node: UInt32, payload: Data) {
+        guard let p = peripheral, let tr = toRadio, connectedNodeNum != 0 else { return }
+        let frame = encodeToRadioData(to: node, portnum: kGnssConfigPortnum, payload: payload,
+                                      packetId: UInt32.random(in: 1...UInt32.max),
+                                      hopLimit: 1, priority: 100)
+        p.writeValue(frame, for: tr, type: .withResponse)
+        if let fr = fromRadio { p.readValue(for: fr) }
+    }
 }

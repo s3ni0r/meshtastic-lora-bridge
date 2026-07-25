@@ -7,10 +7,12 @@ measures phone->tag latency against the tag's own USB debug console ("GnssConfig
 Both timestamps come from THIS host's clock (send instant vs. serial-line arrival), so there is
 no cross-device clock problem; the tag->host serial print adds only a few ms.
 
-    python downlink_latency.py signal [--n 20] [--pattern 1]   # N single-blip signals, stats
+    python downlink_latency.py signal [--n 20] [--pattern 1]   # N counted-beep signals, stats
     python downlink_latency.py mode                            # adaptive/calibration echo + TTL test
-    python downlink_latency.py beep                            # one pattern-3 (triple blip+beep)
-    python downlink_latency.py cancel                          # pattern 5 (stop everything)
+    python downlink_latency.py count --pattern 3               # counted signal: N beeps + blips (1..8)
+    python downlink_latency.py record                          # id 10: long high beep + heartbeat
+    python downlink_latency.py problem                         # id 11: low-beep loop (cancel stops it)
+    python downlink_latency.py cancel                          # id 0: stop everything
 
 Prereqs: Base + GPS tag both on USB (nodes.py roles 'base'/'gpstag'); no phone app connected
 to the Base (single PhoneAPI client!). The tag console must be free (no other reader).
@@ -133,6 +135,73 @@ class BaseLink:
 
 # ---------------------------------------------------------------- tests
 
+def run_rawlat(args):
+    """Leg-by-leg decomposition: RAW serial injection to the Base (no meshtastic lib), reading
+    the Base's own console stamps (FastQ = packet queued, FastTX = radio TX start — fork logs,
+    HIGH-priority only) plus the tag's SIGRX. Splits host->queue / queue->TX / TX->tag legs."""
+    import random as _r
+
+    from meshtastic import mesh_pb2
+
+    base = TagConsole(resolve_or_die("base"))  # raw line reader; we also write frames to it
+    tag = TagConsole(resolve_or_die("gpstag"))
+    dest = tag_nodenum()
+
+    def frame(tr_bytes):
+        return b"\x94\xc3" + len(tr_bytes).to_bytes(2, "big") + tr_bytes
+
+    want = mesh_pb2.ToRadio()
+    want.want_config_id = _r.randrange(1, 2**32)
+    base.ser.write(frame(want.SerializeToString()))
+    time.sleep(2.5)  # let the config dump drain
+
+    legs = {"ingest": [], "queue": [], "air": [], "total": []}
+    lost = 0
+    seq0 = _r.randrange(1, 200)
+    for i in range(args.n):
+        seq = (seq0 + i) % 256
+        pkt_id = _r.randrange(1, 2**31)
+        tr = mesh_pb2.ToRadio()
+        p = tr.packet
+        p.to = dest
+        p.id = pkt_id
+        p.hop_limit = 1
+        p.want_ack = False
+        p.priority = mesh_pb2.MeshPacket.Priority.HIGH
+        p.decoded.portnum = GNSS_CONFIG_PORTNUM
+        p.decoded.payload = bytes([0x03, args.pattern, seq])
+        t0 = time.monotonic()
+        base.ser.write(frame(tr.SerializeToString()))
+
+        tq, lq = base.wait_for(rf"FastQ id=0x{pkt_id:x} t=(\d+)ms", t0, timeout=3.0)
+        ttx, ltx = base.wait_for(rf"FastTX id=0x{pkt_id:x} t=(\d+)ms", t0, timeout=3.0)
+        trx, _ = tag.wait_for(rf"SIGRX pattern={args.pattern} seq={seq}\b", t0, timeout=3.0)
+        if None in (tq, ttx, trx):
+            lost += 1
+            print(f"  #{i + 1:02d} seq={seq:3d} INCOMPLETE (q={tq is not None} tx={ttx is not None} rx={trx is not None})")
+        else:
+            mq = int(re.search(r"t=(\d+)ms", lq).group(1))
+            mtx = int(re.search(r"t=(\d+)ms", ltx).group(1))
+            ingest = (tq - t0) * 1000
+            queue = mtx - mq  # device-clock delta: exact
+            air = (trx - ttx) * 1000
+            total = (trx - t0) * 1000
+            legs["ingest"].append(ingest)
+            legs["queue"].append(queue)
+            legs["air"].append(air)
+            legs["total"].append(total)
+            print(f"  #{i + 1:02d} seq={seq:3d} total {total:6.1f} ms = ingest {ingest:6.1f} + queue {queue:4d} + air/dispatch {air:6.1f}")
+        time.sleep(_r.uniform(1.2, 2.2))
+
+    print(f"\n{args.n - lost} complete / {lost} incomplete")
+    for name, vals in legs.items():
+        if vals:
+            vals.sort()
+            print(f"  {name:8s} min {vals[0]:6.1f} · median {statistics.median(vals):6.1f} · max {vals[-1]:6.1f} ms")
+    tag.close()
+    base.close()
+
+
 def resolve_or_die(role):
     port = nodes.resolve(role)
     if not port:
@@ -239,18 +308,24 @@ def run_oneshot(args, pattern):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("test", choices=["signal", "mode", "beep", "cancel"])
+    ap.add_argument("test", choices=["signal", "rawlat", "mode", "count", "record", "problem", "cancel"])
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--pattern", type=int, default=1)
     args = ap.parse_args()
     if args.test == "signal":
         run_signal(args)
+    elif args.test == "rawlat":
+        run_rawlat(args)
     elif args.test == "mode":
         run_mode(args)
-    elif args.test == "beep":
-        run_oneshot(args, 3)
+    elif args.test == "count":
+        run_oneshot(args, max(1, min(8, args.pattern)))
+    elif args.test == "record":
+        run_oneshot(args, 10)
+    elif args.test == "problem":
+        run_oneshot(args, 11)
     else:
-        run_oneshot(args, 5)
+        run_oneshot(args, 0)
 
 
 if __name__ == "__main__":
