@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The GPS tag configuration space — a first-class screen, deliberately separate from the map.
 /// Design principles: connection state always visible up top; profiles as one-tap primary
@@ -41,6 +42,13 @@ struct TagSetupView: View {
     @State private var simSegs: [SimSeg] = SimSeg.loadSaved()
     @State private var simLoop = true
     @State private var simCommanded: UInt8 = 0 // last commanded sim source (for TTL keep-alive)
+    // Track replay (phase 2)
+    @State private var sessionLib = SessionLibrary()
+    @State private var showGpxImporter = false
+    @State private var uploadProgress: Double?
+    @State private var trackReady = false
+    @State private var trackInfo = ""
+    @State private var uploadNote: String?
     private let ttlRefresh = Timer.publish(every: 45, on: .main, in: .common).autoconnect()
 
     // MARK: - Connection routing (single PhoneAPI client per node — see BLEManager)
@@ -402,7 +410,120 @@ struct TagSetupView: View {
             }
             Text("Runs ON the tag through the real firmware path — the map, tiers and modes react exactly as outdoors. Auto-stops via dead-man TTL; a reboot always returns to real GPS. Shake mode drives speed from the accelerometer.")
                 .font(.caption2).foregroundStyle(.secondary)
+            Divider()
+            HStack {
+                Label("Track replay", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .font(.caption.bold()).foregroundStyle(.secondary)
+                Spacer()
+                if trackReady {
+                    Text(trackInfo).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            if let p = uploadProgress {
+                ProgressView(value: p)
+                Text("Uploading track to the tag…").font(.caption2).foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 8) {
+                    Button { showGpxImporter = true } label: {
+                        simButtonLabel("Import GPX", "square.and.arrow.down", .indigo)
+                    }
+                    .buttonStyle(.plain)
+                    Menu {
+                        ForEach(sessionLib.sessions) { m in
+                            Button(m.name) { importSession(m) }
+                        }
+                    } label: {
+                        simButtonLabel("From session", "tray.full", .indigo)
+                    }
+                    Button { sendSimTrack() } label: {
+                        simButtonLabel("Play track", "play.circle.fill", .green)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!trackReady)
+                }
+                if let n = uploadNote {
+                    Text(n).font(.caption2).foregroundStyle(.orange)
+                }
+                Text("Record once outdoors, replay forever indoors — the tag interpolates the uploaded course at its fix rate. Upload needs a DIRECT BLE link to the tag; playback then works from anywhere (Stop above ends it).")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
+        .fileImporter(isPresented: $showGpxImporter,
+                      allowedContentTypes: [UTType(filenameExtension: "gpx") ?? .xml, .xml]) { result in
+            guard case .success(let url) = result else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url), let recs = TrackBuilder.fromGPX(data) else {
+                uploadNote = "Couldn't parse that GPX (needs trkpt/rtept points)."
+                return
+            }
+            uploadTrack(recs)
+        }
+    }
+
+    /// Direct-only transport for bulk track upload (LoRa would take minutes and eat the duty
+    /// budget). The little play/stop commands still go over any link.
+    private func trackUploadSend() -> ((Data) -> Void)? {
+        if ble.directTag, ble.connectedNodeNum == target {
+            return { ble.sendTagConfig($0) }
+        }
+        if mgr.stage == .ready || mgr.stage == .applying {
+            return { mgr.sendRaw($0) }
+        }
+        return nil
+    }
+
+    private func importSession(_ m: SessionMeta) {
+        let loaded = sessionLib.load(m)
+        guard let tr = loaded.tracks.max(by: { $0.points.count < $1.points.count }),
+              let recs = TrackBuilder.fromSessionPoints(tr.points) else {
+            uploadNote = "That session has no usable fixes."
+            return
+        }
+        uploadTrack(recs)
+    }
+
+    private func uploadTrack(_ recs: [TrackRecord]) {
+        guard let send = trackUploadSend() else {
+            uploadNote = "Track upload needs a direct BLE link to the tag (not via the Base)."
+            return
+        }
+        uploadNote = nil
+        trackReady = false
+        uploadProgress = 0
+        let wire = TrackBuilder.wireData(recs)
+        let crc = TrackBuilder.crc32(wire)
+        Task { @MainActor in
+            var begin = Data([0x05, 0x00])
+            begin += withUnsafeBytes(of: UInt16(recs.count).littleEndian) { Data($0) }
+            begin += withUnsafeBytes(of: crc.littleEndian) { Data($0) }
+            send(begin)
+            try? await Task.sleep(for: .milliseconds(200))
+            let per = 20
+            var off = 0
+            while off < recs.count {
+                let n = min(per, recs.count - off)
+                var p = Data([0x05, 0x01])
+                p += withUnsafeBytes(of: UInt16(off).littleEndian) { Data($0) }
+                p.append(UInt8(n))
+                p += wire.subdata(in: off * 10 ..< (off + n) * 10)
+                send(p)
+                off += n
+                uploadProgress = Double(off) / Double(recs.count)
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+            send(Data([0x05, 0x02])) // COMMIT — the tag CRC-verifies before the slot can play
+            try? await Task.sleep(for: .milliseconds(400))
+            uploadProgress = nil
+            trackReady = true
+            trackInfo = "\(recs.count) pts · \(Int(TrackBuilder.durationS(recs))) s"
+        }
+    }
+
+    private func sendSimTrack() {
+        guard let t = target else { return }
+        simCommanded = 3
+        ble.sendGnssCommand(to: t, payload: Data([0x04, 3, simLoop ? 1 : 0, 0x58, 0x02]))
     }
 
     private func simButtonLabel(_ label: String, _ icon: String, _ tint: Color) -> some View {

@@ -145,6 +145,9 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
 
     func sendGet() { send(Data([0x00])) }
 
+    /// Raw portnum-260 frame over this direct link (track uploads etc. — DOWNLINK.md op 0x05).
+    func sendRaw(_ payload: Data) { send(payload) }
+
     func apply(_ s: TagSettings) {
         stage = .applying
         lastStatus = nil

@@ -73,12 +73,35 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
                     ok = gnssSim->startProgram(&d.payload.bytes[6], n, loopReq, ttl);
             } else if (srcReq == GnssSim::ACCEL) {
                 ok = gnssSim->startAccel(ttl);
+            } else if (srcReq == GnssSim::TRACK) {
+                ok = gnssSim->startTrack(loopReq, ttl);
             }
             if (!ok)
                 status = 1;
         } else {
             status = 2;
         }
+    } else if (op == 0x05) { // TRACK upload: [sub, ...] — BLE-direct/USB only by convention
+        uint8_t sub = d.payload.size >= 2 ? d.payload.bytes[1] : 0xEE;
+        bool ok = false;
+        if (sub == 0x00 && d.payload.size >= 8) { // BEGIN: count u16, crc32 u32
+            uint16_t cnt = (uint16_t)(d.payload.bytes[2] | (d.payload.bytes[3] << 8));
+            uint32_t crc = (uint32_t)d.payload.bytes[4] | ((uint32_t)d.payload.bytes[5] << 8) |
+                           ((uint32_t)d.payload.bytes[6] << 16) | ((uint32_t)d.payload.bytes[7] << 24);
+            ok = gnssSim->trackBegin(cnt, crc);
+        } else if (sub == 0x01 && d.payload.size >= 5) { // CHUNK: offRec u16, n u8, n×10B
+            uint16_t off = (uint16_t)(d.payload.bytes[2] | (d.payload.bytes[3] << 8));
+            uint8_t n = d.payload.bytes[4];
+            if (d.payload.size >= (uint16_t)(5 + n * 10))
+                ok = gnssSim->trackChunk(off, n, &d.payload.bytes[5]);
+        } else if (sub == 0x02) { // COMMIT
+            ok = gnssSim->trackCommit();
+        } else if (sub == 0x03) { // ABORT
+            gnssSim->trackAbort();
+            ok = true;
+        }
+        if (!ok)
+            status = 1;
     } else if (op == 0x03) { // SIGNAL: [pattern u8, seq u8] — LED/buzzer, AutoShot grammar
         if (d.payload.size >= 3) {
             // The latency-measurement line: host timestamps its send, this stamps the arrival.
@@ -89,7 +112,7 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
         } else {
             status = 2;
         }
-    } else if (op != 0x00) { // GET(0)/SET(1)/MODE(2)/SIGNAL(3)/SIM(4)
+    } else if (op != 0x00) { // GET(0)/SET(1)/MODE(2)/SIGNAL(3)/SIM(4)/TRACK(5)
         status = 2;
     }
 

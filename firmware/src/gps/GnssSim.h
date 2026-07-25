@@ -38,16 +38,32 @@ class GnssSim : private concurrency::OSThread
     GnssSim();
     bool startProgram(const uint8_t *segBytes, uint8_t n, bool loopFlag, uint16_t ttlS);
     bool startAccel(uint16_t ttlS);
+    bool startTrack(bool loopFlag, uint16_t ttlS); // phase 2: replay the uploaded slot
     bool refreshTtl(uint16_t ttlS); // sub-op 0xFF: extend the dead-man without disturbing playback
     void stop(const char *why);
     uint8_t source() const { return src; }
+
+    // Track-slot upload (op 0x05, BLE-direct/USB only — see DOWNLINK.md). Records are 10 B:
+    // lat i32 | lon i32 | speed u8 (km/h) | dt u8 (0.1 s units from the PREVIOUS point).
+    bool trackBegin(uint16_t count, uint32_t crc32);
+    bool trackChunk(uint16_t offRec, uint8_t n, const uint8_t *recBytes);
+    bool trackCommit();
+    void trackAbort();
 
   protected:
     int32_t runOnce() override;
 
   private:
+    struct TrackRec {
+        int32_t lat, lon;
+        uint8_t spd, dtDs;
+    };
+
     void arm(uint8_t newSrc, uint16_t ttlS);
-    void publish(float speedKmh, float dtS);
+    void publish(float speedKmh, float dtS);                                  // parametric walker
+    void publishAt(double lat, double lon, float speedKmh, float headingDeg); // explicit (track)
+    bool trackReadRec(uint16_t idx, TrackRec *out);
+    bool trackAdvance(); // cur <- nxt, load the following record (handles loop/end)
 
     uint8_t src = OFF;
     bool loop = false;
@@ -59,6 +75,15 @@ class GnssSim : private concurrency::OSThread
     float headingDeg = 45.0f, accelSpeed = 0;
     int16_t anchorAlt = 0;
     uint16_t simTs = 0;
+
+    // Track upload state
+    bool upActive = false;
+    uint16_t upCount = 0, upExpected = 0;
+    uint32_t upCrc = 0;
+    // Track playback state
+    uint16_t tkCount = 0, tkIdx = 0;
+    TrackRec tkCur{}, tkNxt{};
+    float tkFrac = 0, tkSpanS = 0.1f;
 };
 
 extern GnssSim *gnssSim;
