@@ -207,6 +207,11 @@ struct ContentView: View {
             .onChange(of: model.selectedFrom) {
                 withAnimation(.easeInOut(duration: 0.4)) { centerOnActive() }
             }
+            // The REC elapsed readout ticks off this shared timer (review finding: uiTick was
+            // never updated, freezing the elapsed display at 0:00).
+            .onReceive(playTimer) { now in
+                if model.recorder.isRecording { uiTick = now }
+            }
 
             VStack(spacing: 0) {
                 HStack(alignment: .top) {
@@ -261,6 +266,11 @@ struct ContentView: View {
                     Circle().fill(.red).frame(width: 7, height: 7)
                     Text(recElapsed).font(.caption.bold().monospacedDigit())
                     Text("\(model.recorder.pointCount)p").font(.caption2).foregroundStyle(.secondary)
+                    if model.recorder.writeFailures > 0 {
+                        // Disk writes are failing — the recording is losing points RIGHT NOW.
+                        Label("\(model.recorder.writeFailures)", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption2.bold()).foregroundStyle(.yellow)
+                    }
                 }
                 .padding(.leading, 2)
             }

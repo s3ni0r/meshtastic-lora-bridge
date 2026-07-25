@@ -26,12 +26,12 @@ git -C "$CLONE" fetch --tags --quiet
 git -C "$CLONE" checkout --quiet "$TAG"
 git -C "$CLONE" submodule update --init --recursive --quiet
 
-mkdir -p "$CLONE/src/modules" "$CLONE/src/gps"
-cp src/modules/HighRatePositionModule.h   "$CLONE/src/modules/"
-cp src/modules/HighRatePositionModule.cpp "$CLONE/src/modules/"
-cp src/gps/GnssRateProbe.h                "$CLONE/src/gps/"
-cp src/gps/GnssRateProbe.cpp              "$CLONE/src/gps/"
-cp patch_bluefruit_ext.py                 "$CLONE/"
+# Project-owned drop-ins: mirror the ENTIRE tracked src/ tree into the clone. Copying the whole
+# tree (instead of a hand-maintained list) is what keeps this script from drifting against
+# sync-fork.sh — external review 2026-07-26 caught exactly that: four hardcoded files here had
+# silently missed six newer drop-ins, so fresh reconstruction was broken.
+cp -R src/. "$CLONE/src/"
+cp patch_bluefruit_ext.py "$CLONE/"
 git -C "$CLONE" apply ../meshtastic-fork.patch
 
 echo "fork applied on $TAG — flavors build per FORK.md §4"

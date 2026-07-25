@@ -111,6 +111,7 @@ final class SessionRecorder {
     private(set) var startedAt: Date?
     private(set) var pointCount = 0
     private(set) var tagCount = 0
+    private(set) var writeFailures = 0 // disk-full etc. — surfaced in the REC capsule, never silent
     @ObservationIgnored private var meta: SessionMeta?
     @ObservationIgnored private var handles: [UInt32: FileHandle] = [:]
     @ObservationIgnored private let encoder = JSONEncoder()
@@ -126,6 +127,7 @@ final class SessionRecorder {
         startedAt = meta?.startedAt
         pointCount = 0
         tagCount = 0
+        writeFailures = 0
         isRecording = true
     }
 
@@ -147,8 +149,14 @@ final class SessionRecorder {
             tagCount = m.tags.count
             writeMeta() // tag list is now on disk too (crash-safe recovery keeps names)
         }
-        handles[sp.from]?.write(data)
-        pointCount += 1
+        if let h = handles[sp.from] {
+            do {
+                try h.write(contentsOf: data)
+                pointCount += 1
+            } catch {
+                writeFailures += 1 // a full disk must not masquerade as a healthy recording
+            }
+        }
     }
 
     /// Stop, compute per-tag stats from the raw files, persist final meta. Returns the session id.
@@ -311,7 +319,7 @@ enum SessionExport {
         let df = isoDF()
         var out = """
         <?xml version="1.0" encoding="UTF-8"?>
-        <gpx version="1.1" creator="MeshTracker" xmlns="http://www.topografix.com/GPX/1/1">
+        <gpx version="1.1" creator="MeshTracker" xmlns="http://www.topografix.com/GPX/1/1" xmlns:mt="https://github.com/s3ni0r/meshtastic-lora-bridge/gpx/v1">
         <metadata><name>\(xml(s.meta.name))</name><time>\(df.string(from: s.meta.startedAt))</time></metadata>\n
         """
         for tr in s.tracks {

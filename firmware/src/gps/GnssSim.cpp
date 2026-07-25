@@ -171,7 +171,13 @@ bool GnssSim::trackBegin(uint16_t count, uint32_t crc)
 bool GnssSim::trackChunk(uint16_t offRec, uint8_t n, const uint8_t *recBytes)
 {
 #ifdef FSCom
-    if (!upActive || offRec != upExpected || n == 0 || (uint32_t)offRec + n > upCount)
+    if (!upActive || n == 0)
+        return false;
+    // Retry-safe: a re-send of the chunk we already banked (its REPLY was lost, not the data)
+    // is acknowledged without rewriting — the app can retry on timeout without corrupting.
+    if ((uint32_t)offRec + n == upExpected)
+        return true;
+    if (offRec != upExpected || (uint32_t)offRec + n > upCount)
         return false;
     auto f = FSCom.open(kTrackPath, FILE_O_WRITE); // Adafruit LittleFS: O_WRITE appends at end
     if (!f)
@@ -187,31 +193,48 @@ bool GnssSim::trackChunk(uint16_t offRec, uint8_t n, const uint8_t *recBytes)
 #endif
 }
 
+// CRC the stored record region against the header's claim. Used by COMMIT *and* by every
+// startTrack: a half-uploaded, aborted or bit-rotted slot can never play (external review
+// 2026-07-26 — playback previously checked shape only).
+static bool trackSlotCrcValid()
+{
+#ifdef FSCom
+    auto f = FSCom.open(kTrackPath, FILE_O_READ);
+    if (!f)
+        return false;
+    uint8_t hdr[kTrackHdrLen];
+    if (f.read(hdr, kTrackHdrLen) != kTrackHdrLen || hdr[0] != kTrackMagic || hdr[1] != kTrackVer) {
+        f.close();
+        return false;
+    }
+    uint16_t count = (uint16_t)(hdr[2] | (hdr[3] << 8));
+    uint32_t want = (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) | ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
+    uint32_t c = ~0UL, bytes = 0;
+    uint8_t buf[40];
+    int n;
+    while ((n = f.read(buf, sizeof(buf))) > 0) {
+        bytes += n;
+        for (int i = 0; i < n; i++) {
+            c ^= buf[i];
+            for (int k = 0; k < 8; k++)
+                c = (c >> 1) ^ (0xEDB88320UL & (-(int32_t)(c & 1)));
+        }
+    }
+    f.close();
+    return bytes == (uint32_t)count * kTrackRecLen && ~c == want;
+#else
+    return false;
+#endif
+}
+
 bool GnssSim::trackCommit()
 {
 #ifdef FSCom
     if (!upActive || upExpected != upCount)
         return false;
     upActive = false;
-    // CRC the record region against the claim — a half/corrupt upload can never play.
-    auto f = FSCom.open(kTrackPath, FILE_O_READ);
-    if (!f)
-        return false;
-    f.seek(kTrackHdrLen);
-    uint32_t c = ~0UL;
-    uint8_t buf[40];
-    int n;
-    while ((n = f.read(buf, sizeof(buf))) > 0)
-        for (int i = 0; i < n; i++) {
-            c ^= buf[i];
-            for (int k = 0; k < 8; k++)
-                c = (c >> 1) ^ (0xEDB88320UL & (-(int32_t)(c & 1)));
-        }
-    f.close();
-    c = ~c;
-    bool ok = (c == upCrc);
-    LOG_INFO("GnssSim: track COMMIT %s (crc 0x%08lx vs 0x%08lx, %u recs)", ok ? "OK" : "CRC MISMATCH",
-             (unsigned long)c, (unsigned long)upCrc, upCount);
+    bool ok = trackSlotCrcValid();
+    LOG_INFO("GnssSim: track COMMIT %s (%u recs)", ok ? "OK" : "CRC MISMATCH", upCount);
     if (!ok)
         FSCom.remove((char *)kTrackPath);
     return ok;
@@ -276,18 +299,23 @@ bool GnssSim::trackAdvance()
 bool GnssSim::startTrack(bool loopFlag, uint16_t ttlS)
 {
 #ifdef FSCom
+    if (upActive) {
+        LOG_WARN("GnssSim: track upload in progress — not playable yet");
+        return false;
+    }
+    if (!trackSlotCrcValid()) { // shape AND content: only a committed, intact slot plays
+        LOG_WARN("GnssSim: no valid track slot (missing, partial or CRC-corrupt)");
+        return false;
+    }
     auto f = FSCom.open(kTrackPath, FILE_O_READ);
     if (!f)
         return false;
     uint8_t hdr[kTrackHdrLen];
-    bool ok = f.read(hdr, kTrackHdrLen) == kTrackHdrLen && hdr[0] == kTrackMagic && hdr[1] == kTrackVer;
-    uint32_t fileRecs = ok ? (uint32_t)(f.size() - kTrackHdrLen) / kTrackRecLen : 0;
+    bool ok = f.read(hdr, kTrackHdrLen) == kTrackHdrLen;
     f.close();
     uint16_t count = ok ? (uint16_t)(hdr[2] | (hdr[3] << 8)) : 0;
-    if (!ok || count < 2 || fileRecs < count) {
-        LOG_WARN("GnssSim: no valid track slot");
+    if (!ok || count < 2)
         return false;
-    }
     tkCount = count;
     tkIdx = 0;
     if (!trackReadRec(0, &tkCur) || !trackReadRec(1, &tkNxt))

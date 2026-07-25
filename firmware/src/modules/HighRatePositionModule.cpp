@@ -158,6 +158,11 @@ int32_t HighRatePositionModule::runOnce()
                 gnssTagMode.slowTier = true;
                 LOG_INFO("HighRate: adaptive -> SLOW tier (idle %u ms)", (unsigned)gnssTagSettings.idleSpacingMs);
             }
+        } else {
+            // Hysteresis band: hold the current tier, but "sustained BELOW" must mean below —
+            // time spent in the band does not count toward the downshift (external review
+            // 2026-07-26 caught the clock surviving band excursions).
+            gnssTagMode.belowSinceMs = 0;
         }
         if (gnssTagMode.slowTier)
             sModeSpacing = gnssTagSettings.idleSpacingMs;

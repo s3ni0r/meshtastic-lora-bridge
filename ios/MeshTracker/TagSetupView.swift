@@ -463,14 +463,42 @@ struct TagSetupView: View {
 
     /// Direct-only transport for bulk track upload (LoRa would take minutes and eat the duty
     /// budget). The little play/stop commands still go over any link.
-    private func trackUploadSend() -> ((Data) -> Void)? {
+    private struct UploadLink {
+        let send: (Data) -> Void
+        let state: () -> (count: Int, op: UInt8, status: UInt8)
+    }
+
+    private func trackUploadLink() -> UploadLink? {
         if ble.directTag, ble.connectedNodeNum == target {
-            return { ble.sendTagConfig($0) }
+            return UploadLink(send: { ble.sendTagConfig($0) },
+                              state: { (ble.configReplyCount,
+                                        ble.lastConfigReply?.op ?? 0,
+                                        ble.lastConfigReply?.status ?? 0) })
         }
         if mgr.stage == .ready || mgr.stage == .applying {
-            return { mgr.sendRaw($0) }
+            return UploadLink(send: { mgr.sendRaw($0) },
+                              state: { (mgr.replyCount, mgr.lastReplyOp, mgr.lastReplyStatus) })
         }
         return nil
+    }
+
+    /// One frame, one confirmed 0x85 status-0 ACK — no blind sleeps (review finding). Retries
+    /// once on timeout/NAK: the firmware treats a re-sent already-banked chunk as idempotent.
+    private func sendAcked(_ link: UploadLink, _ frame: Data) async -> Bool {
+        for _ in 0..<2 {
+            let before = link.state().count
+            link.send(frame)
+            let deadline = Date().addingTimeInterval(2.0)
+            while Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+                let s = link.state()
+                if s.count > before {
+                    if s.op == 0x85 && s.status == 0 { return true }
+                    break // NAK (or an interleaved unrelated reply) — retry the frame
+                }
+            }
+        }
+        return false
     }
 
     private func importSession(_ m: SessionMeta) {
@@ -484,7 +512,7 @@ struct TagSetupView: View {
     }
 
     private func uploadTrack(_ recs: [TrackRecord]) {
-        guard let send = trackUploadSend() else {
+        guard let link = trackUploadLink() else {
             uploadNote = "Track upload needs a direct BLE link to the tag (not via the Base)."
             return
         }
@@ -494,11 +522,15 @@ struct TagSetupView: View {
         let wire = TrackBuilder.wireData(recs)
         let crc = TrackBuilder.crc32(wire)
         Task { @MainActor in
+            let fail: (String) -> Void = { msg in
+                self.uploadProgress = nil
+                self.trackReady = false
+                self.uploadNote = msg
+            }
             var begin = Data([0x05, 0x00])
             begin += withUnsafeBytes(of: UInt16(recs.count).littleEndian) { Data($0) }
             begin += withUnsafeBytes(of: crc.littleEndian) { Data($0) }
-            send(begin)
-            try? await Task.sleep(for: .milliseconds(200))
+            guard await sendAcked(link, begin) else { return fail("Tag rejected the upload start.") }
             let per = 20
             var off = 0
             while off < recs.count {
@@ -507,16 +539,19 @@ struct TagSetupView: View {
                 p += withUnsafeBytes(of: UInt16(off).littleEndian) { Data($0) }
                 p.append(UInt8(n))
                 p += wire.subdata(in: off * 10 ..< (off + n) * 10)
-                send(p)
+                guard await sendAcked(link, p) else {
+                    return fail("Upload failed at point \(off)/\(recs.count) — check the link and retry.")
+                }
                 off += n
                 uploadProgress = Double(off) / Double(recs.count)
-                try? await Task.sleep(for: .milliseconds(120))
             }
-            send(Data([0x05, 0x02])) // COMMIT — the tag CRC-verifies before the slot can play
-            try? await Task.sleep(for: .milliseconds(400))
+            // COMMIT: the tag re-CRCs the stored file; status 0 here is the REAL success signal.
+            guard await sendAcked(link, Data([0x05, 0x02])) else {
+                return fail("Tag CRC check failed — track NOT stored. Retry the upload.")
+            }
             uploadProgress = nil
             trackReady = true
-            trackInfo = "\(recs.count) pts · \(Int(TrackBuilder.durationS(recs))) s"
+            trackInfo = "\(recs.count) pts · \(Int(TrackBuilder.durationS(recs))) s · verified"
         }
     }
 

@@ -118,15 +118,35 @@ EOF
 fi
 
 echo "== Flashing $FLAVOR ($VERSION) -> $TARGET"
-(cd "$DIR" && shasum -a 256 -c SHA256SUMS --ignore-missing >/dev/null) && echo "   checksums OK"
+# Checksum failure is FATAL — never flash artifacts that don't match their manifest
+# (external review 2026-07-26: the old `&&` form skipped the message and kept going).
+if ! (cd "$DIR" && shasum -a 256 -c SHA256SUMS --ignore-missing >/dev/null); then
+    echo "ERROR: SHA256 mismatch in $DIR — refusing to flash. Re-sync the release." >&2
+    exit 1
+fi
+echo "   checksums OK"
 
-# If a UF2 bootloader volume is already mounted (double-tap), just copy the UF2.
+# If a UF2 bootloader volume is already mounted (double-tap), copy the UF2 — but only onto a
+# volume that IS an nRF52/T1000 bootloader (any RP2040/other UF2 drive must never be hit), and
+# only claim success once the bootloader accepts the image (it unmounts the volume; cp's exit
+# code is unreliable because the device reboots mid-copy).
 for v in /Volumes/*; do
     if [ -f "$v/INFO_UF2.TXT" ]; then
+        if ! grep -qiE "t1000|nrf52" "$v/INFO_UF2.TXT"; then
+            echo "   note: UF2 volume $v is not a T1000/nRF52 bootloader — leaving it alone" >&2
+            continue
+        fi
         echo "   UF2 volume found at $v — copying $(basename "$UF2")"
-        cp "$UF2" "$v/" 2>/dev/null || true  # device reboots mid-copy; that's normal
-        echo "DONE (UF2). Device reboots itself."
-        exit 0
+        cp "$UF2" "$v/" 2>/dev/null || true # exit code meaningless here (reboot mid-copy)
+        for _ in $(seq 1 30); do
+            if [ ! -d "$v" ]; then
+                echo "DONE (UF2): bootloader accepted the image (volume unmounted); device reboots."
+                exit 0
+            fi
+            sleep 0.5
+        done
+        echo "ERROR: $v never unmounted — flash NOT confirmed. Re-enter the bootloader (double-tap) and retry." >&2
+        exit 1
     fi
 done
 

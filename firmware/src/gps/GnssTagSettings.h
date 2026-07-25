@@ -39,7 +39,11 @@
 #define GPSTAG_MIN_SNR 14
 #endif
 #ifndef GPSTAG_TX_SPACING_MS
-#define GPSTAG_TX_SPACING_MS 150
+// 500 ms = 2 Hz = EU868-legal SUSTAINED (docs/CAPACITY.md). The bench 150 ms (6.7 Hz) profile
+// is one tap away in the app — but a fresh flash must default to the legal state, because
+// ADAPTIVE mode's fast tier runs at exactly this spacing whenever the tag moves (external
+// review 2026-07-26: a 150 ms default contradicted the "EU-duty-safe boot default" claim).
+#define GPSTAG_TX_SPACING_MS 500
 #endif
 #ifndef GPSTAG_ELEV_MASK_DEG
 #define GPSTAG_ELEV_MASK_DEG 10

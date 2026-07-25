@@ -164,3 +164,11 @@ python tools/nodes.py --port gpstag # -> /dev/cu.usbmodemXXXX (for scripting)
 ## Phase 2 (not started)
 Bridge an **Apple Watch** GPS through the tracker (Watch → WatchConnectivity → iPhone → BLE →
 node) if the onboard GNSS proves inadequate. Notes in [PLAN.md](PLAN.md) §8 / firmware design.
+
+## License
+
+**GPL-3.0** (see [LICENSE](LICENSE)). The firmware under `firmware/` is a derivative of
+[Meshtastic firmware](https://github.com/meshtastic/firmware) (GPL-3.0); the complete
+corresponding source for every binary in `firmware/releases/` is this repository itself
+(`firmware/meshtastic-fork.patch` + `firmware/src/` drop-ins applied to the pinned upstream tag
+via `firmware/apply-fork.sh`). The iOS app, tools and docs are released under the same license.

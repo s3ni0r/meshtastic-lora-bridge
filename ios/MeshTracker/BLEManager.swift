@@ -18,6 +18,7 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     var directTag = false            // true = connected straight to a tag, not through Base
     var connectedNodeNum: UInt32 = 0 // who this link talks to (from my_info)
     var lastConfigReply: ConfigReply? // portnum-260 replies when the tag link doubles as config
+    var configReplyCount = 0          // bumps per reply — ACK tracking for bulk uploads
 
     @ObservationIgnored private var central: CBCentralManager!
     @ObservationIgnored private var peripheral: CBPeripheral?
@@ -146,9 +147,17 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         }
         if ch.uuid == kFromRadio {
             guard let v = ch.value, !v.isEmpty else { return } // empty read == queue drained
-            if connectedNodeNum == 0, let me = parseMyNodeNum(v) { connectedNodeNum = me }
+            if connectedNodeNum == 0, let me = parseMyNodeNum(v) {
+                connectedNodeNum = me
+                if directTag { // show WHO we actually latched onto, not just an advertised name
+                    status = "Direct: \(nodeName) · !\(String(format: "%08x", me)) — no Base"
+                }
+            }
             if let sp = parseFromRadio(v) { model.ingest(sp) }
-            if let cr = parseConfigReply(v) { lastConfigReply = cr }
+            if let cr = parseConfigReply(v) {
+                lastConfigReply = cr
+                configReplyCount += 1
+            }
             if var pw = parseTelemetry(v) {                  // battery: Base every 15 s, tags via LoRa
                 if pw.from == 0 { pw.from = connectedNodeNum }
                 if pw.from != 0 { model.ingestPower(pw) }

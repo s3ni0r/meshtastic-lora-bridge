@@ -20,6 +20,9 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     var deviceName = ""
     var settings: TagSettings?      // last state read back from the tag
     var lastStatus: UInt8?          // 0 ok / 1 rejected / 2 malformed (from the last SET)
+    var replyCount = 0              // bumps per reply — ACK tracking for bulk uploads
+    var lastReplyOp: UInt8 = 0
+    var lastReplyStatus: UInt8 = 0
 
     @ObservationIgnored private var central: CBCentralManager?
     @ObservationIgnored private var peripheral: CBPeripheral?
@@ -126,6 +129,9 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
             if let reply = parseConfigReply(v) {
                 settings = reply.settings
                 if reply.op == 0x81 { lastStatus = reply.status }
+                lastReplyOp = reply.op
+                lastReplyStatus = reply.status
+                replyCount += 1
                 stage = .ready
             }
             if let fr = fromRadio { p.readValue(for: fr) } // keep draining
