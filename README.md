@@ -4,13 +4,33 @@ Real-time GPS over LoRa: moving **Seeed T1000-E tags** (Meshtastic fork) stream 
 T1000-E Base tethered to an **iPhone**, shown live on a map at multi-Hz. Region: **EU868**
 (deployment target); bench-validated on US/ShortTurbo.
 
-## Status (2026-07-07, **v2.0**) — field-approved defaults, phone-tunable GNSS, direct BLE ✅
+## Status (2026-07-26, branch **tag-downlink**) — bidirectional tag, adaptive TX, simulator ✅
 
-**v2.0 = the outdoor-validated release.** Field-approved GNSS profile shipped as default:
-Fitness nav mode (the mode that actually ran during the approval test — this unit rejects
-Swimming, ACK 4), 0.3 m/s static freeze, 14 dB SNR mask, 10° elevation mask, 4 Hz GNSS,
-150 ms TX spacing (~6.7 Hz cap; switch to the EU868 2 Hz profile from the app for legal
-sustained use in France).
+**Newest (branch `tag-downlink`, 2026-07-25/26, all bench-validated on hardware — full
+contract in [docs/DOWNLINK.md](docs/DOWNLINK.md)):**
+
+- **The GPS tag listens now** (RX enabled; CLIENT_MUTE still bars rebroadcast): mode switching,
+  signals and the simulator ride portnum 260 through the Base at LoRa range or a direct link.
+  Command latency phone→tag ≈ **0.2–0.35 s** (Base fast-lane + API-poll fixes, measured).
+- **Adaptive TX** (boot default, EU-duty-safe): full rate above 5 km/h instantly, 1 pkt/3 s
+  when quasi-stationary (15 s sustain) — all four knobs phone-tunable (settings wire v3) and
+  the tag echoes mode/tier in every packet's flags. **CALIBRATION mode** (fixed max rate for
+  AutoShot) is TTL-dead-man guarded: forgotten = auto-revert, reboot = adaptive.
+- **Beep-first operator signals** (AutoShot's grammar): 1–8 counted beeps = progress, long
+  high beep = recording started (+ silent LED heartbeat), low repeating beep = problem, 0 =
+  cancel. Test panel in the app.
+- **Payload v4 (19 B)**: byte 18 = raw QMA6100P motion-energy envelope + flags bit1 `moving` —
+  zero added airtime; sessions record it (the dataset that will tune the surf thresholds).
+- **Indoor simulator ON the tag**: parametric speed programs, accel-coupled "shake to move",
+  and **GPX / recorded-session track replay** (upload once over direct BLE, replay anywhere)
+  — synthetic fixes drive the *real* firmware path and self-declare via flags bit4.
+
+**v2.0 baseline (2026-07-07) = the outdoor-validated release.** Field-approved GNSS profile
+shipped as default: Fitness nav mode (the mode that actually ran during the approval test —
+this unit rejects Swimming, ACK 4), 0.3 m/s static freeze, 14 dB SNR mask, 10° elevation mask,
+4 Hz GNSS, 150 ms TX spacing (~6.7 Hz cap; switch to the EU868 2 Hz profile from the app for
+legal sustained use in France). Rollback to the pre-downlink fleet state:
+`firmware/known-good/restore.sh` (v3.0 firmware).
 
 ```
 Tag A: BLE5/LoRa bridge (Dronetag Remote ID → LoRa)  ─┐
@@ -18,9 +38,10 @@ Tag A: BLE5/LoRa bridge (Dronetag Remote ID → LoRa)  ─┐
 Tag B: GPS tag (onboard AG3335 @ 4 Hz → LoRa)        ─┘
 ```
 
-- **Two interchangeable tag firmwares**, same 18-byte `PRIVATE_APP(256)` payload (v3); flags bits
-  5–7 identify the source (1 = bridge, 2 = GPS tag) on top of the LoRa `from` node id
-  ([firmware/FORK.md](firmware/FORK.md)).
+- **Two interchangeable tag firmwares**, same 19-byte `PRIVATE_APP(256)` payload (v4: battery
+  byte 17, motion-energy byte 18); flags bits 5–7 identify the source (1 = bridge, 2 = GPS tag)
+  on top of the LoRa `from` node id ([firmware/FORK.md](firmware/FORK.md); external-consumer
+  byte map: [docs/BATTERY_INTEGRATION.md](docs/BATTERY_INTEGRATION.md)).
 - **Live battery everywhere** (v3, 2026-07-13): every stream packet carries the sending tag's own
   cell % (byte 17; 101 = USB-powered), so tag battery updates at the position rate; the Base —
   which never streams — pushes stock DeviceMetrics over BLE every 15 s (fork tweak) and the app
@@ -32,8 +53,8 @@ Tag B: GPS tag (onboard AG3335 @ 4 Hz → LoRa)        ─┘
   Deployed at a **4 Hz target**, steered per boot by `GnssRateProbe`, with a France/Europe GNSS
   preset (GPS+GLONASS+Galileo+BDS, **EGNOS SBAS verified active**). Full story:
   [docs/gnss/UNLOCK_NOTES.md](docs/gnss/UNLOCK_NOTES.md).
-- **GPS tag runs `role=CLIENT_MUTE` + TX-only radio** (never receives LoRa) while keeping BLE for
-  the Meshtastic app.
+- **GPS tag runs `role=CLIENT_MUTE`**; since `tag-downlink` its radio RX is enabled for the
+  command channel (it still never rebroadcasts mesh traffic). The bridge tag remains TX-only.
 - **iOS app v2**: per-tag colored trails + heading arrows, favorites (persisted), per-tag
   show/hide, stable focus with pin/follow, map styles (standard/hybrid/satellite), fit-all, metric
   tiles (speed/heading/alt/accuracy/SNR/RSSI), CSV logging, app icon.

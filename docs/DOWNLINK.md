@@ -1,8 +1,18 @@
-# Tag downlink — remote mode control + operator signals (tag-downlink branch)
+# Tag downlink — remote control, signals, adaptive TX, simulator (tag-downlink branch)
+
+> **Review snapshot (2026-07-26).** This document is the authoritative contract for everything
+> added on branch `tag-downlink` (2026-07-25/26), all bench-validated on real hardware (Base
+> `!b0bb9cda` ↔ GPS tag `!18e77545`): downlink command channel (ops 0x02–0x05 below), beep-first
+> operator signals, speed-gated adaptive TX with phone-tunable knobs (settings wire v3), payload
+> v4 (motion energy + moving flag — see `BATTERY_INTEGRATION.md` for the full payload byte map),
+> and the on-tag indoor simulator (parametric programs, shake mode, GPX/track replay).
+> Companion docs: `BATTERY_INTEGRATION.md` (uplink payload, for external consumers),
+> `../firmware/FORK.md` (build/architecture), `CAPACITY.md` (airtime/duty math),
+> `../TODO.md` (roadmap state). Rollback of all of it: `../firmware/known-good/restore.sh`
+> (reflashes the validated v3.0 fleet firmware).
 
 The GPS tag now **listens** on LoRa: an app connected to the Base can switch the tag's TX mode
-and drive its LED/buzzer at any tracking distance — no reflash, no BLE proximity. Bench-validated
-2026-07-25 on real hardware (Base `!b0bb9cda` → GPS tag `!18e77545`).
+and drive its LED/buzzer at any tracking distance — no reflash, no BLE proximity.
 
 ## What changed (firmware, GPS-tag flavor only)
 
@@ -37,9 +47,10 @@ static balcony tag shows 0.1–0.3 Hz — the idle tier working as designed (3 s
 
 **How the sender must build the packet** (this IS the phone-app contract):
 `priority = HIGH`, `hop_limit = 1`, `want_ack = false`, direct-addressed to the tag's node id.
-Confirmation is **not** an ack: the tag echoes its mode in **every stream packet's flags** —
-bit2 = ADAPTIVE active, bit3 = slow tier engaged (bit0 lock, bit1 reserved `moving`, bits 5–7
-source type). Re-send the idempotent command until the stream reflects it.
+Confirmation is **not** an ack: the tag echoes its state in **every stream packet's flags** —
+bit0 lock · bit1 `moving` (accel classifier, payload v4) · bit2 ADAPTIVE active · bit3 slow
+tier engaged · **bit4 simulated fix** · bits 5–7 source type. Re-send the idempotent command
+until the stream reflects it.
 
 ### Modes
 

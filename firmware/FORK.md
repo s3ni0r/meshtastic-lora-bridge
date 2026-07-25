@@ -1,15 +1,20 @@
 # Firmware fork — high-rate position stream on the T1000-E
 
 Turns a T1000-E into a sub-second position streamer on `PRIVATE_APP (256)` (bypassing
-PositionModule). **Two interchangeable TAG flavors** share the same 18-byte payload (v3: byte 17
-carries the sender's live battery — 0-100 %, 101 = USB-powered, 255 = unknown) and the same
-Base/iOS receiver — flags bits 5–7 carry the source type so receivers can tell them apart (§9):
+PositionModule). **Two interchangeable TAG flavors** share the same **19-byte payload (v4**:
+byte 17 = live battery — 0-100 %, 101 = USB, 255 = unknown; byte 18 = motion-energy envelope
+from the QMA6100P, mg/4, 255 = unsampled**)** and the same Base/iOS receiver — flags bits 5–7
+carry the source type so receivers can tell them apart (§9). Since the `tag-downlink` branch
+(2026-07-25/26) the GPS-tag flavor also **listens**: mode switching, operator signals and the
+indoor simulator ride portnum 260 — the full command contract lives in
+[`../docs/DOWNLINK.md`](../docs/DOWNLINK.md); the payload byte map for external consumers in
+[`../docs/BATTERY_INTEGRATION.md`](../docs/BATTERY_INTEGRATION.md).
 
 | Flavor | Build flag | Position source | src bits |
 |---|---|---|---|
-| **BLE5/LoRa bridge** | `-DODID_SNIFFER …` | Dronetag Remote ID adverts (its GNSS, >1 Hz) | 1 |
-| **GPS tag** | `-DGPS_TAG` | Onboard AG3335 **@ 10 Hz** (boot-time unlock, §3/§9) | 2 |
-| Base (receiver) | *(plain build)* | — | — |
+| **BLE5/LoRa bridge** | `-DODID_SNIFFER …` | Dronetag Remote ID adverts (its GNSS, >1 Hz); radio stays TX-only | 1 |
+| **GPS tag** | `-DGPS_TAG` | Onboard AG3335 **@ 10 Hz** (boot-time unlock, §3/§9); radio RX **enabled** since tag-downlink (CLIENT_MUTE still bars rebroadcast) | 2 |
+| Base (receiver) | *(plain build)* | — (tag-downlink adds: priority TX fast-lane + 15 ms API poll for command latency — vendor patches in `RadioLibInterface.cpp` / `StreamAPI.cpp`) | — |
 
 > **Bench/test only.** At >2.4 Hz this exceeds the EU868 10% duty cycle. Set
 > `lora.override_duty_cycle=true` on the sender. Not for deployment. See `../PLAN.md` §1.
@@ -192,13 +197,16 @@ tick); it is mutually exclusive with `ODID_SNIFFER` (compile error if combined).
 
 ### Payload identity — telling the tags apart
 
-`flags` byte (offset 11): bit0 = lock, bit1 reserved for `moving` (QMA6100P gate, `TODO.md`),
-**bits 5–7 = source type** — `1` = ODID bridge, `2` = GPS tag, `0` = legacy/pre-fork. Old clients
-keep working: receivers key on length (12 = position only, 17 = +alt/speed/heading/hacc,
-18 = +battery byte, v3). Receivers thus distinguish tags two independent ways: the LoRa `from`
-node id (unique per device) and the source type (which *kind* of tag). The iOS app tracks each
-`from` as its own colored trail and shows the flavor label; `tools/m2_stream_poc.py recv`
-prints/logs both.
+`flags` byte (offset 11): bit0 = lock, **bit1 = `moving`** (QMA6100P classifier, v4 — sampled
+at 10 Hz on the stock AccelerometerThread tick via `src/gps/GnssMotion.cpp`), bit2 = ADAPTIVE
+TX mode, bit3 = adaptive slow tier (the downlink mode echo), **bit4 = SIMULATED fix**
+(`src/gps/GnssSim.cpp` — indoor simulator), **bits 5–7 = source type** — `1` = ODID bridge,
+`2` = GPS tag, `0` = legacy/pre-fork. Old clients keep working: receivers key on length
+(12 = position only, 17 = +alt/speed/heading/hacc, 18 = +battery v3, **19 = +motion energy
+v4** — free on air: 42 B on-air sits in the same ShortFast symbol group as 41 B). Receivers
+thus distinguish tags two independent ways: the LoRa `from` node id (unique per device) and
+the source type (which *kind* of tag). The iOS app tracks each `from` as its own colored trail
+and shows the flavor label; `tools/m2_stream_poc.py recv` prints/logs both.
 
 ### Battery telemetry (v3 + Base path)
 

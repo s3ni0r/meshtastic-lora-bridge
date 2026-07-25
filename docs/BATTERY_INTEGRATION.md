@@ -1,8 +1,10 @@
-# Battery integration spec — T1000-E tracker fleet (handoff for external apps)
+# Payload + battery integration spec — T1000-E tracker fleet (handoff for external apps)
 
-Self-contained reference for reading **live battery state** from this tracker system. No other
-context needed. Ground truth in this repo:
-`firmware/src/modules/HighRatePositionModule.cpp` (sender),
+Self-contained reference for consuming this tracker system's **uplink stream** (position,
+battery, motion) from an external app. No other context needed. The **downlink command
+channel** (mode switching, operator signals, simulator — portnum 260 ops) is specified
+separately in `DOWNLINK.md`; an app that wants to command the tag reads both. Ground truth in
+this repo: `firmware/src/modules/HighRatePositionModule.cpp` (sender),
 `ios/MeshTracker/MeshProto.swift` (reference decoder),
 `tools/m2_stream_poc.py` (Python reference decoder).
 
@@ -59,7 +61,7 @@ Payload (little-endian; **version = length**: 12 = position only, 17 = +telemetr
 | 4 | int32 | longitude · 1e7 |
 | 8 | uint16 | ms-in-second of the fix |
 | 10 | uint8 | sequence number |
-| 11 | uint8 | flags: **bit0 = GPS lock**, **bit1 = `moving`** (v4 accel classifier), bits 2–3 = TX-mode echo (bit2 adaptive, bit3 slow tier), **bits 5–7 = source** (0 legacy, 1 bridge, 2 GPS tag) |
+| 11 | uint8 | flags: **bit0 = GPS lock**, **bit1 = `moving`** (v4 accel classifier), bits 2–3 = TX-mode echo (bit2 adaptive, bit3 slow tier), **bit4 = SIMULATED fix** (on-tag test simulator — never treat as a real track), **bits 5–7 = source** (0 legacy, 1 bridge, 2 GPS tag) |
 | 12 | int16 | altitude, m |
 | 14 | uint8 | speed, km/h |
 | 15 | uint8 | heading · 256/360 |

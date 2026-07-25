@@ -49,8 +49,14 @@ any-motion/no-motion engines at µA cost, INT on P1.02, driver `src/motion/QMA61
       (multipath spikes), e.g. >8 m step between 250 ms fixes while accel energy says walking.
 
 ### 3. Motion-gated TX  [firmware]
-- [ ] Full 4 Hz stream while `moving`, drop to the 2 s heartbeat while parked (keep the
-      any-motion interrupt path so the first fix after departure goes out in ~ms).
+- [x] **Speed-gated variant SHIPPED (tag-downlink, 2026-07-25/26)** as ADAPTIVE TX mode: full
+      rate ≥5 km/h (instant), 1 pkt/3 s after 15 s below 3 km/h, hysteresis hold between; all
+      four knobs phone-tunable (settings wire v3), mode/tier echoed in stream flags, CALIBRATION
+      override with TTL dead-man. Bench-validated end-to-end via the on-tag simulator
+      (docs/DOWNLINK.md). Balcony observation: static tag = 0.1–0.3 Hz, as designed.
+- [ ] Accel-gated refinement: use the `moving` classifier (payload v4, bit1) as a second gate
+      next to speed — instant upshift on the pop-up instead of waiting ~1 s for GPS speed —
+      AFTER the sea thresholds are tuned from recorded session `me` data.
 - [ ] Biggest battery lever available (700 mAh cell); also frees channel airtime at rest.
 - [ ] Measure: %/hour parked and moving, before/after — the instrument exists since v3: session
       recordings carry per-packet `bt`, so a long parked + long moving session gives both slopes.
