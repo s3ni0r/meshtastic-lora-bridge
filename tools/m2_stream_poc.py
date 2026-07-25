@@ -29,13 +29,16 @@ import time
 
 PRIVATE_APP = 256
 # Payload formats (little-endian). v2 adds alt/speed/heading/hacc; v3 adds battery
-# (0-100 %, 101 = externally powered, 255 = unknown); base = lat/lon/ms/seq/flags.
+# (0-100 %, 101 = externally powered, 255 = unknown); v4 adds motion energy (mg/4, 255 =
+# unknown; flags bit1 = moving); base = lat/lon/ms/seq/flags.
 PAYLOAD_FMT_V1 = "<iiHBB"
 PAYLOAD_FMT_V2 = "<iiHBBhBBB"
 PAYLOAD_FMT_V3 = "<iiHBBhBBBB"
+PAYLOAD_FMT_V4 = "<iiHBBhBBBBB"
 V1_LEN = struct.calcsize(PAYLOAD_FMT_V1)  # 12
 V2_LEN = struct.calcsize(PAYLOAD_FMT_V2)  # 17
 V3_LEN = struct.calcsize(PAYLOAD_FMT_V3)  # 18
+V4_LEN = struct.calcsize(PAYLOAD_FMT_V4)  # 19
 WARMUP_S = 4.0  # let the receiver's serial interface connect before streaming
 
 
@@ -92,7 +95,11 @@ class Receiver:
         alt = spd = hacc = 0
         heading = 0.0
         bat = 255  # v3 battery; 255 = unknown (pre-v3 firmware or not sampled yet)
-        if len(payload) >= V3_LEN:
+        mot = 255  # v4 motion energy (mg/4); 255 = unknown
+        if len(payload) >= V4_LEN:
+            lat_i, lon_i, off, seq, flags, alt, spd, hdg, hacc, bat, mot = struct.unpack(PAYLOAD_FMT_V4, payload[:V4_LEN])
+            heading = hdg * 360.0 / 256.0
+        elif len(payload) >= V3_LEN:
             lat_i, lon_i, off, seq, flags, alt, spd, hdg, hacc, bat = struct.unpack(PAYLOAD_FMT_V3, payload[:V3_LEN])
             heading = hdg * 360.0 / 256.0
         elif len(payload) >= V2_LEN:
@@ -116,8 +123,9 @@ class Receiver:
         if rssi is not None:
             self.rssis.append(rssi)
         bat_s = "?" if bat == 255 else ("USB" if bat == 101 else f"{bat}%")
+        mot_s = "?" if mot == 255 else f"{mot * 4}mg{'▲' if flags & 0x02 else ''}"
         print(f"  rx {src_name}!{(packet.get('from') or 0) & 0xffff:04x} seq={seq:3d} lat={lat:.6f} lon={lon:.6f} "
-              f"spd={spd}km/h hdg={heading:3.0f} alt={alt}m ±{hacc}m bat={bat_s} snr={snr} rssi={rssi}")
+              f"spd={spd}km/h hdg={heading:3.0f} alt={alt}m ±{hacc}m bat={bat_s} mot={mot_s} snr={snr} rssi={rssi}")
         if self.csv:
             self.csv.write(f"{time.time():.3f},{packet.get('from')},{src},{seq},{lat:.7f},{lon:.7f},"
                            f"{alt},{spd},{heading:.0f},{hacc},{off},{flags},{snr},{rssi},"

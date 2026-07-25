@@ -32,11 +32,15 @@ any-motion/no-motion engines at µA cost, INT on P1.02, driver `src/motion/QMA61
       Tag Setup card + voltage/age), portnum-67 fallback for pre-v3 tags; sessions record `bt`
       per point; CSV/GPX exports + tools/m2_stream_poc.py updated. ShortFast airtime 45 → 48 ms
       (EU 2 Hz = 9.5% duty, still legal — CAPACITY.md recomputed).
-- [ ] Firmware: motion state machine on QMA6100P (variance + hysteresis as above), publish
-      **flags bit1 = moving** (bit already reserved in the v3 layout — no wire change needed).
-- [ ] iOS: decode `moving`; show "parked/moving" state.
-- Risk to test on-device: QMA I²C init timing/contention was flagged as risky in earlier work —
-  validate boot stability before shipping.
+- [x] **Motion data SHIPPED (2026-07-26, payload v4 on tag-downlink)**: QMA6100P sampled at
+      10 Hz on the stock AccelerometerThread tick; **byte 18 = raw motion-energy envelope**
+      (mg/4 — free on air: 19 B stays in the same ShortFast symbol group) + **flags bit1 =
+      moving** with PROVISIONAL land thresholds (>50 mg 0.5 s up / <20 mg 3 s down). Sessions
+      record `me` per point + the flag — recordings are now the dataset that tunes the SEA
+      thresholds. iOS shows a live motion tile (mg + moving/still); boot stability verified
+      (the old I²C init worry didn't materialize — sampling rides the existing sensor thread).
+- [ ] Tune the sea/surf thresholds from recorded surf-session `me` data, then wire the
+      classifier into motion-gated TX (#3) / the adaptive tier as a second gate next to speed.
 
 ### 2. Parked-position handling in the app (ZUPT display fusion)  [iOS only]
 - [ ] While `moving == 0`: freeze the marker (stop trail growth), average incoming fixes

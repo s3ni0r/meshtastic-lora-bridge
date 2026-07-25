@@ -29,6 +29,8 @@ final class SourceTrack: Identifiable {
     var battery = -1            // v3 per-packet battery: 0-100 %, 101 = powered, -1 = unknown
     var adaptive = false        // downlink mode echo: ADAPTIVE TX mode active (flags bit2)
     var slowTier = false        // adaptive slow tier engaged (flags bit3)
+    var motionMg = -1           // v4 accel energy envelope, mg (-1 = unknown)
+    var moving = false          // v4 QMA6100P classifier (flags bit1)
 
     /// Short display id, e.g. "9cda" — enough to tell two physical tags apart.
     var shortId: String { String(String(format: "%08x", from).suffix(4)) }
@@ -66,6 +68,8 @@ final class SourceTrack: Identifiable {
         if sp.battery >= 0 { battery = sp.battery } // keep the last known level across heartbeats
         adaptive = sp.adaptive
         slowTier = sp.slowTier
+        if sp.motionMg >= 0 { motionMg = sp.motionMg }
+        moving = sp.moving
         packetCount += 1
         lastHeard = now
 
@@ -203,13 +207,13 @@ final class PositionModel {
         }
     }
 
-    // MARK: - CSV logging (Documents/meshtracker_log3.csv — v3 schema adds `bat`)
+    // MARK: - CSV logging (Documents/meshtracker_log4.csv — v4 schema adds `mot_mg`,`moving`)
 
     private func openCSV() {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let url = dir.appendingPathComponent("meshtracker_log3.csv")
+        let url = dir.appendingPathComponent("meshtracker_log4.csv")
         if !FileManager.default.fileExists(atPath: url.path) {
-            try? "host_time,from,src,seq,lat,lon,ms_in_sec,flags,rx_snr,rx_rssi,alt_m,speed_kmh,heading,hacc_m,bat\n"
+            try? "host_time,from,src,seq,lat,lon,ms_in_sec,flags,rx_snr,rx_rssi,alt_m,speed_kmh,heading,hacc_m,bat,mot_mg,moving\n"
                 .write(to: url, atomically: true, encoding: .utf8)
         }
         csv = try? FileHandle(forWritingTo: url)
@@ -217,9 +221,11 @@ final class PositionModel {
     }
 
     private func writeCSV(_ sp: StreamPacket, _ now: Date) {
-        let line = "\(now.timeIntervalSince1970),\(sp.from),\(sp.source.rawValue),\(sp.seq),\(sp.lat),\(sp.lon)," +
-            "\(sp.msInSec),\(sp.flags),\(sp.rxSnr),\(sp.rxRssi),\(sp.altitude),\(sp.speedKmh)," +
-            "\(Int(sp.heading)),\(sp.hacc),\(sp.battery >= 0 ? "\(sp.battery)" : "")\n"
+        let bat = sp.battery >= 0 ? String(sp.battery) : ""
+        let mot = sp.motionMg >= 0 ? String(sp.motionMg) : ""
+        var line = "\(now.timeIntervalSince1970),\(sp.from),\(sp.source.rawValue),\(sp.seq),\(sp.lat),\(sp.lon),"
+        line += "\(sp.msInSec),\(sp.flags),\(sp.rxSnr),\(sp.rxRssi),\(sp.altitude),\(sp.speedKmh),"
+        line += "\(Int(sp.heading)),\(sp.hacc),\(bat),\(mot),\(sp.moving ? 1 : 0)\n"
         if let d = line.data(using: .utf8) { csv?.write(d) }
     }
 }

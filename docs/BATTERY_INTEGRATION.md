@@ -50,7 +50,8 @@ FromRadio.packet            field 2, length-delimited   → MeshPacket
 ```
 
 Payload (little-endian; **version = length**: 12 = position only, 17 = +telemetry,
-**18 = +battery — "payload v3", current firmware release v3.0, 2026-07-13**):
+18 = +battery (v3, firmware release v3.0), **19 = +motion (v4, tag-downlink branch,
+2026-07-26)**):
 
 | Offset | Type | Meaning |
 |---|---|---|
@@ -58,12 +59,13 @@ Payload (little-endian; **version = length**: 12 = position only, 17 = +telemetr
 | 4 | int32 | longitude · 1e7 |
 | 8 | uint16 | ms-in-second of the fix |
 | 10 | uint8 | sequence number |
-| 11 | uint8 | flags: **bit0 = GPS lock**, bit1 reserved (`moving`, future), **bits 5–7 = source** (0 legacy, 1 bridge, 2 GPS tag) |
+| 11 | uint8 | flags: **bit0 = GPS lock**, **bit1 = `moving`** (v4 accel classifier), bits 2–3 = TX-mode echo (bit2 adaptive, bit3 slow tier), **bits 5–7 = source** (0 legacy, 1 bridge, 2 GPS tag) |
 | 12 | int16 | altitude, m |
 | 14 | uint8 | speed, km/h |
 | 15 | uint8 | heading · 256/360 |
 | 16 | uint8 | horizontal accuracy, m (GST 1-σ; 0 = unknown) |
 | **17** | **uint8** | **battery: 0–100 = %, 101 = externally powered (USB), 255 = unknown** |
+| 18 | uint8 | motion energy (v4): high-passed \|accel\| envelope, **mg/4** (multiply by 4), 0–254; 255 = no accel sample |
 
 Decode rule:
 

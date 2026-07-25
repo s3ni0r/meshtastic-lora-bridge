@@ -21,6 +21,8 @@ cp "$CLONE/src/gps/GnssRateProbe.h"                src/gps/GnssRateProbe.h
 cp "$CLONE/src/gps/GnssRateProbe.cpp"              src/gps/GnssRateProbe.cpp
 cp "$CLONE/src/gps/GnssTagSettings.h"              src/gps/GnssTagSettings.h
 cp "$CLONE/src/gps/GnssTagSettings.cpp"            src/gps/GnssTagSettings.cpp
+cp "$CLONE/src/gps/GnssMotion.h"                   src/gps/GnssMotion.h
+cp "$CLONE/src/gps/GnssMotion.cpp"                 src/gps/GnssMotion.cpp
 cp "$CLONE/src/modules/GnssConfigModule.h"         src/modules/GnssConfigModule.h
 cp "$CLONE/src/modules/GnssConfigModule.cpp"       src/modules/GnssConfigModule.cpp
 cp "$CLONE/src/modules/GnssSignaler.h"             src/modules/GnssSignaler.h
@@ -40,6 +42,7 @@ git -C "$CLONE" diff "$BASE_TAG" -- \
     src/mesh/StreamAPI.cpp \
     src/modules/Modules.cpp \
     src/modules/Telemetry/DeviceTelemetry.h \
+    src/motion/QMA6100PSensor.cpp \
     src/platform/nrf52/NRF52Bluetooth.cpp \
     variants/nrf52840/tracker-t1000-e/platformio.ini \
     > meshtastic-fork.patch

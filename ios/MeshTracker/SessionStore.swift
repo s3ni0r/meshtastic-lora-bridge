@@ -23,8 +23,9 @@ struct SessionPoint: Codable {
     var sn: Float      // rx SNR dB
     var rs: Int32      // rx RSSI dBm
     var sq: UInt8      // firmware sequence number
-    var fl: UInt8      // raw flags byte (bit0 lock, bits 5-7 source)
+    var fl: UInt8      // raw flags byte (bit0 lock, bit1 moving, bits 2-3 mode, bits 5-7 source)
     var bt: Int?       // v3 battery % (101 = powered); absent on pre-v3 recordings/heartbeats
+    var me: Int?       // v4 motion energy, mg; absent pre-v4 — THE dataset for surf-threshold tuning
 }
 
 struct SessionTagMeta: Codable, Identifiable {
@@ -133,7 +134,8 @@ final class SessionRecorder {
         guard isRecording, var m = meta else { return }
         let pt = SessionPoint(t: Date().timeIntervalSince1970, la: sp.lat, lo: sp.lon, al: sp.altitude,
                               sp: sp.speedKmh, hd: sp.heading, ha: sp.hacc, sn: sp.rxSnr, rs: sp.rxRssi,
-                              sq: sp.seq, fl: sp.flags, bt: sp.battery >= 0 ? sp.battery : nil)
+                              sq: sp.seq, fl: sp.flags, bt: sp.battery >= 0 ? sp.battery : nil,
+                              me: sp.motionMg >= 0 ? sp.motionMg : nil)
         guard var data = try? encoder.encode(pt) else { return }
         data.append(0x0A) // newline
         if handles[sp.from] == nil {
@@ -292,13 +294,14 @@ enum SessionExport {
     }
 
     static func csv(_ s: LoadedSession) -> URL? {
-        var out = "t_iso,t_epoch,from,src,seq,flags,lat,lon,alt_m,speed_kmh,heading_deg,hacc_m,snr_db,rssi_dbm,bat\n"
+        var out = "t_iso,t_epoch,from,src,seq,flags,lat,lon,alt_m,speed_kmh,heading_deg,hacc_m,snr_db,rssi_dbm,bat,mot_mg,moving\n"
         let df = isoDF()
         for tr in s.tracks {
             for p in tr.points {
                 out += "\(df.string(from: Date(timeIntervalSince1970: p.t))),\(p.t),\(tr.from),"
                 out += "\(tr.source.rawValue),\(p.sq),\(p.fl),\(p.la),\(p.lo),\(p.al),\(p.sp),"
-                out += "\(Int(p.hd)),\(p.ha),\(p.sn),\(p.rs),\(p.bt.map(String.init) ?? "")\n"
+                out += "\(Int(p.hd)),\(p.ha),\(p.sn),\(p.rs),\(p.bt.map(String.init) ?? ""),"
+                out += "\(p.me.map(String.init) ?? ""),\(p.fl & 0x02 != 0 ? 1 : 0)\n"
             }
         }
         return write(out, name: "\(fileStem(s)).csv")

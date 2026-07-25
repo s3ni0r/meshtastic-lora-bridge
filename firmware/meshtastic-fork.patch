@@ -338,6 +338,50 @@ index a1d55a5..fe8114c 100644
      uint32_t sendStatsToPhoneIntervalMs = 15 * SECONDS_IN_MINUTE * 1000; // Send stats to phone every 15 minutes
      uint32_t lastSentStatsToPhone = 0;
      uint32_t lastSentToMesh = 0;
+diff --git a/src/motion/QMA6100PSensor.cpp b/src/motion/QMA6100PSensor.cpp
+index a04837e..7fd14be 100644
+--- a/src/motion/QMA6100PSensor.cpp
++++ b/src/motion/QMA6100PSensor.cpp
+@@ -2,6 +2,19 @@
+ 
+ #if !defined(ARCH_STM32WL) && !MESHTASTIC_EXCLUDE_I2C && defined(HAS_QMA6100P)
+ 
++#if defined(GPS_TAG) || defined(ODID_SNIFFER)
++// Fork (tag-downlink): every 100 ms tick also feeds the motion-energy tracker (payload v4
++// byte 18 + the `moving` flag). One I2C read of 6 bytes per tick — negligible bus load, and
++// the sampling rides the SAME thread that already owns this sensor (no init/contention risk).
++#include "gps/GnssMotion.h"
++static void forkSampleMotion(QMA6100PSingleton *sensor)
++{
++    outputData d;
++    if (sensor && sensor->getAccelData(&d))
++        gnssMotionSample(d.xData, d.yData, d.zData, millis());
++}
++#endif
++
+ // Flag when an interrupt has been detected
+ volatile static bool QMA6100P_IRQ = false;
+ 
+@@ -28,6 +41,9 @@ bool QMA6100PSensor::init()
+ 
+ int32_t QMA6100PSensor::runOnce()
+ {
++#if defined(GPS_TAG) || defined(ODID_SNIFFER)
++    forkSampleMotion(sensor); // fork: 10 Hz motion-energy sampling (see top of file)
++#endif
+     // Wake on motion using hardware interrupts - this is the most efficient way to check for motion
+     if (QMA6100P_IRQ) {
+         QMA6100P_IRQ = false;
+@@ -40,6 +56,9 @@ int32_t QMA6100PSensor::runOnce()
+ 
+ int32_t QMA6100PSensor::runOnce()
+ {
++#if defined(GPS_TAG) || defined(ODID_SNIFFER)
++    forkSampleMotion(sensor); // fork: 10 Hz motion-energy sampling (see top of file)
++#endif
+     // Wake on motion using polling  - this is not as efficient as using hardware interrupt pin (see above)
+ 
+     uint8_t tempVal;
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
 index 4f7fb47..c22c41f 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp

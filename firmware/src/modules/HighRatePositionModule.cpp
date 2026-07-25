@@ -6,6 +6,9 @@
 #include "configuration.h"
 #include "main.h" // concurrency::mainDelay — woken from wakeFreshFix()
 #include <string.h>
+#if defined(GPS_TAG) || defined(ODID_SNIFFER)
+#include "gps/GnssMotion.h" // payload v4: motion energy byte + `moving` flag
+#endif
 
 // Poll/fallback tick in ms. With an event-driven fix source (ODID_SNIFFER or GPS_TAG) the send is
 // wake-on-novel-fix; this is only the safety-net poll, so a (rare) missed cross-task wake costs at
@@ -47,11 +50,13 @@ static uint32_t sModeSpacing = 0;
 //   0 lat int32 (deg*1e7) | 4 lon int32 | 8 ms uint16 | 10 seq uint8 | 11 flags uint8
 //   12 alt int16 (m) | 14 speed uint8 (km/h) | 15 heading uint8 (deg*256/360) | 16 hacc uint8 (m)
 //   17 battery uint8 (v3: 0-100 %, 101 = externally powered, 255 = unknown)
-// flags: bit0 = lock, bit1 reserved for `moving` (QMA6100P gate, TODO.md), bit2 = ADAPTIVE TX
-// mode active, bit3 = adaptive slow tier engaged (bits 2-3 = the downlink mode echo, tag-downlink
-// branch), bits 5-7 = source type (SRC_*) so a receiver can tell WHICH tag flavor sent this even
-// before looking at the LoRa `from` node id. Receivers key on length: 12 = position only,
-// 17 = +telemetry, 18 = +battery (v3).
+//   18 motion uint8 (v4: high-passed |accel| envelope, mg/4, 0-254; 255 = no accel sample yet)
+// flags: bit0 = lock, bit1 = `moving` (QMA6100P classifier, v4), bit2 = ADAPTIVE TX mode active,
+// bit3 = adaptive slow tier engaged (bits 2-3 = the downlink mode echo), bits 5-7 = source type
+// (SRC_*) so a receiver can tell WHICH tag flavor sent this even before looking at the LoRa
+// `from` node id. Receivers key on length: 12 = position only, 17 = +telemetry, 18 = +battery
+// (v3), 19 = +motion (v4). At ShortFast, 18->19 B stays inside the same symbol group — the
+// motion byte costs ZERO extra airtime (docs/CAPACITY.md §8).
 #define HIGHRATE_SRC_LEGACY 0 // pre-fork / bench counter build
 #define HIGHRATE_SRC_ODID 1   // BLE5 Remote ID bridge (Dronetag is the position source)
 #define HIGHRATE_SRC_GPS 2    // self-contained tag: onboard AG3335 is the position source
@@ -197,6 +202,10 @@ int32_t HighRatePositionModule::runOnce()
 
     uint16_t offsetMs = (uint16_t)(nowMs % 1000);
     uint8_t flags = (hasLock ? 0x01 : 0x00) | (uint8_t)(HIGHRATE_SRC_TYPE << 5);
+#if defined(GPS_TAG) || defined(ODID_SNIFFER)
+    if (g_isMoving)
+        flags |= 0x02; // bit1 = moving (v4 — provisional land thresholds, see GnssMotion.cpp)
+#endif
 #if defined(GPS_TAG)
     // Mode echo (tag-downlink): bit2 = ADAPTIVE mode active, bit3 = slow tier engaged. This is
     // the downlink's confirmation channel — the app re-sends a MODE command until the stream
@@ -207,7 +216,7 @@ int32_t HighRatePositionModule::runOnce()
         flags |= 0x08;
 #endif
 
-    uint8_t buf[18];
+    uint8_t buf[19];
     memcpy(&buf[0], &lat, 4);
     memcpy(&buf[4], &lon, 4);
     memcpy(&buf[8], &offsetMs, 2);
@@ -230,7 +239,10 @@ int32_t HighRatePositionModule::runOnce()
     else if (powerStatus)
         batt = 101; // no cell detected = running on USB
     buf[17] = batt;
-    len = 18;
+    // v4: raw motion energy in every packet — the dataset that tunes the sea/surf thresholds
+    // later lives in session recordings of this byte. Free on air (same ShortFast symbol group).
+    buf[18] = g_motionEnergyByte;
+    len = 19;
 #endif
 
     // Latest-wins (stock PositionModule pattern): if the previous position is still queued (channel

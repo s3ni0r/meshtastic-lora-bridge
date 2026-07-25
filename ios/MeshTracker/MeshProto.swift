@@ -41,8 +41,11 @@ struct StreamPacket {
     var heading: Double = 0 // degrees
     var hacc: Int = 0       // horizontal accuracy, metres (0 = unknown)
     var battery: Int = -1   // v3 (18-byte payload): 0-100 %, 101 = externally powered, -1 = unknown
+    var motionMg: Int = -1  // v4 (19-byte): high-passed |accel| envelope in mg, -1 = unknown
 
     var hasLock: Bool { flags & 0x01 != 0 }
+    /// v4: the QMA6100P classifier's verdict (provisional land thresholds; see GnssMotion.cpp).
+    var moving: Bool { flags & 0x02 != 0 }
     /// Downlink mode echo (tag-downlink firmware): bit2 = ADAPTIVE TX mode, bit3 = slow tier.
     var adaptive: Bool { flags & 0x04 != 0 }
     var slowTier: Bool { flags & 0x08 != 0 }
@@ -159,6 +162,9 @@ private func parseData(_ bytes: ArraySlice<UInt8>, into sp: inout StreamPacket) 
     }
     if p.count >= 18, p[17] != 255 { // v3: live battery (101 = externally powered)
         sp.battery = Int(p[17])
+    }
+    if p.count >= 19, p[18] != 255 { // v4: motion energy, wire unit = mg/4
+        sp.motionMg = Int(p[18]) * 4
     }
     return true
 }

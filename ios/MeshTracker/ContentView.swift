@@ -493,6 +493,12 @@ struct ContentView: View {
                 metricTile("scope", a.hacc > 0 ? "±\(a.hacc)" : "±—", "acc m")
                 metricTile("antenna.radiowaves.left.and.right", String(format: "%.0f", a.lastSnr), "SNR dB")
                 metricTile("dot.radiowaves.right", "\(a.lastRssi)", "RSSI")
+                // v4: live accelerometer energy + the tag's own moving/still verdict
+                metricTile(a.moving ? "figure.walk.motion" : "figure.stand",
+                           a.motionMg >= 0 ? "\(a.motionMg)" : "—",
+                           a.moving ? "mg · moving" : "mg · still")
+                metricTile("battery.100percent",
+                           a.battery >= 0 ? (a.battery > 100 ? "USB" : "\(a.battery)%") : "—", "battery")
             }
             HStack {
                 Text(String(format: "stream %.1f Hz", a.rateHz))
@@ -699,6 +705,9 @@ struct ContentView: View {
                     Text("seq \(p.sq)")
                     if let bt = p.bt {
                         Text(bt > 100 ? "USB" : "bat \(bt)%")
+                    }
+                    if let me = p.me {
+                        Text("mot \(me)\(p.fl & 0x02 != 0 ? "▲" : "")")
                     }
                 }
                 .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)

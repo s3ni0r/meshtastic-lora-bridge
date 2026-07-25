@@ -8,8 +8,8 @@ region/preset facts read from the firmware we ship (`src/mesh/RadioInterface.cpp
 
 | Item | Today's value |
 |---|---|
-| Payload | 18 B on `PRIVATE_APP(256)`: lat/lon/ms/seq/flags + alt/speed/heading/hacc + battery (v3) |
-| On-air packet | **≈41 B** = 16 B radio header + encrypted Data protobuf (~6 B) + payload |
+| Payload | 19 B on `PRIVATE_APP(256)`: lat/lon/ms/seq/flags + alt/speed/heading/hacc + battery (v3) + motion energy (v4) |
+| On-air packet | **≈42 B** = 16 B radio header + encrypted Data protobuf (~6 B) + payload — same ShortFast symbol group as 41 B, so v4 added **zero airtime** (boundary at 44 B, §8) |
 | GPS tag (`!18e77545`) | fresh fix every 250 ms (4 Hz GNSS), TX spacing ≥150 ms (**phone-adjustable live**; 500 = EU868 profile), **2 s heartbeat when no fix** |
 | Bridge tag (`!b4dbb54c`) | Dronetag novelty rate ~2–4.5 Hz, same payload/heartbeat |
 | Base | RX only (broadcast — extra Bases/phones listen for free) |
