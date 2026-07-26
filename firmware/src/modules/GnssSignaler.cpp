@@ -1,6 +1,6 @@
 #include "GnssSignaler.h"
 
-#ifdef GPS_TAG
+#if defined(GPS_TAG) || defined(ODID_SNIFFER)
 #include "main.h" // concurrency::mainDelay
 
 // Language v2 timing/pitch (see GnssSignaler.h for the vocabulary):
@@ -53,11 +53,21 @@ void GnssSignaler::stopAll()
 #endif
 }
 
-bool GnssSignaler::play(uint8_t pattern, uint8_t seq)
+GnssSignaler::Result GnssSignaler::play(uint8_t pattern, uint32_t sid)
 {
-    if (seq == lastSeq) {
-        LOG_INFO("Signaler: dup seq=%u ignored", seq);
-        return true; // idempotent re-send — acknowledged, not replayed
+    // Dedupe FIRST (at-most-once playback per sid): an exact re-send is the sender recovering a
+    // lost ACK — re-ACK without replaying. The same sid carrying a DIFFERENT pattern is a client
+    // bug; NAK it rather than guess which of the two signals the operator was meant to hear.
+    for (uint8_t i = 0; i < kSidHistory; i++) {
+        if (ringUsed[i] && sidRing[i] == sid) {
+            if (patternRing[i] == pattern) {
+                LOG_INFO("Signaler: dup sid=%lu re-ACKed (no replay)", (unsigned long)sid);
+                return Result::DUPLICATE;
+            }
+            LOG_WARN("Signaler: sid=%lu pattern conflict (%u vs %u) — NAK", (unsigned long)sid, patternRing[i],
+                     pattern);
+            return Result::SID_CONFLICT;
+        }
     }
 
     if (pattern >= 1 && pattern <= 8) { // counted: N beeps + N blips
@@ -74,13 +84,16 @@ bool GnssSignaler::play(uint8_t pattern, uint8_t seq)
     } else if (pattern == 0) { // cancel / recording stopped
         stopAll();
     } else {
-        return false;
+        return Result::UNKNOWN; // unknown patterns never enter the dedupe ring
     }
-    lastSeq = seq;
-    LOG_INFO("Signaler: pattern=%u seq=%u t=%lums", pattern, seq, (unsigned long)millis());
+    sidRing[ringNext] = sid;
+    patternRing[ringNext] = pattern;
+    ringUsed[ringNext] = true;
+    ringNext = (uint8_t)((ringNext + 1) % kSidHistory);
+    LOG_INFO("Signaler: pattern=%u sid=%lu t=%lums", pattern, (unsigned long)sid, (unsigned long)millis());
     setIntervalFromNow(0);
     concurrency::mainDelay.interrupt(); // render the first edge now
-    return true;
+    return Result::PLAYED;
 }
 
 int32_t GnssSignaler::runOnce()
@@ -156,4 +169,4 @@ int32_t GnssSignaler::runOnce()
     return 1000; // idle
 }
 
-#endif // GPS_TAG
+#endif // GPS_TAG || ODID_SNIFFER

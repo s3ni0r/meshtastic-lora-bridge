@@ -1,136 +1,144 @@
-# Tag downlink — remote control, signals, adaptive TX, simulator (tag-downlink branch)
+# Tag downlink — remote control, radio states, signals, adaptive TX, simulator
 
-> **Review snapshot (2026-07-26, post-v4.3 working tree).**
-> This document is the authoritative current contract for branch `tag-downlink`. The released
-> v4.3 baseline ran its historical 22-assertion suite clean on real hardware (Base
-> `!b0bb9cda` ↔ GPS tag `!18e77545`). Statements below about the v3 appended-footer layout,
-> pre-access CHUNK ownership, exact-byte duplicate handling and reboot-persistent COMMIT retry
-> describe later source. Its host layout/capacity and unit gates pass, and its extended
-> 28-assertion HIL run passed on the same physical GPS tag on 2026-07-26, including an
-> acknowledged SIM start, A/B recovery after a verified reboot, generation-coordinate proof,
-> and post-reboot COMMIT retry. The broader feature set is: downlink command channel
-> (ops 0x02–0x05 below), beep-first operator signals,
-> speed-gated adaptive TX with phone-tunable knobs (settings wire v3), payload v4 (motion
-> energy + moving flag — see `BATTERY_INTEGRATION.md` for the full payload byte map), and the
-> on-tag indoor simulator (parametric programs, shake mode, GPX/track replay with A/B-slot
-> storage and a u32 transfer id in every TRACK frame — v4.3 wire, incompatible with pre-v4.3).
-> Companion docs: `BATTERY_INTEGRATION.md` (uplink payload, for external consumers),
-> `../firmware/FORK.md` (build/architecture), `CAPACITY.md` (airtime/duty math),
-> `../TODO.md` (roadmap state), `../AGENTS.md` + `../.agents/skills/` (agent onboarding +
-> flash/bench/release procedures). Rollback of all of it: `../firmware/known-good/restore.sh`
-> (reflashes the validated v3.0 fleet firmware).
+> **Contract snapshot (2026-07-26, A1+A4 round, post-v4.3 working tree).**
+> This document is the authoritative wire contract for branch `tag-downlink`. This round adds
+> the A4 radio-state machinery (runtime LISTENING/DEAF + HYBRID/PERMANENT profiles, RADIO op
+> 0x06), guaranteed-delivery SIGNAL v5 (u32 sid), settings wire v4 (profile byte; 20-byte
+> replies with capability, radio-status and duty-floor bytes), stream payload v5 (20-byte,
+> status byte) and **bridge parity**: BOTH tag flavors speak portnum 260 now. Behavioral
+> reference and state diagrams: `RADIO_STATES.md`. Uplink payload byte map for external
+> consumers: `BATTERY_INTEGRATION.md`. Verification: `tools/bench/verify_fixes.py` (GPS tag,
+> 69 assertions incl. real-LoRa deafness, PERMANENT reboot persistence and an EU868 duty-floor
+> round-trip) and `tools/bench/verify_bridge.py` (bridge op surface). Rollback:
+> `../firmware/known-good/restore.sh` (validated v3.0 fleet state).
 
-The GPS tag now **listens** on LoRa: an app connected to the Base can switch the tag's TX mode
-and drive its LED/buzzer at any tracking distance — no reflash, no BLE proximity.
+Both tags **listen** on LoRa after boot: an app connected to the Base can configure them,
+switch modes, drive beeps and command radio states at any tracking distance — and can order
+them **deaf** (TX-only) for the session, where nothing on the LoRa side can disturb them.
 
-## What changed (firmware, GPS-tag flavor only)
+## What changed in the A1+A4 round (firmware)
 
-- `HIGHRATE_TX_ONLY` is gone from the GPS_TAG flavor: the LR1110 idles in RX instead of standby.
-  `CLIENT_MUTE` still guarantees the tag never rebroadcasts mesh traffic. The **bridge tag keeps
-  TX-only** (its explicit build flag) and the Base is untouched — **no Base firmware change is
-  needed for any of this**.
-- `GnssConfigModule` (portnum **260**) now serves mesh-originated requests (replies over LoRa to
-  the requester; phone-direct path unchanged) and two new ops.
-- Rollback: `firmware/known-good/restore.sh` reflashes the validated v3.0 fleet state.
+- **`-DHIGHRATE_TX_ONLY` is retired.** "TX-only" is a runtime radio state (DEAF) owned by the
+  shared `TagRadioState` module, compiled into BOTH tag flavors. The bridge boots LISTENING
+  like the GPS tag and goes deaf on command. The Base is untouched.
+- **Bridge parity (A1)**: the bridge serves portnum 260 (settings, signals, radio state,
+  profiles — no GNSS knobs, no TX modes, no simulator: its capability byte says so), and
+  advertises **slow connectable BLE** (~1.0 s interval, ≲0.3 % of scanner time) alongside the
+  continuous ODID scan, so a phone can reach even a deaf bridge at close range.
+- Duty legality is enforced by the tag itself: live SETs below the region duty floor are
+  rejected; persisted values that a region change makes illegal are **clamped at use** and
+  flagged (never silently transmitted). The floor is computed from the region's duty % and
+  the measured airtime of the ACTIVE modem preset, and is reported in every settings reply.
+
+## Radio states & profiles (A4 — the runtime model)
+
+Two radio states, both flavors (state diagrams and plain-words walkthroughs:
+`RADIO_STATES.md`):
+
+- **LISTENING** — RX between transmissions; portnum-260 commands work at LoRa range.
+- **DEAF** — radio idles in standby between sends (µA vs RX mA; a foreign RX-in-progress can
+  never defer our TX). No LoRa command can reach it; **BLE/USB still work** (phone-injected
+  frames are delivered locally).
+
+Two persisted profiles (settings v4 byte 13):
+
+- **HYBRID (0x00, default)** — boot ALWAYS lands in LISTENING (+ ADAPTIVE on the GPS tag).
+  Deafness is runtime-only and never survives a reboot. Recovery ladder: LoRa while
+  listening → BLE at close range in any state → reboot.
+- **PERMANENT (bit0, + bit1 = boot-DEAF)** — fixed spacing (no adaptive tiers, no CALIBRATION
+  choreography) and a fixed boot radio state. A RADIO command **rewrites the persisted
+  profile** (no temporary states). A PERMANENT·DEAF tag is reachable only via BLE/USB — the
+  app states this at consent time.
+
+**GO-DEAF confirmation is two-layer:** the tag ACKs FIRST, holds a ~2 s mute-grace during
+which duplicate GO-DEAFs are re-ACKed (lost-ACK retries still land), then mutes. The stream's
+v5 status byte reports DEAF from the ACK moment — a deaf tag still streams, so the next
+packet proves the transition even if every ACK is lost.
 
 ## Wire protocol (portnum 260)
 
 | Op | Payload after op byte | Meaning |
 |---|---|---|
 | `0x00` GET | — | reply echoes current settings |
-| `0x01` SET | 8-byte (v2) or **13-byte (v3)** settings wire | v3 appends the adaptive knobs: `idleSpacingMs u16` (1000–30000), `adaptFastKmh u8` (2–30), `adaptSlowKmh u8` (1..fast−1), `adaptSustainS u8` (3–120) — persisted, live-applied |
-| `0x02` MODE | `mode u8` (+ `ttl_s u16 LE`, CALIBRATION only; 0 → 90 s default) | `0` = **CALIBRATION**: fixed max rate (the configured `txSpacingMs`), guarded by the TTL dead-man; `1` = **ADAPTIVE**: speed-gated throughput |
-| `0x03` SIGNAL | `pattern u8, seq u8` | render an operator signal (table below); duplicate `seq` is acknowledged but not replayed — re-sends are safe |
-| `0x04` SIM | `src u8, flags u8 (bit0 loop), ttl_s u16 LE` (+ `nSeg u8, nSeg×(speed u8, dur u8)` for src 1) | indoor synthetic-fix generator ON the tag: src 0 = off, 1 = segment program (≤8, one packet), 2 = accel-coupled "shake to move", 3 = **track replay** of the uploaded slot, 0xFF = TTL keep-alive. Every simulated packet sets **flags bit4**; dead-man TTL (default 600 s); never persisted. Bench-validated 2026-07-26: full adaptive cycle (idle → instant fast → 15 s downshift → idle) driven by a simulated 1↔12 km/h loop, 140/140 marked, STOP immediate |
-| `0x05` TRACK | `sub u8, tid u32 LE`, then per sub: `0x00` BEGIN (`count u16, crc32 u32`) · `0x01` CHUNK (`offRec u16, n u8, n×10 B records`) · `0x02` COMMIT · `0x03` ABORT — **the client-chosen transfer id `tid` (≠ 0) travels in EVERY sub-op**: a foreign CHUNK/COMMIT/ABORT is rejected before staging access | uploads the replay slot (≤**800** records; record: `lat i32, lon i32, speed u8 km/h, dt u8` 0.1 s from previous point). **Phone/USB-direct ONLY**; mesh-relays get a NAK. Storage is A/B slots: v3 staging has an immutable 16-byte header and no footer; COMMIT verifies the records then **appends** a 16-byte generation/tid/proof footer. Exact shape, footer proof and record CRC select the newest committed slot; the prior slot is never opened for writing. Legacy v2 generation-header slots remain readable. Two max committed slots are 16,064 logical bytes; the exact 224×128 bundled-LittleFS host gate proves promotion with an 8,192-byte prefs filler at 209/224 live blocks (the old offset-zero promotion reproduces `LFS_ERR_NOSPC`). COMMIT retry succeeds from the active slot's on-disk tid even after reboot; BEGIN rejects reuse of that active tid, so a failed replacement cannot borrow an older success. BEGIN during playback is NAKed. **Reply: `[0x85, status, sub, offLo, offHi, tid u32 LE]` (9 B)**; clients match sender + tid + sub + offset against a per-link sequence. A duplicate ACKs only when the previous chunk's offset, length **and stored bytes** match. The extended post-v4.3 HIL gate passed **28/28** on physical hardware on 2026-07-26, covering acknowledged SIM startup, wrong-tid CHUNK/COMMIT, changed-byte duplicates, failed commit, active-tid BEGIN refusal, A/B survival, and post-reboot COMMIT retry. iOS binds uploads to one tag/link generation and generation-fences every post-await mutation. |
+| `0x01` SET | 8 (v2) / 13 (v3) / **14-byte (v4)** settings wire | v4 appends `profileBits u8` (0x00 HYBRID · 0x01 PERMANENT·LISTENING · 0x03 PERMANENT·DEAF). A live SET whose sustained spacing is below the region duty floor is **rejected** (status 1). On the bridge the GNSS-chip fields are stored but inert |
+| `0x02` MODE | `mode u8` (+ `ttl_s u16 LE`, CALIBRATION only; 0 → 90 s default) | GPS tag, HYBRID only: `0` CALIBRATION (TTL dead-man) / `1` ADAPTIVE. NAK (1) on the bridge and in PERMANENT |
+| `0x03` SIGNAL | **v5: `pattern u8, sid u32 LE`** (legacy `pattern u8, seq u8` kept) | render an operator signal (table below). v5 delivery discipline: **at-least-once delivery, at-most-once playback per sid** — the sender retransmits the SAME sid until the correlated ACK arrives; the tag remembers the last 8 {sid, pattern} pairs: exact re-send → re-ACK without replay; same sid with a DIFFERENT pattern → NAK; unknown pattern → NAK. ACK = accepted + playback scheduled (≲50 ms), not "audio finished". Dedupe is RAM-only (a reboot inside the retry window could replay one signal — accepted residual) |
+| `0x04` SIM | `src u8, flags u8 (bit0 loop), ttl_s u16 LE` (+ `nSeg u8, nSeg×(speed u8, dur u8)` for src 1) | GPS tag only (NAK on the bridge). Indoor synthetic-fix generator: src 0 off · 1 segment program · 2 accel-coupled · 3 track replay · 0xFF TTL keep-alive. Simulated packets set flags bit4; TTL dead-man; never persisted |
+| `0x05` TRACK | `sub u8, tid u32 LE`, then per sub (BEGIN/CHUNK/COMMIT/ABORT — see v4.3 contract, unchanged) | GPS tag only, phone/USB-direct only. A/B slot storage, ≤800 records, appended-footer commit, 9-byte correlated ACK `[0x85, status, sub, offLo, offHi, tid]` |
+| `0x06` RADIO | `state u8` (0 LISTENING / 1 DEAF), `rid u32 LE` | **ACK-BEFORE-MUTE**: the 7-byte ACK leaves first; GO-DEAF then holds the ~2 s grace (duplicates re-ACKed, grace re-armed) before muting. LISTENING applies immediately and kicks the radio back into RX. In PERMANENT the persisted profile is rewritten (flash failure → NAK). Idempotent; retry the SAME rid until ACKed |
 
-The capacity gate models the exact logical 224×128 LittleFS geometry, but the T1000-E flash
-adapter erases/programs 4 KiB physical pages. It proves allocation headroom and filesystem-level
-footer rejection, not preservation during electrical power loss inside a page operation. An
-orderly reboot is covered by HIL; physical power-cut/fault injection remains outstanding.
+**Replies:**
 
-Reply (ops 0x00–0x04): `[0x80|op, status, settings]` — status 0 ok / 1 rejected / 2 malformed.
-v3 firmware always replies with 13-byte settings; **the reply length is the capability signal**
-(apps must send 8-byte SETs to tags that reply with 8). Op 0x05 uses its own correlated ACK
-(see the TRACK row). **Direct-link identity rule (R3 f1)**: a portnum-260 reply only proves the
-frame *reached* the target (possibly relayed over LoRa) — a client claiming a DIRECT link must
-verify the peripheral's own `my_info.my_node_num == target` before trusting/persisting it;
-MeshTracker's config client does exactly that, refuses mismatched peripherals, and **deletes
-the persisted peripheral↔node mapping on mismatch** so a stale mapping can never trap
-reconnection (R4 f4); a remembered UUID that fails or times out before identity proof is also
-forgotten and discovery resumes. **Reply binding rule (R4 f3)**: settings replies are adopted
-only when `MeshPacket.from` exactly matches the intended tag and the reply follows the current
-GET/SET sequence floor on the same link generation. Cached or prior-link replies therefore
-cannot be shown, edited or applied as the current tag's settings.
+- Settings echo (GET/SET/MODE/legacy-SIGNAL): `[0x80|op, status, 14-byte v4 settings,
+  capability u8, radio-status u8, dutyFloorMs u16 LE]` = **20 bytes** (v3 firmware replies 15;
+  the length is the version signal). `status`: 0 ok / 1 rejected / 2 malformed.
+- SIGNAL v5 ACK: `[0x83, status, pattern, sid u32 LE]` (7 B — length-distinguished from the
+  legacy 0x83 settings echo).
+- RADIO ACK: `[0x86, status, state, rid u32 LE]` (7 B).
+- TRACK ACK: `[0x85, status, sub, offLo, offHi, tid u32 LE]` (9 B, unchanged).
 
-**iOS (MeshTracker Tag Setup)**: TX-mode card — Calibration/Adaptive buttons with the live mode
-read back from the stream-flags echo, calibration TTL (120 s) auto-refreshed every 45 s while
-the screen is open; "Adaptive mode tuning" card (v3 tags only) exposes all four knobs; the map's
-tag rows append the live tier (`· idle / · fast / · cal`). Field observation 2026-07-26: a
-static balcony tag shows 0.1–0.3 Hz — the idle tier working as designed (3 s spacing ceiling).
+**Capability byte** (reply byte 16; bit set = knob group live): bit0 GNSS chip knobs · bit1
+TX modes · bit2 simulator/TRACK · bit3 signals · bit4 RADIO op · bit5 profiles. GPS tag =
+`0x3F`; bridge = `0x38`. Clients render from THIS byte, never from flavor heuristics.
 
-**How the sender must build the packet** (this IS the phone-app contract):
-`priority = HIGH`, `hop_limit = 1`, `want_ack = false`, direct-addressed to the tag's node id.
-Confirmation is **not** an ack: the tag echoes its state in **every stream packet's flags** —
-bit0 lock · bit1 `moving` (accel classifier, payload v4) · bit2 ADAPTIVE active · bit3 slow
-tier engaged · **bit4 simulated fix** · bits 5–7 source type. Re-send the idempotent command
-until the stream reflects it.
+**Radio-status byte** (reply byte 17 == stream payload v5 byte 19): bit0 DEAF (committed —
+set from the ACK moment, before the grace elapses) · bit1 PERMANENT profile · bit2
+duty-degraded (a persisted spacing is being clamped to the region floor).
 
-### Modes
+**Duty floor** (reply bytes 18–19, ms; 0 = no limit/bench override): the tag's own legal
+minimum sustained spacing = region duty % × measured airtime of a 44-byte-on-air stream
+packet at the ACTIVE preset. Clients must use this number, never preset assumptions — the
+bench itself once assumed ShortFast while the fleet ran another preset. If the floor exceeds
+the settable range (e.g. LONG_FAST under EU868: measured **5590 ms** > the 5000 ms cap), no
+legal SET exists: everything rejects and the tag runs clamped + flagged.
 
-- **CALIBRATION (0)** — full configured rate for AutoShot's calibration phase. ETSI duty is an
-  hourly aggregate, so max-rate bursts are legal (~18 min/h at 6.7 Hz); the **TTL dead-man**
-  makes over-runs impossible: the app must refresh the MODE command before the TTL lapses or
-  the tag reverts to ADAPTIVE on its own. Never persisted — reboot also lands in ADAPTIVE.
-- **ADAPTIVE (1, boot default)** — speed gate on the payload's own km/h byte: ≥ 5 km/h → full
-  rate on the next packet (eager up); < 3 km/h sustained 15 s → 1 packet / 3 s (skeptical
-  down); in between → hold current tier. Compile defaults: `GPSTAG_IDLE_SPACING_MS 3000`,
-  `GPSTAG_ADAPT_FAST_KMH 5`, `GPSTAG_ADAPT_SLOW_KMH 3`, `GPSTAG_ADAPT_SLOW_SUSTAIN_MS 15000`,
-  `GPSTAG_CALIB_TTL_DEFAULT_S 90`.
+**Sender contract** (unchanged): `priority = HIGH`, `hop_limit = 1`, `want_ack = false`,
+direct-addressed. For MODE/SET the stream-flags echo remains the confirmation channel; for
+SIGNAL v5 and RADIO the correlated ACK is the confirmation (retry the same sid/rid, bounded,
+then fail LOUDLY — the operator must never believe a beep happened when it did not).
 
-### Signals — language v2 (BEEP-FIRST, owner direction 2026-07-25)
+### Modes (GPS tag, HYBRID profile — unchanged semantics)
 
-The beeper (P0.25) is the primary channel; the green LED (P0.24) mirrors every beep.
-**Vocabulary frozen** (additions need owner sign-off):
+- **CALIBRATION (0)** — full configured rate, TTL dead-man (unrefreshed → ADAPTIVE).
+- **ADAPTIVE (1, boot default)** — speed-gated tiers (≥5 km/h fast; <3 km/h sustained 15 s →
+  idle spacing; band holds). Both flags bits 2–3 read 0 in PERMANENT (no modes there).
+
+### Signals — language v2 (BEEP-FIRST; vocabulary frozen)
 
 | id | Sound | Meaning |
 |---|---|---|
-| 1..8 | **N short beeps** (D6 1175 Hz — AutoShot's CalibrationBeeper pitch) + N blips | counted progress: convergence steps etc. — "how many" IS the message |
-| 10 | **one long HIGH beep** (G6, 600 ms) + long flash | **recording started** — then the LED heartbeat (silent blip / 3 s, locally generated, zero airtime; its absence = not recording) |
-| 11 | **LOW beep** (D5, 500 ms) + LED burn every 2 s | problem / calibration failed — repeats, self-capped 120 s |
-| 0 | silence | cancel everything — doubles as "recording stopped" |
+| 1..8 | N short beeps (D6) + N blips | counted progress |
+| 10 | one long HIGH beep (G6, 600 ms) + flash | recording started (then silent LED heartbeat / 3 s) |
+| 11 | LOW beep (D5, 500 ms) + LED burn / 2 s | problem — self-capped 120 s |
+| 0 | silence | cancel everything / recording stopped |
 
-Pitch encodes meaning: counted mid-tone = progress, long high = go, repeating low = bad news.
-Disable the stock status blink once per tag: `meshtastic --set device.led_heartbeat_disabled true`.
-**iOS**: the MeshTracker Tag Setup tab has an "Operator signals (test)" card (1×/2×/3×, Record
-start, Problem, Stop) — works via the Base over LoRa or on a direct tag link.
+Both flavors render signals since A1 (same piezo/LED; ONE signal owner thread).
 
-## Measured results (bench, 2026-07-25, tag streaming throughout)
+## Measured results
 
-Leg decomposition via `rawlat` (raw serial injection; Base logs FastQ/FastTX stamps for
-HIGH-priority packets — fork instrumentation):
+**A1+A4 HIL round (2026-07-26, GPS tag `!18e77545` + Base `!b0bb9cda`, dev firmware):**
 
-| Stage of the fix | total median | ingest (host→queued) | queue (→TX start) | air+dispatch |
-|---|---|---|---|---|
-| Stock TX path (baseline) | **445 ms** (max 713) | — | — | — |
-| + priority fast-lane (skip contention for HIGH+ local) | 411 ms | 189 ms | **20 ms** | 174 ms |
-| + 15 ms API idle poll (was a 250 ms lottery) | **335 ms** (max 474) | **137 ms** | 20 ms | 157 ms |
-
-- Delivery: 20/20 and 12/12 across runs, zero losses; dup-seq dedupe verified on-device.
-- Measured numbers INCLUDE ~50–100 ms of measurement overhead (console prints + host serial
-  reads on both ends). True USB command→beep ≈ **~250 ms**.
-- **The phone-BLE path is faster still**: BLE `toRadio` writes ingest inside the write callback
-  (no poll at all), so iPhone-tap→beep ≈ **~200 ms** — verify by feel with the iOS signals card.
-- Remaining lever if ever needed: tag-side RX dispatch (~50–80 ms through the main-loop pass).
-- **Mode machinery**: CALIBRATION echoed in-stream in 1.6 s (bounded by packet cadence);
-  **TTL dead-man reverted at exactly 20.0 s** unrefreshed; idempotent re-send confirmed;
-  **slow tier self-engaged at 17.7 s** quasi-stationary.
-- Open item for the field: tier *flags* validated indoors; the actual pkt/s effect of
-  slow-vs-fast tier (0.33 vs 2–6.7 Hz) needs one outdoor walk with a stable lock.
+- 69-assertion suite: A/B1–B4 regression intact; C1 20-byte v4 reply surface; C2 sid
+  dedupe/conflict/unknown NAKs; C3 GO-DEAF ACK-before-mute, in-grace re-ACK, stream status
+  flip to DEAF, **LoRa commands provably unanswered while deaf (3 attempts) and restored
+  after un-deafen**; C4 PERMANENT·DEAF survives an uptime-verified reboot, RADIO rewrites
+  the persisted profile; C5 EU868 round-trip: stored 150 ms spacing survives + DEGRADED
+  flag, sub-floor SETs rejected, measured floor **5590 ms at LONG_FAST** (beyond the
+  settable range → every SET rejects, clamp stays flagged), full radio identity restored
+  with a post-restore LoRa delivery proof.
+- Fleet finding (2026-07-26): the bench fleet's actual modem preset is **SHORT_TURBO**
+  (500 kHz BW), not the ShortFast that `CAPACITY.md` plans for deployment — and SHORT_TURBO
+  is not EU868-legal, so entering EU makes the firmware itself degrade the preset to
+  LONG_FAST. Deployment must pick an EU-legal preset and re-derive the duty numbers; the
+  tags now measure and report their own floor either way.
+- v4.3-era latency legs (`rawlat`, SHORT_TURBO): phone→tag ≈ 0.2–0.35 s (unchanged this
+  round; re-measured 2026-07-26: 3/3 complete, median 467 ms including ~100 ms measurement
+  overhead on a busy bench).
 
 ## Test harness
 
-`tools/downlink_latency.py` (run with the meshtastic pipx python) — `signal` (N-trial latency),
-`rawlat` (leg decomposition), `mode` (echo + TTL + tier timings), `count --pattern N` /
-`record` / `problem` / `cancel` (audible checks). Keep the phone app disconnected from the Base
-during USB tests (single PhoneAPI client).
+`tools/bench/verify_fixes.py` — the 69-assertion GPS-tag gate (needs tag + Base on USB; C5
+cycles the region and RESTORES region+preset with an air-path proof). `tools/bench/verify_bridge.py`
+— the bridge op-surface gate (D1–D6; the sniffer-throughput A/B additionally needs a live
+Dronetag). `tools/downlink_latency.py` — signal/mode latency legs. Keep the phone app
+disconnected during USB tests (single PhoneAPI client).

@@ -15,27 +15,23 @@ Per the settled model (RADIO_STATES §2 wins, review 2026-07-26): the bridge has
 ADAPTIVE/CALIBRATION TX modes — its knob set is TX spacing, signals, naming, profiles
 and the radio state.
 
-- [ ] Design first, aligned with the A4 model: `HIGHRATE_TX_ONLY` becomes the runtime DEAF
-      state on BOTH flavors — the bridge is LISTENING only during the calibration stage,
-      then goes deaf for the session, so the continuous-RX battery cost applies only to
-      calibration windows (quantify it anyway: standby µA → RX mA; the bridge has no GNSS
-      draw to hide it under). CLIENT_MUTE story mirrors the GPS tag.
-- [ ] The go-deaf/radio-state op and correlated SIGNAL ACKs (A4 decisions) ship as part of
-      this parity work — the bridge needs them for its calibration-stage role. Bridge BLE
-      advertising is REQUIRED here: with the button toggle removed, BLE is the only way to
-      reach a deaf bridge without a reboot (slow connectable advertising, ≲0.3 % scan-time
-      cost, bench A/B with the sniffer as the acceptance gate).
-- [ ] Split `GnssConfigModule` into transport + capability sets; the settings reply must
-      advertise WHICH knob groups the tag supports (extend the existing
-      length-is-capability signal into an explicit capability byte — cleaner than a fourth
-      length variant).
-- [ ] Bridge flavor: enable BLE advertising (it currently advertises nothing) so the app
-      can reach it directly like the GPS tag.
-- [ ] iOS Tag Setup: render knob groups from the capability signal instead of assuming the
-      GPS-tag feature set.
-- [ ] Bench: extend `verify_fixes.py` (or a sibling) to run the non-GPS op set against the
-      bridge on USB; the sniffer-throughput A/B must cover a CONNECTED BLE/PhoneAPI
-      session (not just advertising on/off — connection events cost more scan time).
+- [x] **DONE (2026-07-26)** — `-DHIGHRATE_TX_ONLY` retired: runtime DEAF via the shared
+      `TagRadioState` module on BOTH flavors; the bridge boots LISTENING and goes deaf on
+      command; CLIENT_MUTE mirrors the GPS tag. (RX-cost quantification standby µA → RX mA
+      still pending a powered measurement.)
+- [x] **DONE** — RADIO op (0x06, ACK-before-mute + 2 s grace) and SIGNAL v5 correlated ACKs
+      ship on both flavors; bridge advertises slow connectable BLE (~1.0 s interval)
+      alongside the ODID scanner (`NRF52Bluetooth.cpp`).
+- [x] **DONE** — explicit capability byte in every settings reply (GPS tag 0x3F, bridge
+      0x38) + radio-status byte + the tag's OWN duty-floor u16 (reply = 20 bytes, v4).
+- [x] **DONE** — bridge BLE advertising enabled (slow interval preserved across
+      resumeAdvertising too).
+- [x] **DONE** — iOS Tag Setup renders cards from the capability byte (bridge targets show
+      signals/radio/profiles only; pre-v4 falls back per flavor).
+- [ ] Bench: `verify_bridge.py` covers the bridge op surface (D1–D6) on USB — but the
+      sniffer-throughput A/B (advertising on/off AND during a CONNECTED BLE session)
+      still needs a live Dronetag feeding ODID adverts; run it before calling the
+      coexistence cost measured. RX-power delta (LISTENING vs DEAF) also unmeasured.
 
 ### A2. Device-type advertisement (AutoShot-facing discovery contract)
 
@@ -97,8 +93,9 @@ region/preset change** (illegal persisted params clamp to nearest legal spacing 
 "profile degraded" flag — never silent illegal TX); app shows "persists across reboots"
 consequences explicitly.
 
-**Agreed decisions (2026-07-26):**
-- [ ] **Guaranteed signal delivery (the ACK's real purpose)** — a calibration SIGNAL
+**Agreed decisions (2026-07-26) — IMPLEMENTED + HIL-VERIFIED 2026-07-26 (69-assertion
+suite; see docs/DOWNLINK.md "Measured results" for the evidence list):**
+- [x] **Guaranteed signal delivery (the ACK's real purpose)** — a calibration SIGNAL
       (beep/flash) must REACH the tag no matter what: the user acts on hearing it, so a
       silently lost command is a calibration failure. Semantics: **at-least-once delivery,
       at-most-once playback per signal id** (design review 2026-07-26 tightened the
@@ -115,27 +112,39 @@ consequences explicitly.
       the app also accepts the next stream packet's v5 status byte reading DEAF — even if
       every ACK is lost, the stream proves the transition. Ordering: record-start beep
       (confirmed) → go-deaf.
-- [ ] **Fully deaf** — no post-TX listen window (option rejected; simplicity + max battery).
+- [x] **Fully deaf** — no post-TX listen window (option rejected; simplicity + max battery).
+      HIL-proven: 3 Base-relayed LoRa attempts unanswered while DEAF, USB path alive.
 - **Button toggle REMOVED (owner decision 2026-07-26, superseding the earlier hatch):**
   radio-state control is exclusively the iOS app — LoRa while LISTENING, BLE at close
   range in any state. Recovery ladder: LoRa → BLE → reboot (HYBRID never persists
   deafness). Accepted consequence: a PERMANENT·DEAF tag is reachable only via BLE/USB;
   the app states this at profile-set time.
-- [ ] Payload v5 status byte (radio state + active profile) — **REQUIRED phase 1**: it
+- [x] Payload v5 status byte (radio state + active profile) — **REQUIRED phase 1**: it
       is the GO-DEAF fallback confirmation (review fix), not just visibility. The
       20-byte payload stays in the same ShortFast symbol group, zero added airtime.
       Ship with an explicit COMPATIBILITY CHECKLIST covering every consumer of the
       length-is-version rule (MeshTracker, tools/m2_stream_poc.py, bench decoders,
       BATTERY_INTEGRATION.md external guidance) — same checklist covers the new
       capability byte and profile byte.
-- [ ] Wire: settings v3 → v4 (profile byte + validation); a 260 op that restores Hybrid;
-      known-good reflash remains the last-resort escape.
-- [ ] **Generic implementation (agreed)**: ONE shared radio-state module compiled into
+- [x] Wire: settings v3 → v4 (profile byte + validation + capability/radio-status/duty-floor
+      reply bytes); SET profile 0x00 restores Hybrid; known-good reflash remains the
+      last-resort escape.
+- [x] **Generic implementation (agreed)**: ONE shared radio-state module compiled into
       both flavors (states, persistence rules, radio-state op + ACK-before-mute, signal
       retry discipline, BLE/USB path in every state); flavor code only supplies what runs
       inside the states. BLE deaf-toggle works at close range in ANY state on both
       flavors — the bridge side rides A1's slow connectable advertising (≲0.3 %
       scan-time cost, bench A/B with the sniffer as acceptance gate).
+
+### A1/A4 round findings (2026-07-26, need owner decisions)
+
+- **Fleet preset is SHORT_TURBO, docs assume ShortFast.** Measured on the bench: base+tags
+  run SHORT_TURBO (500 kHz BW) — EU-ILLEGAL, so EU deployment cannot ship the bench preset;
+  CAPACITY.md's ShortFast math needs re-anchoring, and the deployment plan needs an explicit
+  preset decision. The tags now self-report their duty floor (settings reply bytes 18–19),
+  measured 5590 ms under LONG_FAST+EU868 on real hardware.
+- Region cycling destroys EU-illegal presets (firmware behavior): any tooling that touches
+  `lora.region` must save/restore the preset and re-prove the air path (bench C5 now does).
 
 ## B. Platform & architecture
 

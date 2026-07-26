@@ -85,12 +85,17 @@ Python for anything meshtastic/serial: `/Users/s3ni0r/.local/pipx/venvs/meshtast
 # Firmware — one build per flavor (from firmware/meshtastic-firmware/):
 PLATFORMIO_BUILD_FLAGS="-DGPS_TAG" pio run -e tracker-t1000-e                  # GPS tag
 PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER \
-  -DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY" pio run -e tracker-t1000-e  # bridge
+  -DHIGHRATE_POSITION_INTERVAL_MS=250" pio run -e tracker-t1000-e  # bridge (TX-only is runtime now)
 pio run -e tracker-t1000-e                                                     # base
 
-# Flash (checksums + serial pinning, fail-closed):
-tools/flash_t1000e.sh gps-tag gpstag            # release artifacts, by role
-VERSION=v4.3 tools/flash_t1000e.sh base-plain base
+# Flash — POLICY (enforced by tools/tests/test_flash_policy.py): tools/flash_t1000e.sh is
+# the ONE flasher, hands-free (release flavors AND `dev` = the current .pio build). Its
+# touch -> re-find-same-silicon -> touchless-nrfutil dance is what makes serial-DFU reliable;
+# raw `adafruit-nrfutil --touch` is banned (re-enumeration race wedged boards 4x).
+tools/flash_t1000e.sh gps-tag gpstag             # release artifacts, by role
+tools/flash_t1000e.sh dev gpstag                 # current dev build (build the flavor first!)
+# Recovery only (board wedged; operator double-taps -> UF2 volume):
+/Users/s3ni0r/.local/pipx/venvs/meshtastic/bin/python tools/flash_uf2.py gpstag <file.uf2>
 
 # Host-only TRACK layout/capacity gate (must pass before the HIL suite):
 python3 tools/bench/verify_track_layout.py
@@ -115,19 +120,32 @@ ios/scripts/release.sh [version] --note "text"
 
 ## Protocol invariants (breaking any of these breaks the shipped app/fleet)
 
-- Stream payload: **19-byte v4** on `PRIVATE_APP(256)` — see `docs/BATTERY_INTEGRATION.md`
-  for the byte map. Payload LENGTH is the version signal (12/17/18/19). Flags: bit0 lock,
-  bit1 moving, bit2 adaptive, bit3 slow tier, bit4 simulated, bits 5–7 source type.
-- Command channel: portnum **260**, ops per `docs/DOWNLINK.md`. Settings SET/reply length is
-  the capability signal (8 B v2 vs 13 B v3). TRACK sub-ops all carry a u32 transfer id; the
-  ACK is 9 bytes echoing the request's tid; storage is A/B generation slots (cap **800**
-  records) — the committed track is never opened for writing.
-- Senders build downlink packets with `priority=HIGH(100)`, `hop_limit=1`, `want_ack=false`;
-  confirmation is the tag's stream-flags echo, not an ack.
-- GPS tag runs `role=CLIENT_MUTE` (RX enabled since tag-downlink, never rebroadcasts);
-  bridge tag is TX-only; the Base needs no flavor logic.
+- Stream payload: **20-byte v5** on `PRIVATE_APP(256)` — see `docs/BATTERY_INTEGRATION.md`
+  for the byte map. Payload LENGTH is the version signal (12/17/18/19/20). Flags: bit0 lock,
+  bit1 moving, bit2 adaptive, bit3 slow tier, bit4 simulated, bits 5–7 source type. Byte 19
+  = radio status (bit0 DEAF, bit1 PERMANENT, bit2 duty-clamped) — the GO-DEAF fallback
+  confirmation.
+- Command channel: portnum **260** on BOTH tag flavors (A1 parity), ops per
+  `docs/DOWNLINK.md` (GET/SET/MODE/SIGNAL/SIM/TRACK/**RADIO 0x06**). Settings replies are
+  20 bytes (v4): 14B settings + capability byte + radio-status byte + duty-floor u16 (the
+  tag's OWN legal-minimum spacing — never re-derive from preset assumptions). SIGNAL v5
+  carries a u32 sid with {sid,pattern} dedupe; RADIO carries a u32 rid; both get 7-byte
+  correlated ACKs. TRACK is unchanged (u32 tid, 9-byte ACKs, A/B slots, cap 800).
+- Senders build downlink packets with `priority=HIGH(100)`, `hop_limit=1`, `want_ack=false`.
+  MODE/SET confirm via the stream echo; SIGNAL v5 / RADIO / TRACK via their correlated ACKs
+  (retry the SAME sid/rid/tid until ACKed, bounded, then fail LOUDLY).
+- Radio states (A4): runtime LISTENING/DEAF via the shared `TagRadioState` module (both
+  flavors; `-DHIGHRATE_TX_ONLY` retired). HYBRID boots LISTENING always; PERMANENT persists
+  its radio state and RADIO commands REWRITE the profile. GO-DEAF = ACK first, ~2 s grace
+  re-ACKing duplicates, then mute. Both tags run `role=CLIENT_MUTE`; the Base needs no
+  flavor logic.
 - CALIBRATION mode and the simulator are TTL-dead-man guarded and never persisted — reboot
-  always lands in ADAPTIVE with real GPS.
+  always lands in ADAPTIVE with real GPS (HYBRID).
+- Fleet radio reality (measured 2026-07-26): the bench fleet preset is **SHORT_TURBO** (not
+  the ShortFast CAPACITY.md plans for EU deployment, and EU-illegal — entering EU_868 makes
+  the firmware degrade the preset to LONG_FAST, splitting the air path). Any bench flow that
+  cycles regions must restore region AND preset together and re-prove LoRa delivery
+  (verify_fixes.py C5 does).
 
 ## Operational hazards (each of these cost real bench time — do not rediscover them)
 
@@ -141,12 +159,18 @@ ios/scripts/release.sh [version] --note "text"
 3. **The 1200-baud touch opens serial-DFU, not a UF2 disk** — same `/dev` path, no volume.
    A UF2 disk only exists after a button double-tap. A DFU session that isn't spoken to
    promptly goes permanently deaf (mute CDC) — only power-cycle/double-tap recovers it, so
-   **never "probe" a healthy board's port at 1200 baud**.
+   **never "probe" a healthy board's port at 1200 baud**. After the FOURTH wedge (2026-07-26,
+   raw `adafruit-nrfutil --touch 1200` lost the re-enumeration race and dropped the board off
+   the bus) this became an ENFORCED POLICY: ALL flashing goes through `tools/flash_t1000e.sh`
+   (hands-free; its own touch -> re-find the same silicon by serial -> touchless nrfutil);
+   DIY nrfutil/touch invocations anywhere else fail `tools/tests/test_flash_policy.py`.
+   UF2 volume (`tools/flash_uf2.py`, operator double-tap) is the RECOVERY path.
 4. **Never pipe a flasher through `head`/`grep -m N`.** The reader exiting SIGPIPE-kills
    nrfutil mid-upload and leaves an invalid app (bricked-to-bootloader). Redirect to a file
    and tail it afterwards.
-5. **Monitor long operations actively** — stream per-step progress, check output every
-   15–30 s, treat 2× the expected duration with no output as a stall. Never wait blindly.
+5. **Monitor long operations actively** — bounded waits, output to a log file, progress
+   shown every 15–30 s, 2× expected duration with no output = stall. Never wait blindly and
+   never wait forever. The standard shape lives in `.agents/skills/long-running-ops/SKILL.md`.
 6. **`| tail -1` (and friends) mask failures** — DFU errors have printed while exit codes
    read 0. Keep exit codes honest; check them stepwise.
 7. **Secrets:** `.release-env` (repo root, git-ignored, ASC key ids) and the `.p8` under
@@ -166,6 +190,7 @@ verified and how — never claim more reproducibility or safety than was actuall
 ## Skills (step-by-step procedures)
 
 - `.agents/skills/flash-t1000e/SKILL.md` — flashing every path + wedged-board recovery
+- `.agents/skills/long-running-ops/SKILL.md` — bounded, monitored execution of anything slow
 - `.agents/skills/bench-verify/SKILL.md` — running/extending the hardware regression suite
 - `.agents/skills/deploy-ios/SKILL.md` — build → install on iPhone (the standing rule for iOS changes)
 - `.agents/skills/firmware-release/SKILL.md` — edit → sync → build flavors → cut a release

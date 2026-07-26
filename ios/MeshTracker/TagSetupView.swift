@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit // UINotificationFeedbackGenerator — the LOUD delivery-failure haptic
 import UniformTypeIdentifiers
 
 /// The GPS tag configuration space — a first-class screen, deliberately separate from the map.
@@ -37,7 +38,13 @@ struct TagSetupView: View {
     @State private var draft = TagSettings()
     @State private var baseline: TagSettings? // last state confirmed by the tag
     @State private var target: UInt32?
-    @State private var signalSeq = UInt8.random(in: 0...255) // dedupe counter for op 0x03
+    @State private var signalSeq = UInt8.random(in: 0...255) // legacy op 0x03 dedupe (pre-v4 tags)
+    // A4 guaranteed delivery: one in-flight signal + one in-flight radio command, each with a
+    // visible outcome — the one forbidden result is a silently lost command (RADIO_STATES §4).
+    @State private var signalDelivery = DeliveryState.idle
+    @State private var signalTask: Task<Void, Never>?
+    @State private var radioDelivery = DeliveryState.idle
+    @State private var radioTask: Task<Void, Never>?
     @State private var heldMode: UInt8? // 0 = holding CALIBRATION (auto-refresh its TTL); nil = not commanding
     @State private var simSegs: [SimSeg] = SimSeg.loadSaved()
     @State private var simLoop = true
@@ -80,9 +87,23 @@ struct TagSetupView: View {
     }
     private var dirty: Bool { baseline != nil && draft != baseline }
 
-    private var knownGpsTags: [SourceTrack] {
-        model.tracks.filter { $0.source == .gpsTag }
+    /// Both tag flavors are Tag Setup targets since A1 (the bridge speaks portnum 260 and
+    /// advertises BLE now). Which cards render is driven by the capability byte below.
+    private var knownTags: [SourceTrack] {
+        model.tracks.filter { $0.source == .gpsTag || $0.source == .bridge }
     }
+
+    // MARK: - Capability gating (v4 capability byte; sane per-flavor defaults before it's read)
+
+    private var knownCaps: TagSettings? { baseline ?? confirmed }
+    private var isBridge: Bool { targetTrack?.source == .bridge }
+    /// The tag speaks the v4 wire (sid signals, RADIO op, v5 stream status) — proven by either
+    /// an 18-byte settings reply or a 20-byte stream packet.
+    private var v4Wire: Bool { (knownCaps?.isV4 ?? false) || (targetTrack?.radioStatus ?? -1) >= 0 }
+    private var showGnssKnobs: Bool { knownCaps?.isV4 == true ? knownCaps!.capGnss : !isBridge }
+    private var showModes: Bool { knownCaps?.isV4 == true ? knownCaps!.capModes : !isBridge }
+    private var showSimTrack: Bool { knownCaps?.isV4 == true ? knownCaps!.capSimTrack : !isBridge }
+    private var showSignals: Bool { knownCaps?.isV4 == true ? knownCaps!.capSignals : true }
 
     var body: some View {
         NavigationStack {
@@ -92,16 +113,20 @@ struct TagSetupView: View {
                     // Mode + signals ride the MAIN link (Base-relayed LoRa downlink, or direct) —
                     // they don't need the settings handshake, only a link and a target.
                     if target != nil && ble.connectedNodeNum != 0 {
-                        modeCard
-                        simulatorCard
-                        signalsCard
+                        if v4Wire { radioCard }
+                        if showModes { modeCard }
+                        if showSimTrack { simulatorCard }
+                        if showSignals { signalsCard }
                     }
                     if baseline != nil {
-                        profilesCard
-                        navModeCard
-                        filtersCard
-                        ratesCard
-                        if draft.isV3 {
+                        if draft.isV4 && draft.capProfiles { persistenceCard }
+                        if showGnssKnobs {
+                            profilesCard
+                            navModeCard
+                            filtersCard
+                            ratesCard
+                        }
+                        if draft.isV3 && showModes {
                             adaptiveCard
                         }
                         onTagFooter
@@ -120,6 +145,8 @@ struct TagSetupView: View {
             .onAppear { engage() }
             .onDisappear {
                 cancelUpload(clearUI: true)
+                signalTask?.cancel()
+                radioTask?.cancel()
                 directConfigRequest = nil
                 mgr.stop()
             }
@@ -136,6 +163,10 @@ struct TagSetupView: View {
                 // trackReady describes ONE tag's slot — a new target starts from unknown, and
                 // any in-flight upload to the old tag is cancelled, not orphaned (R3 f2).
                 cancelUpload(clearUI: true)
+                signalTask?.cancel()
+                radioTask?.cancel()
+                signalDelivery = .idle
+                radioDelivery = .idle
             }
             .onChange(of: ble.linkGeneration) {
                 if directConfigRequest != nil { baseline = nil }
@@ -150,7 +181,7 @@ struct TagSetupView: View {
     }
 
     private func engage() {
-        let newTarget = ui.setupTarget ?? target ?? knownGpsTags.first?.from
+        let newTarget = ui.setupTarget ?? target ?? knownTags.first?.from
         target = newTarget
         ui.setupTarget = nil
         baseline = nil
@@ -191,9 +222,9 @@ struct TagSetupView: View {
                     .font(.footnote.bold()).foregroundStyle(.secondary)
                 Spacer()
             }
-            if knownGpsTags.count > 1 {
+            if knownTags.count > 1 {
                 HStack(spacing: 8) {
-                    ForEach(knownGpsTags) { t in
+                    ForEach(knownTags) { t in
                         Button {
                             ui.setupTarget = t.from
                         } label: {
@@ -214,10 +245,10 @@ struct TagSetupView: View {
                     .frame(width: 10, height: 10)
                 VStack(alignment: .leading, spacing: 1) {
                     if let t = target {
-                        Text(knownGpsTags.first(where: { $0.from == t })?.title ?? "GPS tag ·\(String(format: "%08x", t).suffix(4))")
+                        Text(knownTags.first(where: { $0.from == t })?.title ?? "Tag ·\(String(format: "%08x", t).suffix(4))")
                             .font(.subheadline.bold())
                     } else {
-                        Text("No GPS tag seen yet").font(.subheadline.bold())
+                        Text("No tag seen yet").font(.subheadline.bold())
                     }
                     Text(connectionSubtitle).font(.caption).foregroundStyle(.secondary)
                 }
@@ -681,12 +712,221 @@ struct TagSetupView: View {
         .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    // MARK: - A4 guaranteed delivery (retry-until-correlated-ACK; RADIO_STATES §4)
+
+    enum DeliveryState: Equatable {
+        case idle
+        case sending(String)
+        case confirmed(String)
+        case failed(String) // shown LOUD — a silently lost command is the forbidden outcome
+    }
+
+    private enum DeliverOutcome { case confirmed, refused, timedOut }
+
+    /// At-least-once delivery: retransmit the SAME frame (same u32 cid) until a correlated ACK
+    /// {ackOp, echo, cid} arrives from the target node — the tag dedupes on the cid, so
+    /// re-sends never replay. A NAK stops the retries immediately (the tag actively refused).
+    /// `streamConfirm` is GO-DEAF's second layer: even if every ACK is lost, a fresh stream
+    /// packet whose v5 status matches the commanded state proves the transition.
+    private func deliverAcked(frame: Data, ackOp: UInt8, echo: UInt8, cid: UInt32, to node: UInt32,
+                              streamConfirm: (() -> Bool)?) async -> DeliverOutcome {
+        let gen = ble.linkGeneration
+        var seen = ble.smallAcks.count // only ACKs appended after our first send may count
+        for _ in 0..<6 {
+            if Task.isCancelled || ble.linkGeneration != gen { return .timedOut }
+            ble.sendGnssCommand(to: node, payload: frame)
+            let deadline = Date().addingTimeInterval(0.35)
+            while Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+                if Task.isCancelled || ble.linkGeneration != gen { return .timedOut }
+                let q = ble.smallAcks
+                while seen < q.count {
+                    let a = q[seen]
+                    seen += 1
+                    if a.from == node, a.ackOp == ackOp, a.echo == echo, a.id == cid {
+                        return a.status == 0 ? .confirmed : .refused
+                    }
+                }
+                if let confirmedByStream = streamConfirm, confirmedByStream() { return .confirmed }
+            }
+        }
+        if let confirmedByStream = streamConfirm {
+            // Retry budget exhausted with no ACK — give the stream fallback one packet interval.
+            let deadline = Date().addingTimeInterval(6.0)
+            while Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(200))
+                if Task.isCancelled || ble.linkGeneration != gen { return .timedOut }
+                if confirmedByStream() { return .confirmed }
+            }
+        }
+        return .timedOut
+    }
+
+    private func failureHaptic() {
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+    }
+
+    @ViewBuilder private func deliveryBanner(_ state: DeliveryState) -> some View {
+        switch state {
+        case .idle:
+            EmptyView()
+        case .sending(let what):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text("Delivering \(what)…").font(.caption.bold())
+            }
+        case .confirmed(let what):
+            Label("Tag confirmed: \(what)", systemImage: "checkmark.circle.fill")
+                .font(.caption.bold()).foregroundStyle(.green)
+        case .failed(let why):
+            Label(why, systemImage: "exclamationmark.octagon.fill")
+                .font(.footnote.bold()).foregroundStyle(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.red, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    // MARK: - Radio state (op 0x06 — LISTENING/DEAF with two-layer confirmation)
+
+    private func sendRadio(deaf: Bool) {
+        guard let t = target else { return }
+        radioTask?.cancel()
+        let state: UInt8 = deaf ? 1 : 0
+        let rid = UInt32.random(in: 1...UInt32.max)
+        var frame = Data([0x06, state])
+        frame += withUnsafeBytes(of: rid.littleEndian) { Data($0) }
+        let sentAt = Date()
+        let label = deaf ? "radio muted (session mode)" : "listening restored"
+        radioDelivery = .sending(deaf ? "go-deaf" : "restore-listening")
+        radioTask = Task { @MainActor in
+            let outcome = await deliverAcked(frame: frame, ackOp: 0x86, echo: state, cid: rid, to: t,
+                                             streamConfirm: { [weak model] in
+                guard let tr = model?.tracks.first(where: { $0.from == t }),
+                      let at = tr.radioStatusAt, at > sentAt else { return false }
+                return tr.isDeaf == deaf
+            })
+            guard !Task.isCancelled else { return }
+            switch outcome {
+            case .confirmed: radioDelivery = .confirmed(label)
+            case .refused:
+                radioDelivery = .failed("Tag REFUSED the radio command — state unchanged.")
+                failureHaptic()
+            case .timedOut:
+                radioDelivery = .failed(deaf
+                    ? "TAG DID NOT CONFIRM going deaf — treat the session as NOT started."
+                    : "TAG DID NOT CONFIRM listening. If it is deaf, LoRa can't reach it: connect the app directly to the tag over Bluetooth, or reboot it.")
+                failureHaptic()
+            }
+        }
+    }
+
+    private var radioLive: (deaf: Bool, permanent: Bool, degraded: Bool, fresh: Bool)? {
+        guard let tr = targetTrack, tr.radioStatus >= 0 else { return nil }
+        let fresh = tr.radioStatusAt.map { Date().timeIntervalSince($0) < 30 } ?? false
+        return (tr.isDeaf, tr.isPermanent, tr.dutyDegraded, fresh)
+    }
+
+    private var radioCard: some View {
+        card {
+            sectionHeader("Radio state", "antenna.radiowaves.left.and.right.slash")
+            if let live = radioLive {
+                HStack(spacing: 6) {
+                    Circle().fill(live.deaf ? Color.orange : Color.green).frame(width: 8, height: 8)
+                    Text(live.deaf
+                         ? "Tag reports: DEAF — transmit-only, LoRa commands can't reach it"
+                         : "Tag reports: LISTENING — commands work at LoRa range")
+                        .font(.caption.bold())
+                    if !live.fresh { Text("(stale)").font(.caption2).foregroundStyle(.secondary) }
+                    Spacer()
+                }
+                HStack(spacing: 4) {
+                    if live.permanent { badge("PERMANENT profile", color: .indigo, active: false) }
+                    if live.degraded { badge("duty-clamped", color: .orange, active: false) }
+                }
+            } else {
+                Text("No v5 stream status from this tag yet.").font(.caption).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 10) {
+                modeButton("Go deaf", "speaker.slash.fill", .orange,
+                           active: radioLive?.deaf == true,
+                           subtitle: "session: TX-only") { sendRadio(deaf: true) }
+                modeButton("Listen", "ear.badge.waveform", .green,
+                           active: radioLive?.deaf == false,
+                           subtitle: "commands at range") { sendRadio(deaf: false) }
+            }
+            deliveryBanner(radioDelivery)
+            Text("Deaf = the session state: radio sleeps between sends (best battery, immune to LoRa noise). The tag confirms BEFORE muting, and the stream's status byte is the second proof. Recovery ladder: LoRa while listening → Bluetooth next to the tag in any state → reboot (deafness never survives a reboot in the Hybrid profile).")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Persistence profile (settings v4 byte 13 — HYBRID vs PERMANENT, app consent)
+
+    private var persistenceCard: some View {
+        card {
+            sectionHeader("Persistence profile", "externaldrive.badge.checkmark")
+            Picker("", selection: $draft.profileBits) {
+                Text("Hybrid").tag(UInt8(0x00))
+                Text("Permanent · Listen").tag(UInt8(0x01))
+                Text("Permanent · Deaf").tag(UInt8(0x03))
+            }
+            .pickerStyle(.segmented)
+            Group {
+                switch draft.profileBits {
+                case 0x00:
+                    Text("Hybrid (default): every power-on lands in LISTENING + adaptive — always reachable at range. Going deaf is session-only and never survives a reboot.")
+                case 0x01:
+                    Text("Permanent · Listening: fixed transmit spacing (no adaptive tiers, no calibration choreography), radio always listening. PERSISTS ACROSS REBOOTS until you change it here.")
+                default:
+                    Text("Permanent · Deaf: a pure beacon at fixed spacing, EVERY boot, FOREVER. ⚠️ Reachable ONLY with the phone next to it (Bluetooth) or a USB cable — LoRa commands will never work. Radio-state buttons rewrite this stored profile.")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(draft.profileBits == 0x03 ? .orange : .secondary)
+            Text("Applied with the settings below — the tag re-checks radio-law limits at every boot and clamps + flags itself \"duty-clamped\" rather than ever transmitting illegally.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
     // MARK: - Operator signals (calibration language v2 — beeper-first, tag-side)
+
+    private func signalName(_ id: UInt8) -> String {
+        switch id {
+        case 1...8: return "\(id)× beep"
+        case 10: return "record-start"
+        case 11: return "problem"
+        default: return "stop"
+        }
+    }
 
     private func sendSignal(_ id: UInt8) {
         guard let t = target else { return }
-        signalSeq &+= 1
-        ble.sendGnssCommand(to: t, payload: Data([0x03, id, signalSeq]))
+        guard v4Wire else {
+            // Pre-v4 firmware: the old fire-and-forget wire (u8 seq, no ACK to await).
+            signalSeq &+= 1
+            ble.sendGnssCommand(to: t, payload: Data([0x03, id, signalSeq]))
+            return
+        }
+        signalTask?.cancel()
+        let sid = UInt32.random(in: 1...UInt32.max)
+        var frame = Data([0x03, id])
+        frame += withUnsafeBytes(of: sid.littleEndian) { Data($0) }
+        signalDelivery = .sending(signalName(id))
+        signalTask = Task { @MainActor in
+            let outcome = await deliverAcked(frame: frame, ackOp: 0x83, echo: id, cid: sid, to: t,
+                                             streamConfirm: nil)
+            guard !Task.isCancelled else { return }
+            switch outcome {
+            case .confirmed: signalDelivery = .confirmed("\(signalName(id)) played")
+            case .refused:
+                signalDelivery = .failed("Tag REFUSED the \(signalName(id)) signal.")
+                failureHaptic()
+            case .timedOut:
+                signalDelivery = .failed("TAG DID NOT CONFIRM the \(signalName(id)) signal — assume it did NOT play.")
+                failureHaptic()
+            }
+        }
     }
 
     private var signalsCard: some View {
@@ -715,7 +955,10 @@ struct TagSetupView: View {
                 signalButton("Problem", "exclamationmark.triangle.fill", .red, id: 11)
                 signalButton("Stop", "stop.circle.fill", .gray, id: 0)
             }
-            Text("Counted beeps = convergence progress. Record start = one long high beep, then the LED heartbeats every 3 s. Problem = low beep every 2 s until Stop (auto-stops after 2 min).")
+            deliveryBanner(signalDelivery)
+            Text(v4Wire
+                 ? "Every signal is delivered-or-loud: the app re-sends the same request until the tag confirms it (duplicates never double-beep), and tells you unmistakably if it could not."
+                 : "Counted beeps = convergence progress. Record start = one long high beep, then the LED heartbeats every 3 s. Problem = low beep every 2 s until Stop (auto-stops after 2 min).")
                 .font(.caption2).foregroundStyle(.secondary)
         }
     }
@@ -879,9 +1122,23 @@ struct TagSetupView: View {
     // MARK: - Rates + computed consequences
 
     private var dutyPercent: Double {
-        // ShortFast airtime for our 41 B v3 packet ≈ 48 ms (docs/CAPACITY.md) — the EU-relevant
-        // case. 2 Hz = 9.6%: still legal, but there is no headroom below 500 ms spacing.
+        // Pre-v4 fallback only: assumes ShortFast airtime ≈48 ms (docs/CAPACITY.md). v4 tags
+        // report their OWN duty floor (region law × measured airtime at the ACTIVE preset) —
+        // trust that, never a preset guess (the bench fleet turned out to run LongFast).
         48.0 / Double(draft.txSpacingMs) * 100
+    }
+
+    /// v4: the tag's own legality verdict for the drafted spacing. nil = pre-v4 firmware.
+    private var dutyVerdict: (legal: Bool, text: String)? {
+        guard draft.isV4 else { return nil }
+        let floor = draft.dutyFloorMs
+        if floor == 0 {
+            return (true, "No duty-cycle limit in this region — any spacing is legal (bench).")
+        }
+        if draft.txSpacingMs >= floor {
+            return (true, "Legal here: the tag requires ≥ \(floor) ms between sends (its own region-law number).")
+        }
+        return (false, "Below this region's legal floor of \(floor) ms — the tag will refuse it, or clamp and flag itself \"duty-clamped\".")
     }
 
     private var ratesCard: some View {
@@ -913,16 +1170,17 @@ struct TagSetupView: View {
                 .frame(maxWidth: 240)
             }
             HStack(spacing: 6) {
-                Image(systemName: dutyPercent <= 10 ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(dutyPercent <= 10 ? .green : .orange)
-                Text(dutyPercent <= 10
+                let legal = dutyVerdict?.legal ?? (dutyPercent <= 10)
+                Image(systemName: legal ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(legal ? .green : .orange)
+                Text(dutyVerdict?.text ?? (dutyPercent <= 10
                      ? String(format: "≈%.0f%% duty cycle — EU868-legal sustained", dutyPercent)
-                     : String(format: "≈%.0f%% duty cycle — bench / US only (EU limit is 10%%)", dutyPercent))
+                     : String(format: "≈%.0f%% duty cycle — bench / US only (EU limit is 10%%)", dutyPercent)))
                     .font(.caption)
                 Spacer()
             }
             .padding(8)
-            .background((dutyPercent <= 10 ? Color.green : Color.orange).opacity(0.1),
+            .background(((dutyVerdict?.legal ?? (dutyPercent <= 10)) ? Color.green : Color.orange).opacity(0.1),
                         in: RoundedRectangle(cornerRadius: 8))
             Text("Fix rate is what the GPS measures; radio rate is what goes over LoRa. A 4 Hz fix with 2 Hz radio still sends positions at most 250 ms old.")
                 .font(.caption2).foregroundStyle(.secondary)

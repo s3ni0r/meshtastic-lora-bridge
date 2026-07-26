@@ -42,6 +42,7 @@ struct StreamPacket {
     var hacc: Int = 0       // horizontal accuracy, metres (0 = unknown)
     var battery: Int = -1   // v3 (18-byte payload): 0-100 %, 101 = externally powered, -1 = unknown
     var motionMg: Int = -1  // v4 (19-byte): high-passed |accel| envelope in mg, -1 = unknown
+    var radioStatus: Int = -1 // v5 (20-byte): radio-state status byte, -1 = pre-v5 firmware
 
     var hasLock: Bool { flags & 0x01 != 0 }
     /// v4: the QMA6100P classifier's verdict (provisional land thresholds; see GnssMotion.cpp).
@@ -52,6 +53,11 @@ struct StreamPacket {
     /// bit4: this fix is SYNTHETIC (GnssSim indoor simulator) — never mistake it for a real track.
     var simulated: Bool { flags & 0x10 != 0 }
     var source: PacketSource { PacketSource(rawValue: Int((flags >> 5) & 0x7)) ?? .legacy }
+    /// v5 status byte (A4 radio states). isDeaf doubles as the GO-DEAF fallback confirmation:
+    /// a deaf tag still streams, so this bit proves the transition even if every ACK was lost.
+    var isDeaf: Bool { radioStatus >= 0 && radioStatus & 0x01 != 0 }
+    var isPermanent: Bool { radioStatus >= 0 && radioStatus & 0x02 != 0 }
+    var dutyDegraded: Bool { radioStatus >= 0 && radioStatus & 0x04 != 0 }
 }
 
 private struct ProtoReader {
@@ -168,6 +174,9 @@ private func parseData(_ bytes: ArraySlice<UInt8>, into sp: inout StreamPacket) 
     if p.count >= 19, p[18] != 255 { // v4: motion energy, wire unit = mg/4
         sp.motionMg = Int(p[18]) * 4
     }
+    if p.count >= 20 { // v5: radio-state status byte (bit0 DEAF, bit1 PERMANENT, bit2 degraded)
+        sp.radioStatus = Int(p[19])
+    }
     return true
 }
 
@@ -253,17 +262,27 @@ struct TagSettings: Equatable {
     var adaptSlowKmh: UInt8 = 3      // < this speed sustained -> slow tier
     var adaptSustainS: UInt8 = 15
     var isV3 = false                 // the tag's reply carried v3 fields (13-byte settings)
+    // v4 — A4 radio states/profiles (docs/RADIO_STATES.md); reply = 18 bytes
+    var profileBits: UInt8 = 0       // bit0 PERMANENT (0 = HYBRID), bit1 permanent-DEAF
+    var isV4 = false
+    var capability: UInt8 = 0        // knob-group bits (read-only, reply byte 16)
+    var radioStatus: UInt8 = 0       // radio-status byte (read-only, reply byte 17)
+    var dutyFloorMs: UInt16 = 0      // tag-computed legal min spacing (read-only, bytes 18-19;
+                                     // 0 = no duty limit). NEVER re-derive from preset guesses.
 
-    /// Wire sized to the tag's capability: 8 bytes for v2 firmware, 13 for v3 — a v2 tag must
-    /// never receive bytes it would misparse.
+    /// Wire sized to the tag's capability: 8 bytes for v2 firmware, 13 for v3, 14 for v4 —
+    /// an older tag must never receive bytes it would misparse.
     var wire: Data {
         var d = Data([navMode, staticThrDms, minSnr,
                       UInt8(fixIntervalMs & 0xFF), UInt8(fixIntervalMs >> 8),
                       UInt8(txSpacingMs & 0xFF), UInt8(txSpacingMs >> 8),
                       elevMaskDeg])
-        if isV3 {
+        if isV3 || isV4 {
             d += Data([UInt8(idleSpacingMs & 0xFF), UInt8(idleSpacingMs >> 8),
                        adaptFastKmh, adaptSlowKmh, adaptSustainS])
+        }
+        if isV4 {
+            d += Data([profileBits])
         }
         return d
     }
@@ -273,15 +292,39 @@ struct TagSettings: Equatable {
                             fixIntervalMs: UInt16(b[3]) | (UInt16(b[4]) << 8),
                             txSpacingMs: UInt16(b[5]) | (UInt16(b[6]) << 8),
                             elevMaskDeg: b.count >= 8 ? b[7] : 10)
-        if b.count >= 13 { // reply length IS the capability signal
+        if b.count >= 13 { // reply length IS the capability signal (v3+)
             s.idleSpacingMs = UInt16(b[8]) | (UInt16(b[9]) << 8)
             s.adaptFastKmh = b[10]
             s.adaptSlowKmh = b[11]
             s.adaptSustainS = b[12]
             s.isV3 = true
         }
+        if b.count >= 16 { // v4: profile + explicit capability byte + radio-status byte
+            s.profileBits = b[13]
+            s.capability = b[14]
+            s.radioStatus = b[15]
+            s.isV4 = true
+        }
+        if b.count >= 18 { // v4 replies also carry the tag's own duty floor (ms, 0 = none)
+            s.dutyFloorMs = UInt16(b[16]) | (UInt16(b[17]) << 8)
+        }
         return s
     }
+
+    // v4 knob-group capability bits (firmware GnssConfigModule.h). Pre-v4 firmware carried no
+    // capability byte and only ever shipped on the GPS tag — assume its full set there.
+    static let capGnssBit: UInt8 = 0x01, capModesBit: UInt8 = 0x02, capSimTrackBit: UInt8 = 0x04
+    static let capSignalsBit: UInt8 = 0x08, capRadioBit: UInt8 = 0x10, capProfilesBit: UInt8 = 0x20
+    private var caps: UInt8 { isV4 ? capability : 0x3F }
+    var capGnss: Bool { caps & Self.capGnssBit != 0 }
+    var capModes: Bool { caps & Self.capModesBit != 0 }
+    var capSimTrack: Bool { caps & Self.capSimTrackBit != 0 }
+    var capSignals: Bool { caps & Self.capSignalsBit != 0 }
+    var capRadio: Bool { isV4 && capability & Self.capRadioBit != 0 } // RADIO op is v4-only
+    var capProfiles: Bool { isV4 && capability & Self.capProfilesBit != 0 }
+    // Profile helpers (settings byte 13)
+    var isPermanentProfile: Bool { profileBits & 0x01 != 0 }
+    var isPermanentDeaf: Bool { profileBits & 0x03 == 0x03 }
 }
 
 struct ConfigReply {
@@ -401,6 +444,57 @@ func parseTrackAck(_ data: Data) -> TrackAck? {
             return TrackAck(from: from, status: b[1], sub: b[2],
                             off: UInt16(b[3]) | (UInt16(b[4]) << 8),
                             tid: UInt32(b[5]) | (UInt32(b[6]) << 8) | (UInt32(b[7]) << 16) | (UInt32(b[8]) << 24))
+        }
+        r.skip(wire)
+    }
+    return nil
+}
+
+/// Correlated 7-byte ACK shared by SIGNAL v5 (0x83) and the RADIO op (0x86):
+/// `[ackOp, status, echo, id u32 LE]` — echo is the pattern (SIGNAL) or radio state (RADIO),
+/// id is the request's own u32 sid/rid. Satisfiable ONLY by the frame that asked: the sender
+/// retransmits the SAME id until this arrives (at-least-once delivery, at-most-once playback —
+/// docs/RADIO_STATES.md §4). Distinguished from the legacy 0x83 settings echo by LENGTH (7 vs 18).
+struct SmallAck: Equatable {
+    let from: UInt32  // replying node — must match the command's target
+    let ackOp: UInt8  // 0x83 SIGNAL / 0x86 RADIO
+    let status: UInt8 // 0 ok (incl. duplicate re-ACK) / 1 rejected / 2 malformed
+    let echo: UInt8   // pattern or radio state, echoed from the request
+    let id: UInt32    // sid / rid, echoed from the request
+}
+
+/// Parse a FromRadio frame as a 7-byte SIGNAL/RADIO ACK (portnum 260) — nil otherwise.
+func parseSmallAck(_ data: Data) -> SmallAck? {
+    var r = ProtoReader(data)
+    while let (field, wire) = r.readTag() {
+        if field == 2, wire == 2 {
+            guard let pkt = r.readBytes() else { return nil }
+            var pr = ProtoReader(pkt)
+            var from: UInt32 = 0
+            var decoded: ArraySlice<UInt8>?
+            while let (f, w) = pr.readTag() {
+                switch (f, w) {
+                case (1, 5): from = pr.readFixed32() ?? 0
+                case (4, 2): decoded = pr.readBytes()
+                default: pr.skip(w)
+                }
+            }
+            guard let dec = decoded else { return nil }
+            var dr = ProtoReader(dec)
+            var portnum = 0
+            var payload: ArraySlice<UInt8>?
+            while let (df, dw) = dr.readTag() {
+                switch (df, dw) {
+                case (1, 0): portnum = Int(dr.readVarint() ?? 0)
+                case (2, 2): payload = dr.readBytes()
+                default: dr.skip(dw)
+                }
+            }
+            guard portnum == kGnssConfigPortnum, let pl = payload, pl.count == 7 else { return nil }
+            let b = Array(pl)
+            guard b[0] == 0x83 || b[0] == 0x86 else { return nil }
+            return SmallAck(from: from, ackOp: b[0], status: b[1], echo: b[2],
+                            id: UInt32(b[3]) | (UInt32(b[4]) << 8) | (UInt32(b[5]) << 16) | (UInt32(b[6]) << 24))
         }
         r.skip(wire)
     }

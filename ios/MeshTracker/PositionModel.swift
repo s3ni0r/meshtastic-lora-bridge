@@ -32,6 +32,14 @@ final class SourceTrack: Identifiable {
     var motionMg = -1           // v4 accel energy envelope, mg (-1 = unknown)
     var moving = false          // v4 QMA6100P classifier (flags bit1)
     var simulated = false       // flags bit4: synthetic fixes from the tag's indoor simulator
+    var radioStatus = -1        // v5 status byte: bit0 DEAF, bit1 PERMANENT, bit2 duty-degraded
+    var radioStatusAt: Date?    // when the last v5 status arrived (confirmation freshness)
+
+    /// v5 radio-state readouts (A4). isDeaf is the GO-DEAF fallback confirmation — a deaf tag
+    /// still streams, so the byte proves the transition even when the ACK was lost.
+    var isDeaf: Bool { radioStatus >= 0 && radioStatus & 0x01 != 0 }
+    var isPermanent: Bool { radioStatus >= 0 && radioStatus & 0x02 != 0 }
+    var dutyDegraded: Bool { radioStatus >= 0 && radioStatus & 0x04 != 0 }
 
     /// Short display id, e.g. "9cda" — enough to tell two physical tags apart.
     var shortId: String { String(String(format: "%08x", from).suffix(4)) }
@@ -72,6 +80,10 @@ final class SourceTrack: Identifiable {
         if sp.motionMg >= 0 { motionMg = sp.motionMg }
         moving = sp.moving
         simulated = sp.simulated
+        if sp.radioStatus >= 0 {
+            radioStatus = sp.radioStatus
+            radioStatusAt = now
+        }
         packetCount += 1
         lastHeard = now
 

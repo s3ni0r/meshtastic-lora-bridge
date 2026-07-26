@@ -27,14 +27,21 @@
 #ifndef HIGHRATE_MIN_SPACING_MS
 #define HIGHRATE_MIN_SPACING_MS 150
 #endif
-#ifdef GPS_TAG
-// GPS tag: spacing is a runtime setting (BLE-configurable; 500 = EU868-legal 2 Hz), further
-// governed by the downlink-controlled TX mode (tag-downlink branch): ADAPTIVE swaps in the
-// idle spacing while the speed gate says quasi-stationary. sModeSpacing is recomputed every
-// runOnce pass; 0 = "use the configured setting".
+#if defined(GPS_TAG) || defined(ODID_SNIFFER)
+// Both tag flavors: spacing is a runtime setting since A1 (BLE/LoRa-configurable; 500 =
+// EU868-legal 2 Hz), clamped to the region duty floor by TagRadioState (never silently illegal —
+// docs/RADIO_STATES.md §3). On the GPS tag the downlink-controlled TX mode further swaps in the
+// idle spacing while the speed gate says quasi-stationary (sModeSpacing, recomputed every
+// runOnce pass; 0 = "use the configured setting"); the bridge has NO TX modes.
 #include "gps/GnssTagSettings.h"
+#include "modules/TagRadioState.h"
 static uint32_t sModeSpacing = 0;
-#define HIGHRATE_SPACING (sModeSpacing ? sModeSpacing : (uint32_t)gnssTagSettings.txSpacingMs)
+static uint32_t tagEffectiveSpacing()
+{
+    uint32_t base = sModeSpacing ? sModeSpacing : (uint32_t)gnssTagSettings.txSpacingMs;
+    return tagRadioState ? tagRadioState->effectiveSpacingMs(base) : base;
+}
+#define HIGHRATE_SPACING tagEffectiveSpacing()
 #else
 #define HIGHRATE_SPACING ((uint32_t)HIGHRATE_MIN_SPACING_MS)
 #endif
@@ -54,12 +61,17 @@ static uint32_t sModeSpacing = 0;
 //   12 alt int16 (m) | 14 speed uint8 (km/h) | 15 heading uint8 (deg*256/360) | 16 hacc uint8 (m)
 //   17 battery uint8 (v3: 0-100 %, 101 = externally powered, 255 = unknown)
 //   18 motion uint8 (v4: high-passed |accel| envelope, mg/4, 0-254; 255 = no accel sample yet)
+//   19 status uint8 (v5: bit0 = DEAF radio state, bit1 = PERMANENT profile, bit2 = duty-degraded;
+//      TagRadioState::statusByte(), same byte as settings-reply byte 17). REQUIRED phase 1: it is
+//      the GO-DEAF fallback confirmation — a deaf tag still streams, so the status byte proves
+//      the transition even if every ACK is lost (docs/RADIO_STATES.md §4).
 // flags: bit0 = lock, bit1 = `moving` (QMA6100P classifier, v4), bit2 = ADAPTIVE TX mode active,
-// bit3 = adaptive slow tier engaged (bits 2-3 = the downlink mode echo), bits 5-7 = source type
-// (SRC_*) so a receiver can tell WHICH tag flavor sent this even before looking at the LoRa
-// `from` node id. Receivers key on length: 12 = position only, 17 = +telemetry, 18 = +battery
-// (v3), 19 = +motion (v4). At ShortFast, 18->19 B stays inside the same symbol group — the
-// motion byte costs ZERO extra airtime (docs/CAPACITY.md §8).
+// bit3 = adaptive slow tier engaged (bits 2-3 = the downlink mode echo; both 0 in PERMANENT),
+// bit4 = simulated fix, bits 5-7 = source type (SRC_*) so a receiver can tell WHICH tag flavor
+// sent this even before looking at the LoRa `from` node id. Receivers key on length: 12 =
+// position only, 17 = +telemetry, 18 = +battery (v3), 19 = +motion (v4), 20 = +status (v5). At
+// ShortFast, 18->20 B stays inside the same symbol group — the motion and status bytes cost ZERO
+// extra airtime (docs/CAPACITY.md §8; the group boundary is 44 B on air).
 #define HIGHRATE_SRC_LEGACY 0 // pre-fork / bench counter build
 #define HIGHRATE_SRC_ODID 1   // BLE5 Remote ID bridge (Dronetag is the position source)
 #define HIGHRATE_SRC_GPS 2    // self-contained tag: onboard AG3335 is the position source
@@ -132,40 +144,44 @@ int32_t HighRatePositionModule::runOnce()
 
 #if defined(GPS_TAG)
     // ---- Downlink-controlled TX mode (tag-downlink branch) --------------------------------
-    // Dead-man TTL: an expired CALIBRATION always lands back in ADAPTIVE — the EU-safe state.
-    if (gnssTagMode.mode == GnssTagMode::CALIBRATION && (int32_t)(nowMs - gnssTagMode.calibDeadlineMs) >= 0) {
-        gnssTagMode.mode = GnssTagMode::ADAPTIVE;
-        gnssTagMode.slowTier = false;
-        gnssTagMode.belowSinceMs = 0;
-        LOG_INFO("HighRate: calibration TTL expired -> ADAPTIVE");
-    }
-    sModeSpacing = 0; // calibration/fixed: the configured txSpacingMs rules
-    if (gnssTagMode.mode == GnssTagMode::ADAPTIVE) {
-        // Speed gate on the payload's own km/h byte (the receiver sees exactly this value).
-        // Eager up: >= fast threshold flips to full rate on the very next packet. Skeptical
-        // down: < slow threshold sustained before dropping to the idle spacing. In between:
-        // hysteresis — hold the current tier.
-        if (extSpeed >= gnssTagSettings.adaptFastKmh) {
-            if (gnssTagMode.slowTier)
-                LOG_INFO("HighRate: adaptive -> FAST tier (speed %u km/h)", extSpeed);
+    sModeSpacing = 0; // calibration/fixed/PERMANENT: the configured txSpacingMs rules
+    // PERMANENT profile (A4): fixed spacing, NO adaptive tiers, no CALIBRATION choreography —
+    // the mode machinery below is HYBRID-only (docs/RADIO_STATES.md §3: no temporary states).
+    if (!(gnssTagSettings.profileBits & TAG_PROFILE_PERMANENT)) {
+        // Dead-man TTL: an expired CALIBRATION always lands back in ADAPTIVE — the EU-safe state.
+        if (gnssTagMode.mode == GnssTagMode::CALIBRATION && (int32_t)(nowMs - gnssTagMode.calibDeadlineMs) >= 0) {
+            gnssTagMode.mode = GnssTagMode::ADAPTIVE;
             gnssTagMode.slowTier = false;
             gnssTagMode.belowSinceMs = 0;
-        } else if (extSpeed < gnssTagSettings.adaptSlowKmh) {
-            if (gnssTagMode.belowSinceMs == 0) {
-                gnssTagMode.belowSinceMs = nowMs;
-            } else if (!gnssTagMode.slowTier &&
-                       nowMs - gnssTagMode.belowSinceMs >= (uint32_t)gnssTagSettings.adaptSustainS * 1000UL) {
-                gnssTagMode.slowTier = true;
-                LOG_INFO("HighRate: adaptive -> SLOW tier (idle %u ms)", (unsigned)gnssTagSettings.idleSpacingMs);
-            }
-        } else {
-            // Hysteresis band: hold the current tier, but "sustained BELOW" must mean below —
-            // time spent in the band does not count toward the downshift (external review
-            // 2026-07-26 caught the clock surviving band excursions).
-            gnssTagMode.belowSinceMs = 0;
+            LOG_INFO("HighRate: calibration TTL expired -> ADAPTIVE");
         }
-        if (gnssTagMode.slowTier)
-            sModeSpacing = gnssTagSettings.idleSpacingMs;
+        if (gnssTagMode.mode == GnssTagMode::ADAPTIVE) {
+            // Speed gate on the payload's own km/h byte (the receiver sees exactly this value).
+            // Eager up: >= fast threshold flips to full rate on the very next packet. Skeptical
+            // down: < slow threshold sustained before dropping to the idle spacing. In between:
+            // hysteresis — hold the current tier.
+            if (extSpeed >= gnssTagSettings.adaptFastKmh) {
+                if (gnssTagMode.slowTier)
+                    LOG_INFO("HighRate: adaptive -> FAST tier (speed %u km/h)", extSpeed);
+                gnssTagMode.slowTier = false;
+                gnssTagMode.belowSinceMs = 0;
+            } else if (extSpeed < gnssTagSettings.adaptSlowKmh) {
+                if (gnssTagMode.belowSinceMs == 0) {
+                    gnssTagMode.belowSinceMs = nowMs;
+                } else if (!gnssTagMode.slowTier &&
+                           nowMs - gnssTagMode.belowSinceMs >= (uint32_t)gnssTagSettings.adaptSustainS * 1000UL) {
+                    gnssTagMode.slowTier = true;
+                    LOG_INFO("HighRate: adaptive -> SLOW tier (idle %u ms)", (unsigned)gnssTagSettings.idleSpacingMs);
+                }
+            } else {
+                // Hysteresis band: hold the current tier, but "sustained BELOW" must mean below —
+                // time spent in the band does not count toward the downshift (external review
+                // 2026-07-26 caught the clock surviving band excursions).
+                gnssTagMode.belowSinceMs = 0;
+            }
+            if (gnssTagMode.slowTier)
+                sModeSpacing = gnssTagSettings.idleSpacingMs;
+        }
     }
 #endif
 
@@ -221,14 +237,17 @@ int32_t HighRatePositionModule::runOnce()
 #if defined(GPS_TAG)
     // Mode echo (tag-downlink): bit2 = ADAPTIVE mode active, bit3 = slow tier engaged. This is
     // the downlink's confirmation channel — the app re-sends a MODE command until the stream
-    // reflects it, so no ack machinery is needed on a lossy link.
-    if (gnssTagMode.mode == GnssTagMode::ADAPTIVE)
-        flags |= 0x04;
-    if (gnssTagMode.slowTier)
-        flags |= 0x08;
+    // reflects it, so no ack machinery is needed on a lossy link. PERMANENT has no modes, so
+    // both bits stay 0 there (the v5 status byte carries the profile instead).
+    if (!(gnssTagSettings.profileBits & TAG_PROFILE_PERMANENT)) {
+        if (gnssTagMode.mode == GnssTagMode::ADAPTIVE)
+            flags |= 0x04;
+        if (gnssTagMode.slowTier)
+            flags |= 0x08;
+    }
 #endif
 
-    uint8_t buf[19];
+    uint8_t buf[20];
     memcpy(&buf[0], &lat, 4);
     memcpy(&buf[4], &lon, 4);
     memcpy(&buf[8], &offsetMs, 2);
@@ -254,7 +273,9 @@ int32_t HighRatePositionModule::runOnce()
     // v4: raw motion energy in every packet — the dataset that tunes the sea/surf thresholds
     // later lives in session recordings of this byte. Free on air (same ShortFast symbol group).
     buf[18] = g_motionEnergyByte;
-    len = 19;
+    // v5: radio-state/profile status — the GO-DEAF fallback confirmation channel (see byte map).
+    buf[19] = tagRadioState ? tagRadioState->statusByte() : 0;
+    len = 20;
 #endif
 
     // Latest-wins (stock PositionModule pattern): if the previous position is still queued (channel

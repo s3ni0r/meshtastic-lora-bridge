@@ -1,9 +1,10 @@
 # Radio states & profiles — state machines (A4 design, agreed 2026-07-26)
 
-> **Status: DESIGN LOCKED, not yet implemented.** This encodes the owner-agreed A4 model
-> (see `../TODO.md` §A4) as the reference state machines for the A1+A4 implementation
-> round. When it ships, the transition tables graduate into `DOWNLINK.md` (the wire
-> contract) and this file becomes the behavioral reference. Terms:
+> **Status: IMPLEMENTED + HARDWARE-VERIFIED (A1+A4 round, 2026-07-26).** The transition
+> tables graduated into `DOWNLINK.md` (the wire contract: RADIO op 0x06, SIGNAL v5 sid,
+> settings v4, payload v5); this file is the behavioral reference. Bench evidence:
+> `tools/bench/verify_fixes.py` C1–C5 (GO-DEAF grace + stream fallback, REAL LoRa deafness,
+> PERMANENT reboot persistence, EU duty-floor round-trip) and `verify_bridge.py`. Terms:
 > **LISTENING** = LoRa RX enabled between transmissions (portnum-260 commands work at
 > range); **DEAF** = runtime TX-only (radio sleeps between TX; LoRa-unreachable; BLE/USB
 > command path still works). Reboot is the recovery path that depends on nothing

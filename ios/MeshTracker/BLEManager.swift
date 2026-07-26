@@ -33,6 +33,8 @@ final class BLEManager: NSObject, @preconcurrency CBCentralManagerDelegate,
     var trackAcks: [TrackAck] = []    // SEQUENCED 0x85 ACK queue (R4 finding 7: latest-only
                                       // could drop an ACK that landed between two 50 ms polls;
                                       // consumers scan from their own index, nothing is lost)
+    var smallAcks: [SmallAck] = []    // SEQUENCED 7-byte SIGNAL/RADIO ACK queue (A4 guaranteed
+                                      // delivery) — same append-only-within-a-link discipline
     var linkGeneration = 0            // bumps on every (re)connect — uploads bind to one generation
 
     @ObservationIgnored private var central: CBCentralManager!
@@ -59,6 +61,7 @@ final class BLEManager: NSObject, @preconcurrency CBCentralManagerDelegate,
         lastConfigReplySequence = 0
         lastConfigReplyGeneration = nil
         trackAcks = []
+        smallAcks = []
     }
 
     private func invalidateLink(cancelConnection: Bool) {
@@ -251,6 +254,9 @@ final class BLEManager: NSObject, @preconcurrency CBCentralManagerDelegate,
                 // indices into this array, so it must never be compacted mid-link. ~42 ACKs per
                 // full upload — bounded in practice by the link session itself.
                 trackAcks.append(ta)
+            }
+            if let sa = parseSmallAck(v) {
+                smallAcks.append(sa) // sequenced like trackAcks; retry loops scan by index
             }
             if var pw = parseTelemetry(v) {                  // battery: Base every 15 s, tags via LoRa
                 if pw.from == 0 { pw.from = connectedNodeNum }

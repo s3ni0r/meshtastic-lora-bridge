@@ -1,7 +1,7 @@
 # Firmware fork — high-rate position stream on the T1000-E
 
 Turns a T1000-E into a sub-second position streamer on `PRIVATE_APP (256)` (bypassing
-PositionModule). **Two interchangeable TAG flavors** share the same **19-byte payload (v4**:
+PositionModule). **Two interchangeable TAG flavors** share the same **20-byte payload (v5**:
 byte 17 = live battery — 0-100 %, 101 = USB, 255 = unknown; byte 18 = motion-energy envelope
 from the QMA6100P, mg/4, 255 = unsampled**)** and the same Base/iOS receiver — flags bits 5–7
 carry the source type so receivers can tell them apart (§9). Since the `tag-downlink` branch
@@ -98,9 +98,12 @@ sends can strand the module.
 ## 4. Build — one command per flavor
 
 ```bash
-# TAG flavor A — BLE5/LoRa bridge (rides with a Dronetag; onboard GPS never powered):
+# TAG flavor A — BLE5/LoRa bridge (rides with a Dronetag; onboard GPS never powered).
+# A1 note: -DHIGHRATE_TX_ONLY is RETIRED — deafness is a runtime radio state now
+# (src/modules/TagRadioState); the bridge boots LISTENING, serves portnum 260 and
+# advertises slow connectable BLE alongside the ODID scanner:
 PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER \
-  -DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY" pio run -e tracker-t1000-e
+  -DHIGHRATE_POSITION_INTERVAL_MS=250" pio run -e tracker-t1000-e
 
 # TAG flavor B — self-contained GPS tag (onboard AG3335 unlocked, §3/§9). Default GNSS target is
 # 4 Hz (-DGPSTAG_FIX_INTERVAL_MS=250; set 100 for 10 Hz — the probe STEERS to the target, e.g.
@@ -192,7 +195,10 @@ The ODID-sniffer build no longer polls: a fresh fix is sent in ~ms instead of ag
   send, so a stale queued position never transmits ahead of a fresh one.
 - **Validation metric** — the every-20th send log prints `dec2send=<ms>` (sniffer-decode → LoRa-enqueue);
   expect single-digit-to-low-tens ms vs ~125 ms mean on `main`.
-- **TX-only radio** (`-DHIGHRATE_TX_ONLY`) — the Tag's role is relay-only, so `LR11x0Interface::
+- **TX-only radio** — RETIRED as a build flag (A4, 2026-07-26): DEAF is a runtime radio
+  state owned by `src/modules/TagRadioState.{h,cpp}` (shared by both flavors; HYBRID/
+  PERMANENT profiles, RADIO op 0x06 with ACK-before-mute + 2 s grace, duty-floor clamping —
+  see `docs/RADIO_STATES.md` + `docs/DOWNLINK.md`). Historically (`-DHIGHRATE_TX_ONLY`) `LR11x0Interface::
   startReceive()` idles the LR1110 in **standby instead of RX**: an in-progress foreign RX can never
   defer a TX (LoRa is half-duplex), no received packet is ever processed, and standby draws µA vs mA in
   continuous RX. CAD still runs pre-TX and the TX-done IRQ is wired in `startSend()`, so the transmit
@@ -208,7 +214,7 @@ The ODID-sniffer build no longer polls: a fresh fix is sent in ~ms instead of ag
 Tag build:
 ```bash
 PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER \
-  -DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY" pio run -e tracker-t1000-e
+  -DHIGHRATE_POSITION_INTERVAL_MS=250" pio run -e tracker-t1000-e
 ```
 
 ## 9. GPS tag flavor (`gps-lora-tag` branch) — onboard AG3335 → LoRa, same payload
@@ -295,7 +301,8 @@ sheet reuses it (a second PhoneAPI client on one node would fight over the FromR
 
 ### Live GNSS settings over BLE (no reflash)
 
-`GnssConfigModule` (portnum **260**, GPS_TAG builds) makes every GNSS/TX knob runtime-adjustable
+`GnssConfigModule` (portnum **260**, BOTH tag flavors since A1 — the bridge's capability
+byte 0x38 limits it to signals/radio/profiles) makes every GNSS/TX knob runtime-adjustable
 from the phone: the MeshTracker app's gear button on a GPS-tag row opens a settings sheet that
 connects to the TAG's own BLE (the Base link keeps streaming), reads current values, and applies
 changes **live** — nav mode ($PAIR080: normal/fitness/stationary/drone/swimming/bike, with EGNOS

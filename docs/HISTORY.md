@@ -2,6 +2,28 @@
 
 The detailed narrative that used to live in the README. Raw measurements: `results.md`.
 
+## 2026-07-26 (evening) — A1+A4 round: radio states, guaranteed delivery, bridge parity
+
+"TX-only" stopped being a build flag: both tag flavors carry the shared `TagRadioState`
+module — runtime **LISTENING/DEAF** with **HYBRID/PERMANENT** persisted profiles, RADIO op
+0x06 (ACK-before-mute + 2 s grace), SIGNAL v5 (u32 sid, {sid,pattern} dedupe, delivered-or-
+loud), settings v4 (profile byte; 20-byte replies with capability + radio-status + the tag's
+OWN duty floor) and stream payload v5 (20-byte status byte = the GO-DEAF fallback
+confirmation). The bridge reached config parity: portnum 260 (signals/radio/profiles per its
+0x38 capability byte), boots LISTENING, and advertises slow connectable BLE alongside the
+continuous ODID scan. Verified on hardware the same day: `verify_fixes.py` **70/70**
+(real-LoRa deafness through the Base, PERMANENT boot persistence, EU868 duty-floor
+round-trip with air-path restore proof) and `verify_bridge.py` **20/20**; MeshTracker gained
+retry-until-ACK signal/radio delivery with loud failure, a radio-state card, a persistence-
+profile card with consent language, and capability-driven Tag Setup. Fleet finding: the
+bench preset is SHORT_TURBO (EU-illegal; CAPACITY.md's ShortFast deployment math needs
+re-anchoring), and region cycling silently degrades illegal presets — the bench now restores
+the full radio identity and proves the air path after. Operationally the day also hardened
+the bench itself: `flash_t1000e.sh` became the ONE hands-free flasher (dev mode added; raw
+nrfutil `--touch` banned after its re-enumeration race wedged a board a fourth time —
+`tools/tests/test_flash_policy.py` enforces it), and the long-running-ops discipline became
+a skill.
+
 ## 2026-07-26 — branch `tag-downlink`: bidirectional tag, adaptive TX, simulator, v4.3
 
 Full contract in [DOWNLINK.md](DOWNLINK.md); all bench-validated on hardware.

@@ -14,6 +14,17 @@
 # Meshtastic config — the script prints the per-flavor cheat-sheet.
 set -euo pipefail
 
+# ============================ FLASH POLICY (ENFORCED) ============================
+# THIS SCRIPT is the one true flasher (owner rule 2026-07-26, after the 4th wedge —
+# enforced by tools/tests/test_flash_policy.py). Its hands-free dance is what makes
+# serial-DFU reliable: preflight everything -> pin the target by HARDWARE SERIAL ->
+# its own 1200-baud touch -> RE-FIND THE SAME SILICON by serial (up to 12 s of
+# re-enumeration patience) -> nrfutil upload WITHOUT --touch on the refound port.
+# Raw `adafruit-nrfutil --touch 1200` is BANNED everywhere else: it reopens the
+# stale /dev path immediately after its own touch and loses the re-enumeration
+# race ("Device not configured"), stranding the board in its bootloader.
+# `dev` flavor flashes the current .pio build hex through the exact same dance.
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASES="$REPO/firmware/releases"
 VERSION="${VERSION:-$(ls "$RELEASES" | sort -V | tail -1)}"
@@ -30,8 +41,10 @@ Usage:
 
 Flavors (from firmware/releases/, currently $VERSION):
   gps-tag      self-contained tag — onboard AG3335 @ 4 Hz, LoRa RX + BLE kept
-  bridge-tag   BLE5/LoRa bridge — relays Dronetag Remote ID, no BLE advertising
+  bridge-tag   BLE5/LoRa bridge — relays Dronetag Remote ID
   base-plain   receiver — forwards the stream to the iOS app over BLE
+  dev          the CURRENT firmware/meshtastic-firmware/.pio build (packaged fresh);
+               confirm which flavor the .pio dir holds — all three build into one path
 
 Target selection (2nd argument):
   omitted           auto-detect — exactly one REGISTRY-KNOWN T1000-E must be connected
@@ -105,6 +118,21 @@ if [ "${1:-}" = "--list" ]; then
 fi
 
 FLAVOR="$1"
+if [ "$FLAVOR" = "dev" ]; then
+    # Dev mode: flash the CURRENT .pio build through the exact same fail-closed dance.
+    # Integrity source = the hex you just built (there is no release manifest for dev builds);
+    # the operator is responsible for knowing WHICH flavor the .pio dir holds right now.
+    DEVHEX="$REPO/firmware/meshtastic-firmware/.pio/build/tracker-t1000-e/firmware.hex"
+    UF2="$REPO/firmware/meshtastic-firmware/.pio/build/tracker-t1000-e/firmware.uf2"
+    DFUZIP="$(mktemp -t dev-dfu).zip"
+    [ -f "$DEVHEX" ] || { echo "ERROR: no dev build at $DEVHEX — run pio first." >&2; exit 2; }
+    echo "== Packaging dev build ($(date -r "$DEVHEX" '+%H:%M:%S') hex) -> $DFUZIP"
+    if ! (cd "$NRFUTIL_DIR" && PYTHONPATH=site-packages "$PY" adafruit-nrfutil.py dfu genpkg \
+            --dev-type 0x0052 --sd-req 0x0123 --application "$DEVHEX" "$DFUZIP" >/dev/null); then
+        echo "ERROR: DFU packaging of the dev hex failed." >&2
+        exit 1
+    fi
+else
 UF2="$DIR/$FLAVOR.uf2"
 DFUZIP="$DIR/$FLAVOR-dfu.zip"
 [ -f "$UF2" ] || { echo "ERROR: unknown flavor '$FLAVOR' in $DIR (have: $(ls "$DIR"/*.uf2 | xargs -n1 basename | sed 's/.uf2//' | tr '\n' ' '))" >&2; exit 2; }
@@ -123,6 +151,7 @@ if ! (cd "$DIR" && grep "  $FLAVOR.uf2\$\|  $FLAVOR-dfu.zip\$" SHA256SUMS | shas
     exit 1
 fi
 echo "   checksums OK ($FLAVOR.uf2 + $FLAVOR-dfu.zip verified against the manifest)"
+fi
 
 # EXPLICIT UF2-volume mode only: `flash_t1000e.sh <flavor> uf2`. This is the ONLY path that
 # touches mounted bootloader volumes — the old automatic scan could hit a device unrelated to
@@ -319,7 +348,8 @@ bridge-tag) cat <<'EOT'
    meshtastic --port <port> --seturl '<channel-url-from-base>'
    meshtastic --port <port> --set lora.region <REGION> --set device.role CLIENT_MUTE \
      --set device.rebroadcast_mode LOCAL_ONLY
-   Note: bridge advertises no BLE — configure over USB. Verify: ODID sniffer log + HighRate src=1.
+   Note: since A1 the bridge advertises slow connectable BLE and serves portnum 260 —
+   configure over USB or the app. Verify: "slow connectable adv + continuous scan" boot log.
 EOT
 ;;
 base-plain) cat <<'EOT'

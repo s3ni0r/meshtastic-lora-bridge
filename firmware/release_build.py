@@ -29,9 +29,11 @@ import subprocess
 
 FLAVOR_FLAGS = {
     "gps-tag": "-DGPS_TAG",
+    # A1/A4: -DHIGHRATE_TX_ONLY retired — "TX-only" is the runtime DEAF state now
+    # (src/modules/TagRadioState) and the bridge boots LISTENING like the GPS tag.
     "bridge-tag": (
         "-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER "
-        "-DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY"
+        "-DHIGHRATE_POSITION_INTERVAL_MS=250"
     ),
     "base-plain": None,
 }

@@ -22,7 +22,7 @@ index 4a1887d..18062a6 100644
  
  
 diff --git a/src/configuration.h b/src/configuration.h
-index 75cdac5..7961e5c 100644
+index 75cdac5..b5d1ec3 100644
 --- a/src/configuration.h
 +++ b/src/configuration.h
 @@ -292,6 +292,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
@@ -39,10 +39,10 @@ index 75cdac5..7961e5c 100644
 +#ifndef HIGHRATE_POSITION_SENDER
 +#define HIGHRATE_POSITION_SENDER 1
 +#endif
-+// tag-downlink branch: the GPS tag LISTENS now (no HIGHRATE_TX_ONLY) — the Base relays
-+// mode-switch and signal commands to it over LoRa (GnssConfigModule ops 0x02/0x03).
-+// CLIENT_MUTE still guarantees it never rebroadcasts mesh traffic. The ODID bridge keeps
-+// TX-only via its explicit -DHIGHRATE_TX_ONLY build flag.
++// tag-downlink branch: BOTH tag flavors listen at boot now — the Base relays commands to
++// them over LoRa (GnssConfigModule, portnum 260). "TX-only" is a RUNTIME radio state since
++// A4 (modules/TagRadioState.{h,cpp}; the compile-time -DHIGHRATE_TX_ONLY flag is retired).
++// CLIENT_MUTE still guarantees a tag never rebroadcasts mesh traffic.
 +#ifndef GPS_THREAD_INTERVAL
 +#define GPS_THREAD_INTERVAL 100 // 4 Hz+ fixes shouldn't wait on the stock 200 ms parser tick
 +#endif
@@ -236,21 +236,27 @@ index c654822..4c59a64 100644
      }
  #endif
 diff --git a/src/mesh/LR11x0Interface.cpp b/src/mesh/LR11x0Interface.cpp
-index 3831a38..881c692 100644
+index 3831a38..86d19ab 100644
 --- a/src/mesh/LR11x0Interface.cpp
 +++ b/src/mesh/LR11x0Interface.cpp
-@@ -233,7 +233,13 @@ template <typename T> void LR11x0Interface<T>::configHardwareForSend()
+@@ -233,7 +233,19 @@ template <typename T> void LR11x0Interface<T>::configHardwareForSend()
  
  template <typename T> void LR11x0Interface<T>::startReceive()
  {
 -#ifdef SLEEP_ONLY
-+#if defined(HIGHRATE_TX_ONLY)
-+    // Fork: TX-only bridge node — the ODID Tag only *relays*; it never needs to hear the mesh. Idle in
-+    // STANDBY instead of RX so an in-progress foreign RX can never defer our TX (LoRa is half-duplex),
-+    // and standby draws uA vs mA in continuous RX. CAD (isChannelActive) still runs before TX, and the
-+    // TX-done IRQ is wired in startSend(), so the transmit path is unaffected.
-+    setStandby();
-+#elif defined(SLEEP_ONLY)
++#if defined(GPS_TAG) || defined(ODID_SNIFFER)
++    // Fork (A4 radio states, docs/RADIO_STATES.md): DEAF is a RUNTIME state now — the old
++    // compile-time -DHIGHRATE_TX_ONLY is retired. When muted, idle in STANDBY instead of RX so an
++    // in-progress foreign RX can never defer our TX (LoRa is half-duplex), and standby draws uA vs
++    // mA in continuous RX. CAD (isChannelActive) still runs before TX, and the TX-done IRQ is wired
++    // in startSend(), so the transmit path is unaffected. LISTENING falls through to stock RX.
++    extern volatile bool g_tagRadioMuteNow; // owned by modules/TagRadioState.cpp
++    if (g_tagRadioMuteNow) {
++        setStandby();
++        return;
++    }
++#endif
++#if defined(SLEEP_ONLY)
      sleep();
  #else
  
@@ -314,36 +320,49 @@ index 2002676..8f3f6db 100644
      } else {
          while (stream->available()) { // Currently we never want to block
 diff --git a/src/modules/Modules.cpp b/src/modules/Modules.cpp
-index e477574..2c608bb 100644
+index e477574..0caaf90 100644
 --- a/src/modules/Modules.cpp
 +++ b/src/modules/Modules.cpp
-@@ -107,6 +107,15 @@
+@@ -107,6 +107,19 @@
  #include "modules/DropzoneModule.h"
  #endif
  
 +#ifdef HIGHRATE_POSITION_SENDER
 +#include "modules/HighRatePositionModule.h"
 +#endif
-+#ifdef GPS_TAG
-+#include "gps/GnssSim.h"
++#if defined(GPS_TAG) || defined(ODID_SNIFFER)
++#include "gps/GnssTagSettings.h"
 +#include "modules/GnssConfigModule.h"
 +#include "modules/GnssSignaler.h"
++#include "modules/TagRadioState.h"
++#endif
++#ifdef GPS_TAG
++#include "gps/GnssSim.h"
 +#endif
 +
  /**
   * Create module instances here.  If you are adding a new module, you must 'new' it here (or somewhere else)
   */
-@@ -128,6 +137,14 @@ void setupModules()
+@@ -128,6 +141,23 @@ void setupModules()
  #if !MESHTASTIC_EXCLUDE_GPS
      positionModule = new PositionModule();
  #endif
 +#ifdef HIGHRATE_POSITION_SENDER
 +    highRatePositionModule = new HighRatePositionModule();
 +#endif
-+#ifdef GPS_TAG
++#if defined(GPS_TAG) || defined(ODID_SNIFFER)
++    // Order matters: settings FIRST (this runs before radio init in setup()), then the radio-state
++    // module reads the persisted profile — a PERMANENT-DEAF tag must be muted before the radio's
++    // very first startReceive() (docs/RADIO_STATES.md §3). The GPS tag re-loads later from
++    // GnssRateProbe when the GNSS comes up; the load is idempotent.
++    gnssTagSettingsLoad();
++    TagRadioState::initFromProfile();
++    tagRadioState = new TagRadioState();
 +    gnssConfigModule = new GnssConfigModule();
 +    gnssSignaler = new GnssSignaler(); // one signal owner: every LED/buzzer write goes through it
-+    gnssSim = new GnssSim();           // indoor synthetic-fix generator (off until commanded)
++#endif
++#ifdef GPS_TAG
++    gnssSim = new GnssSim(); // indoor synthetic-fix generator (off until commanded)
 +#endif
  #if !MESHTASTIC_EXCLUDE_WAYPOINT
      waypointModule = new WaypointModule();
@@ -410,10 +429,25 @@ index a04837e..7fd14be 100644
  
      uint8_t tempVal;
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 4f7fb47..c22c41f 100644
+index 4f7fb47..c86a529 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
-@@ -240,13 +240,169 @@ int NRF52Bluetooth::getRssi()
+@@ -127,7 +127,14 @@ void startAdv(void)
+      * https://developer.apple.com/library/content/qa/qa1931/_index.html
+      */
+     Bluefruit.Advertising.restartOnDisconnect(true);
++#ifdef ODID_SNIFFER
++    // Fork (A1): the bridge advertises SLOWLY — one adv event per ~1.0 s costs the continuous ODID
++    // scan ≲0.3 % of its time (Dronetag re-adverts at ~5 Hz cover the gaps), yet gives the phone a
++    // connectable path to a DEAF bridge (docs/RADIO_STATES.md: BLE is the close-range recovery).
++    Bluefruit.Advertising.setInterval(1600, 1600); // in unit of 0.625 ms = 1.0 s, no fast phase
++#else
+     Bluefruit.Advertising.setInterval(32, 244); // in unit of 0.625 ms
++#endif
+     Bluefruit.Advertising.setFastTimeout(30);   // number of seconds in fast mode
+     Bluefruit.Advertising.start(0); // 0 = Don't stop advertising after n seconds.  FIXME, we should stop advertising after X
+ }
+@@ -240,13 +247,169 @@ int NRF52Bluetooth::getRssi()
  {
      return 0; // FIXME figure out where to source this
  }
@@ -583,16 +617,19 @@ index 4f7fb47..c22c41f 100644
      // Clear existing data.
      Bluefruit.Advertising.stop();
      Bluefruit.Advertising.clearData();
-@@ -292,10 +448,19 @@ void NRF52Bluetooth::setup()
+@@ -292,15 +455,31 @@ void NRF52Bluetooth::setup()
      // BLEService and BLECharacteristic classes
      LOG_INFO("Init the Mesh bluetooth service");
      setupMeshService();
 +#ifdef ODID_SNIFFER
-+    // Scan-only bridge: do NOT advertise. With no advertising and no phone connection the SoftDevice
-+    // gives the BLE observer ~100% radio time. Configure the Tag over USB. (Keeping begin(1,1) and just
-+    // skipping startAdv is safer than begin(0,1), which skips per-peripheral CONN_CFG setup.)
-+    Bluefruit.Advertising.stop();
-+    LOG_INFO("ODID_SNIFFER: scan-only, advertising disabled");
++    // Fork (A1 bridge parity): the bridge ADVERTISES now (slow connectable, see startAdv) so the
++    // phone can reach it directly — required since the radio-state design made BLE the only way to
++    // reach a DEAF bridge without a reboot. The ODID observer runs concurrently on the SoftDevice
++    // (begin(1,1): 1 peripheral + 1 observer); the sniffer-throughput cost of advertising and of a
++    // CONNECTED phone session is measured by the bench A/B (tools/bench, A1 acceptance gate).
++    LOG_INFO("Set up the advertising payload(s)");
++    startAdv();
++    LOG_INFO("ODID_SNIFFER: slow connectable adv + continuous scan");
 +    startOdidScanner();
 +#else
      // Setup the advertising packet(s)
@@ -603,6 +640,15 @@ index 4f7fb47..c22c41f 100644
  }
  void NRF52Bluetooth::resumeAdvertising()
  {
+     Bluefruit.Advertising.restartOnDisconnect(true);
++#ifdef ODID_SNIFFER
++    Bluefruit.Advertising.setInterval(1600, 1600); // fork (A1): stay SLOW — the sniffer owns the radio time
++#else
+     Bluefruit.Advertising.setInterval(32, 244); // in unit of 0.625 ms
++#endif
+     Bluefruit.Advertising.setFastTimeout(30);   // number of seconds in fast mode
+     Bluefruit.Advertising.start(0);
+ }
 diff --git a/variants/nrf52840/tracker-t1000-e/platformio.ini b/variants/nrf52840/tracker-t1000-e/platformio.ini
 index 905d751..b719605 100644
 --- a/variants/nrf52840/tracker-t1000-e/platformio.ini

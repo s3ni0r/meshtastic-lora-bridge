@@ -52,8 +52,8 @@ FromRadio.packet            field 2, length-delimited   → MeshPacket
 ```
 
 Payload (little-endian; **version = length**: 12 = position only, 17 = +telemetry,
-18 = +battery (v3, firmware release v3.0), **19 = +motion (v4, tag-downlink branch,
-2026-07-26)**):
+18 = +battery (v3, firmware release v3.0), 19 = +motion (v4), **20 = +radio-status (v5,
+A1+A4 round, 2026-07-26)**):
 
 | Offset | Type | Meaning |
 |---|---|---|
@@ -68,6 +68,7 @@ Payload (little-endian; **version = length**: 12 = position only, 17 = +telemetr
 | 16 | uint8 | horizontal accuracy, m (GST 1-σ; 0 = unknown) |
 | **17** | **uint8** | **battery: 0–100 = %, 101 = externally powered (USB), 255 = unknown** |
 | 18 | uint8 | motion energy (v4): high-passed \|accel\| envelope, **mg/4** (multiply by 4), 0–254; 255 = no accel sample |
+| 19 | uint8 | radio status (v5): **bit0 = DEAF** (TX-only radio state — also the GO-DEAF fallback confirmation: a deaf tag still streams), **bit1 = PERMANENT profile**, **bit2 = duty-clamped** (a persisted spacing is being clamped to the region's legal floor). See `DOWNLINK.md` / `RADIO_STATES.md` |
 
 Decode rule:
 
