@@ -19,9 +19,10 @@ spacing, adaptive/calibration behavior, signals, naming and profiles all apply.
       calibration windows (quantify it anyway: standby µA → RX mA; the bridge has no GNSS
       draw to hide it under). CLIENT_MUTE story mirrors the GPS tag.
 - [ ] The go-deaf/radio-state op and correlated SIGNAL ACKs (A4 decisions) ship as part of
-      this parity work — the bridge needs them for its calibration-stage role. The button
-      LISTENING↔DEAF toggle is the field escape hatch on both flavors (BLE advertising on
-      the bridge stays in scope for config parity, but deaf-recovery does NOT depend on it).
+      this parity work — the bridge needs them for its calibration-stage role. Bridge BLE
+      advertising is REQUIRED here: with the button toggle removed, BLE is the only way to
+      reach a deaf bridge without a reboot (slow connectable advertising, ≲0.3 % scan-time
+      cost, bench A/B with the sniffer as the acceptance gate).
 - [ ] Split `GnssConfigModule` into transport + capability sets; the settings reply must
       advertise WHICH knob groups the tag supports (extend the existing
       length-is-capability signal into an explicit capability byte — cleaner than a fourth
