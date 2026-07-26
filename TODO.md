@@ -127,12 +127,18 @@ shows "persists across reboots" consequences explicitly.
 The largest architectural decision: everything today is a Meshtastic fork. MeshCore must be
 supported permanently alongside it — not as a migration.
 
-- [ ] Write the design doc FIRST (`docs/DUAL_STACK.md`) and get it reviewed before any
-      code. Core principle to evaluate: our real product is the WIRE CONTRACT (19 B v4
-      uplink + portnum-260 command set + discovery advertisement), not the mesh stack —
-      port the contract, keep the app/tools stack-agnostic.
-- [ ] Survey MeshCore's primitives: custom payload transport (PRIVATE_APP equivalent),
-      BLE phone API, duty-cycle handling, nRF52/T1000-E support maturity, licensing.
+- [x] **Survey DONE (2026-07-26)** — [docs/DUAL_STACK.md](docs/DUAL_STACK.md): studied
+      MeshCore @ a3a1aa5e from source. Headlines: MIT license; T1000-E first-class
+      (CustomLR1110 + QMA6100P + GPS power control); GRP_DATA = a cleaner PRIVATE_APP
+      (u16 data-type with public registry, dev range free); sendZeroHop = our exact
+      no-rebroadcast pattern; duty budget is first-class in the Dispatcher; signed
+      Ed25519 ADVERTs give LoRa-side typed discovery for free; companion BLE protocol is
+      documented but churning (pin versions); GPS driver is 1 Hz-class (our AG3335
+      unlock ports — chip knowledge is stack-independent). Wire-contract mapping table +
+      per-roadmap-item implications in the doc.
+- [ ] Owner sign-off on the mapping + module boundaries (DUAL_STACK.md §2–3), then the
+      SPIKE before any architecture: minimal MeshCore app streaming the exact 19 B
+      payload as GRP_DATA via sendZeroHop on our hardware, bench-received.
 - [ ] Repo shape decision: `firmware/meshtastic-firmware/` + `firmware/meshcore/` clones
       with the same tracked-patch + drop-in + `sync/apply` discipline; shared protocol
       sources factored so GnssSim/GnssMotion/payload builders compile in both trees.
