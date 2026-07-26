@@ -9,6 +9,16 @@ T1000-E Base tethered to an **iPhone**, shown live on a map at multi-Hz. Region:
 **Newest (branch `tag-downlink`, 2026-07-25/26, all bench-validated on hardware — full
 contract in [docs/DOWNLINK.md](docs/DOWNLINK.md)):**
 
+- **Four external-review rounds absorbed; firmware release v4.3 is current** (supersedes
+  v4.0–v4.2 — WIRE CHANGE on the TRACK op: u32 transfer id in every sub-op, 9-byte ACK).
+  Track storage is A/B generation slots (cap 800 records): the committed track is never
+  opened for writing, so no power loss / torn write / CRC failure can destroy it, and a
+  failed COMMIT keeps NAKing on retry. Verified by the hardware regression suite
+  ([tools/bench/](tools/bench/README.md)) at 22/22 (exit 0) against the RELEASED gps-tag
+  binary; the shipped MeshTracker build speaks the same wire (identity-bound settings,
+  sequenced ACK queue). Agent onboarding + repeatable procedures: [AGENTS.md](AGENTS.md) and
+  `.claude/skills/` (flashing, bench, deploy, release).
+
 - **The GPS tag listens now** (RX enabled; CLIENT_MUTE still bars rebroadcast): mode switching,
   signals and the simulator ride portnum 260 through the Base at LoRa range or a direct link.
   Command latency phone→tag ≈ **0.2–0.35 s** (Base fast-lane + API-poll fixes, measured).

@@ -1,14 +1,18 @@
 # Tag downlink — remote control, signals, adaptive TX, simulator (tag-downlink branch)
 
-> **Review snapshot (2026-07-26).** This document is the authoritative contract for everything
-> added on branch `tag-downlink` (2026-07-25/26), all bench-validated on real hardware (Base
-> `!b0bb9cda` ↔ GPS tag `!18e77545`): downlink command channel (ops 0x02–0x05 below), beep-first
-> operator signals, speed-gated adaptive TX with phone-tunable knobs (settings wire v3), payload
-> v4 (motion energy + moving flag — see `BATTERY_INTEGRATION.md` for the full payload byte map),
-> and the on-tag indoor simulator (parametric programs, shake mode, GPX/track replay).
+> **Review snapshot (2026-07-26, after FOUR external-review rounds; firmware release v4.3).**
+> This document is the authoritative contract for everything added on branch `tag-downlink`
+> (2026-07-25/26), all bench-validated on real hardware (Base `!b0bb9cda` ↔ GPS tag
+> `!18e77545`; the current 22-assertion suite ran clean against the RELEASED v4.3 gps-tag
+> binary): downlink command channel (ops 0x02–0x05 below), beep-first operator signals,
+> speed-gated adaptive TX with phone-tunable knobs (settings wire v3), payload v4 (motion
+> energy + moving flag — see `BATTERY_INTEGRATION.md` for the full payload byte map), and the
+> on-tag indoor simulator (parametric programs, shake mode, GPX/track replay with A/B-slot
+> storage and a u32 transfer id in every TRACK frame — v4.3 wire, incompatible with pre-v4.3).
 > Companion docs: `BATTERY_INTEGRATION.md` (uplink payload, for external consumers),
 > `../firmware/FORK.md` (build/architecture), `CAPACITY.md` (airtime/duty math),
-> `../TODO.md` (roadmap state). Rollback of all of it: `../firmware/known-good/restore.sh`
+> `../TODO.md` (roadmap state), `../AGENTS.md` + `../.claude/skills/` (agent onboarding +
+> flash/bench/release procedures). Rollback of all of it: `../firmware/known-good/restore.sh`
 > (reflashes the validated v3.0 fleet firmware).
 
 The GPS tag now **listens** on LoRa: an app connected to the Base can switch the tag's TX mode
