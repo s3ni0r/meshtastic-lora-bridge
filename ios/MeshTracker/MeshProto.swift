@@ -350,42 +350,49 @@ func parseConfigReply(_ data: Data) -> ConfigReply? {
     return nil
 }
 
-/// Correlated ACK for the TRACK op (0x05): `[0x85, status, sub, offLo, offHi]` — the tag echoes
-/// exactly WHICH frame it answers, so uploads never credit a stale/foreign acknowledgment.
+/// Correlated ACK for the TRACK op (0x05): `[0x85, status, sub, offLo, offHi, nonce]`. The tag
+/// echoes exactly WHICH frame of WHICH upload it answers, and the parser keeps the sender's
+/// node id — a stale ACK from a previous upload or a different tag can never be credited.
 struct TrackAck: Equatable {
+    let from: UInt32 // MeshPacket.from — the replying node (must be the upload's target)
     let status: UInt8
     let sub: UInt8   // 0 BEGIN / 1 CHUNK / 2 COMMIT / 3 ABORT
     let off: UInt16  // BEGIN: record count · CHUNK: offset · else 0
+    let nonce: UInt8 // per-upload nonce chosen by the client in BEGIN
 }
 
-/// Parse a FromRadio frame as a track ACK (portnum 260, 5-byte 0x85 payload) — nil otherwise.
+/// Parse a FromRadio frame as a track ACK (portnum 260, 6-byte 0x85 payload) — nil otherwise.
 func parseTrackAck(_ data: Data) -> TrackAck? {
     var r = ProtoReader(data)
     while let (field, wire) = r.readTag() {
         if field == 2, wire == 2 {
             guard let pkt = r.readBytes() else { return nil }
             var pr = ProtoReader(pkt)
+            var from: UInt32 = 0
+            var decoded: ArraySlice<UInt8>?
             while let (f, w) = pr.readTag() {
-                if f == 4, w == 2 {
-                    guard let dec = pr.readBytes() else { return nil }
-                    var dr = ProtoReader(dec)
-                    var portnum = 0
-                    var payload: ArraySlice<UInt8>?
-                    while let (df, dw) = dr.readTag() {
-                        switch (df, dw) {
-                        case (1, 0): portnum = Int(dr.readVarint() ?? 0)
-                        case (2, 2): payload = dr.readBytes()
-                        default: dr.skip(dw)
-                        }
-                    }
-                    guard portnum == kGnssConfigPortnum, let pl = payload, pl.count == 5 else { return nil }
-                    let b = Array(pl)
-                    guard b[0] == 0x85 else { return nil }
-                    return TrackAck(status: b[1], sub: b[2], off: UInt16(b[3]) | (UInt16(b[4]) << 8))
+                switch (f, w) {
+                case (1, 5): from = pr.readFixed32() ?? 0
+                case (4, 2): decoded = pr.readBytes()
+                default: pr.skip(w)
                 }
-                pr.skip(w)
             }
-            return nil
+            guard let dec = decoded else { return nil }
+            var dr = ProtoReader(dec)
+            var portnum = 0
+            var payload: ArraySlice<UInt8>?
+            while let (df, dw) = dr.readTag() {
+                switch (df, dw) {
+                case (1, 0): portnum = Int(dr.readVarint() ?? 0)
+                case (2, 2): payload = dr.readBytes()
+                default: dr.skip(dw)
+                }
+            }
+            guard portnum == kGnssConfigPortnum, let pl = payload, pl.count == 6 else { return nil }
+            let b = Array(pl)
+            guard b[0] == 0x85 else { return nil }
+            return TrackAck(from: from, status: b[1], sub: b[2],
+                            off: UInt16(b[3]) | (UInt16(b[4]) << 8), nonce: b[5])
         }
         r.skip(wire)
     }

@@ -23,8 +23,10 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     var replyCount = 0              // bumps per reply — ACK tracking for bulk uploads
     var lastReplyOp: UInt8 = 0
     var lastReplyStatus: UInt8 = 0
-    var lastTrackAck: TrackAck?     // correlated 0x85 ACKs (sub + offset echoed by the tag)
+    var lastTrackAck: TrackAck?     // correlated 0x85 ACKs (sub/offset/nonce echoed by the tag)
     var trackAckCount = 0
+    var linkGeneration = 0          // bumps on every (re)connect/stop — uploads bind to one generation
+    var linkNodeNum: UInt32 = 0     // my_node_num of the CONNECTED peripheral (identity proof)
 
     @ObservationIgnored private var central: CBCentralManager?
     @ObservationIgnored private var peripheral: CBPeripheral?
@@ -42,6 +44,8 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
         settings = nil
         lastStatus = nil
         handshakeDone = false
+        linkNodeNum = 0
+        linkGeneration += 1
         central = CBCentralManager(delegate: self, queue: nil)
     }
 
@@ -49,6 +53,8 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
         central?.stopScan()
         if let p = peripheral { central?.cancelPeripheralConnection(p) }
         peripheral = nil; toRadio = nil; fromRadio = nil
+        linkNodeNum = 0
+        linkGeneration += 1
         stage = .idle
     }
 
@@ -99,6 +105,8 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     }
 
     func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
+        linkNodeNum = 0
+        linkGeneration += 1 // any in-flight upload bound to the old link aborts
         if stage != .idle { stage = .failed("disconnected") }
     }
 
@@ -129,18 +137,27 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
         }
         guard ch.uuid == kFromRadio else { return }
         if let v = ch.value, !v.isEmpty {
-            if let reply = parseConfigReply(v) {
+            // Identity gate (review R3 finding 1): a portnum-260 reply only proves the packet
+            // REACHED targetNode — possibly relayed via LoRa through whatever node we're
+            // actually connected to. The peripheral's own my_info is the identity proof, and
+            // NOTHING proceeds (no GET, no ready, no persistence) until it matches.
+            if linkNodeNum == 0, let me = parseMyNodeNum(v) {
+                linkNodeNum = me
+                if me != targetNode {
+                    stage = .failed(String(format: "wrong node !%08x — expected !%08x", me, targetNode))
+                    if let pp = peripheral { central?.cancelPeripheralConnection(pp) }
+                    return
+                }
+                // Verified: THIS peripheral is the target node — now it's worth remembering.
+                UserDefaults.standard.set(p.identifier.uuidString, forKey: rememberKey)
+            }
+            if linkNodeNum == targetNode, let reply = parseConfigReply(v) {
                 settings = reply.settings
                 if reply.op == 0x81 { lastStatus = reply.status }
                 lastReplyOp = reply.op
                 lastReplyStatus = reply.status
                 replyCount += 1
                 stage = .ready
-                // Identity proven: this peripheral answered a frame ADDRESSED to targetNode —
-                // only now is it worth remembering (review R2: don't save unvalidated picks).
-                if let p = peripheral {
-                    UserDefaults.standard.set(p.identifier.uuidString, forKey: rememberKey)
-                }
             }
             if let ta = parseTrackAck(v) {
                 lastTrackAck = ta
@@ -149,7 +166,12 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
             if let fr = fromRadio { p.readValue(for: fr) } // keep draining
         } else if !handshakeDone {
             handshakeDone = true
-            sendGet() // config drained — ask the tag for its current GNSS settings
+            guard linkNodeNum == targetNode else { // drained without identity = wrong/broken node
+                stage = .failed("peripheral identity unverified — not the target tag")
+                if let pp = peripheral { central?.cancelPeripheralConnection(pp) }
+                return
+            }
+            sendGet() // identity verified + config drained — ask for the GNSS settings
         }
     }
 

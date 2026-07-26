@@ -64,3 +64,4 @@ print("after STOP: sim flag in last packets:", [bool(r[1] & 0x10) for r in tail]
 iface.close()
 verdict = bool(sim_pkts) and len(speeds) >= 2 and True in tiers and False in tiers and (max(lats) > min(lats))
 print("VERDICT:", "PASS — sim drives real tier machinery" if verdict else "CHECK NEEDED")
+import sys as _s; _s.exit(0 if verdict else 1)

@@ -116,25 +116,40 @@ echo "   checksums OK ($FLAVOR.uf2 + $FLAVOR-dfu.zip verified against the manife
 # touches mounted bootloader volumes — the old automatic scan could hit a device unrelated to
 # the selected serial target (review R2 finding 3).
 if [ "${2:-}" = "uf2" ]; then
+    # Fail closed on ambiguity (review R3 finding 4): EXACTLY ONE matching bootloader volume,
+    # or we refuse — never "the first match".
+    CANDIDATES=""
+    NCAND=0
     for v in /Volumes/*; do
         [ -f "$v/INFO_UF2.TXT" ] || continue
-        if ! grep -qiE "t1000|nrf52" "$v/INFO_UF2.TXT"; then
+        if grep -qiE "t1000|nrf52" "$v/INFO_UF2.TXT"; then
+            CANDIDATES="$CANDIDATES $v"
+            NCAND=$((NCAND + 1))
+        else
             echo "   note: UF2 volume $v is not a T1000/nRF52 bootloader — leaving it alone" >&2
-            continue
         fi
-        echo "== Flashing $FLAVOR ($VERSION) -> UF2 volume $v"
-        cp "$UF2" "$v/" 2>/dev/null || true # exit code meaningless (device reboots mid-copy)
-        for _ in $(seq 1 30); do
-            if [ ! -d "$v" ]; then
-                echo "DONE (UF2): bootloader accepted the image (volume unmounted); device reboots."
-                exit 0
-            fi
-            sleep 0.5
-        done
-        echo "ERROR: $v never unmounted — flash NOT confirmed. Re-enter the bootloader and retry." >&2
-        exit 1
     done
-    echo "ERROR: no T1000/nRF52 UF2 volume mounted (double-tap the button first)." >&2
+    if [ "$NCAND" -eq 0 ]; then
+        echo "ERROR: no T1000/nRF52 UF2 volume mounted (double-tap the button first)." >&2
+        exit 1
+    fi
+    if [ "$NCAND" -gt 1 ]; then
+        echo "ERROR: $NCAND candidate bootloader volumes ($CANDIDATES) — ambiguous target, refusing." >&2
+        echo "       Unplug/eject all but the ONE board you intend to flash, then retry." >&2
+        exit 1
+    fi
+    v="$(echo $CANDIDATES | awk '{print $1}')"
+    echo "== Flashing $FLAVOR ($VERSION) -> UF2 volume $v"
+    sed -n '1,3p' "$v/INFO_UF2.TXT" | sed 's/^/   /'
+    cp "$UF2" "$v/" 2>/dev/null || true # exit code meaningless (device reboots mid-copy)
+    for _ in $(seq 1 30); do
+        if [ ! -d "$v" ]; then
+            echo "DONE (UF2): bootloader accepted the image (volume unmounted); device reboots."
+            exit 0
+        fi
+        sleep 0.5
+    done
+    echo "ERROR: $v never unmounted — flash NOT confirmed. Re-enter the bootloader and retry." >&2
     exit 1
 fi
 
@@ -213,8 +228,11 @@ EOF
     fi
     TARGET="$NEWTARGET"
 else
-    echo "   warning: could not read the hardware serial pre-touch — using $TARGET as-is" >&2
-    sleep 5
+    # Fail closed (review R3 finding 4): without a hardware serial we cannot prove the
+    # post-touch port is the same physical board — refuse rather than guess.
+    echo "ERROR: could not read the hardware serial of $TARGET before the touch — refusing to" >&2
+    echo "       continue against a path that may re-enumerate onto a different board." >&2
+    exit 1
 fi
 
 echo "   serial DFU upload: $(basename "$DFUZIP")"

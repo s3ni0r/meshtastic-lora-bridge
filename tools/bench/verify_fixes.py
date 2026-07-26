@@ -1,13 +1,21 @@
-"""Re-verify the review fixes on-device.
+"""Bench regression suite for the downlink protocol state machines (R3-rigorous).
 
-A) Adaptive band semantics: program [12 km/h x 10 s][4 km/h x 35 s][1 km/h x 25 s] loop.
-   4 km/h sits INSIDE the hysteresis band (slow=3, fast=5). Expected: fast tier through the
-   ENTIRE 35 s band segment (pre-fix, the below-clock would have run there); downshift only
-   ~15 s into the true 1 km/h segment.
-B) Track integrity: upload a small track, COMMIT, replay OK; then corrupt-path check — BEGIN
-   without finishing, then try to play: must be REFUSED (status 1, no sim packets).
+Asserts, on real hardware (tag on USB, exit code 0 ONLY if everything passes):
+  A  adaptive hysteresis: the band (slow<v<fast) never counts toward the downshift
+  B1 track upload: every ACK correlated (sender node, nonce, sub, offset) — including the
+     deliberate duplicate chunk — COMMIT acked, COMMIT RETRY idempotent, replay plays
+  B2 transactional staging: a stray BEGIN/ABORT does NOT destroy the committed slot
+  B3 reboot durability: chunks WITHOUT commit + REBOOT -> staged data discarded, the old
+     committed slot still plays
+
+Run from the repo root with the meshtastic pipx python.
 """
-import struct, sys, time, zlib
+import struct
+import subprocess
+import sys
+import time
+import zlib
+
 sys.path.insert(0, "tools")
 import nodes
 import meshtastic.serial_interface
@@ -15,19 +23,37 @@ from meshtastic import mesh_pb2
 from pubsub import pub
 
 TAG = 417822021
-rows, replies = [], []
+FAILURES = []
+
+
+def check(name, ok, detail=""):
+    print(f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f" — {detail}" if detail else ""))
+    if not ok:
+        FAILURES.append(name)
+
+
+rows, acks = [], []
+
 
 def on_rx(packet, interface=None):
     d = packet.get("decoded") or {}
     pl = d.get("payload") or b""
     if d.get("portnum") in ("PRIVATE_APP", 256) and len(pl) >= 19:
         rows.append((time.monotonic(), pl[11], pl[14]))
-    elif len(pl) >= 2 and pl[0] & 0x80:
-        replies.append((pl[0], pl[1]))
+    elif len(pl) == 6 and pl[0] == 0x85:
+        acks.append({"from": packet.get("from"), "status": pl[1], "sub": pl[2],
+                     "off": pl[3] | (pl[4] << 8), "nonce": pl[5], "t": time.monotonic()})
 
-iface = meshtastic.serial_interface.SerialInterface(devPath=nodes.resolve("gpstag"))
-pub.subscribe(on_rx, "meshtastic.receive")
-time.sleep(1.5)
+
+def connect():
+    i = meshtastic.serial_interface.SerialInterface(devPath=nodes.resolve("gpstag"))
+    pub.subscribe(on_rx, "meshtastic.receive")
+    time.sleep(1.5)
+    return i
+
+
+iface = connect()
+
 
 def cmd(payload):
     p = mesh_pb2.MeshPacket()
@@ -36,63 +62,109 @@ def cmd(payload):
     p.decoded.payload = bytes(payload)
     p.id = iface._generatePacketId()
     iface._sendPacket(p)
-    time.sleep(0.3)
+    time.sleep(0.35)
 
+
+def await_ack(sub, off, nonce, timeout=3.0):
+    """The correlated-ACK contract itself: sender==TAG and (sub, off, nonce) exact."""
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        for a in reversed(acks):
+            if a["t"] >= t0 - 1.0 and a["from"] == TAG and a["sub"] == sub \
+               and a["off"] == off and a["nonce"] == nonce:
+                return a
+        time.sleep(0.05)
+    return None
+
+
+def sim_plays(seconds=5):
+    rows.clear()
+    cmd([0x04, 3, 0, 60, 0])
+    time.sleep(seconds)
+    n = sum(1 for r in rows if r[1] & 0x10)
+    cmd([0x04, 0])
+    time.sleep(1)
+    return n
+
+
+# ---------------- A) adaptive band semantics ----------------------------------------------
 print("A) band-crossing program: 12x10s, 4x35s (band), 1x25s, loop")
 rows.clear()
 cmd([0x04, 1, 1, 180, 0, 3, 12, 10, 4, 35, 1, 25])
 t0 = time.monotonic()
-transitions = []
-last_tier = None
+transitions, last = [], None
 while time.monotonic() - t0 < 75:
     time.sleep(1)
     if rows:
-        fl = rows[-1][1]
-        tier = "idle" if fl & 8 else "fast"
-        if tier != last_tier:
-            transitions.append((round(time.monotonic() - t0, 1), tier, rows[-1][2]))
-            print(f"  t={transitions[-1][0]:5.1f}s tier -> {tier} (spd={rows[-1][2]})")
-            last_tier = tier
+        tier = "idle" if rows[-1][1] & 8 else "fast"
+        if tier != last:
+            transitions.append((round(time.monotonic() - t0, 1), tier))
+            last = tier
 cmd([0x04, 0])
-# Expected: fast until ~60 s (10+35+15 into the 1 km/h segment); NO downshift during the band.
-downshifts = [t for t, tier, _ in transitions if tier == "idle"]
-band_ok = all(t >= 55 for t in downshifts) and len(downshifts) >= 1
-print(f"  downshift(s) at {downshifts} — band did{'' if band_ok else ' NOT'} stay fast: {'PASS' if band_ok else 'FAIL'}")
+downshifts = [t for t, tier in transitions if tier == "idle"]
+check("band never counts toward the downshift", bool(downshifts) and all(t >= 55 for t in downshifts),
+      f"downshifts at {downshifts}")
 
-print("B1) good upload + replay")
+# ---------------- B1) correlated upload + idempotent COMMIT --------------------------------
+print("B1) upload — per-frame correlation asserted (sender+nonce+sub+offset)")
 pts = [(43.4832 + i * 0.00004, -1.5586, 10, 10) for i in range(30)]
 recs = b"".join(struct.pack("<iiBB", int(la * 1e7), int(lo * 1e7), sp, dt) for la, lo, sp, dt in pts)
 crc = zlib.crc32(recs) & 0xFFFFFFFF
-replies.clear()
-cmd(bytes([0x05, 0x00]) + struct.pack("<HI", len(pts), crc))
+NONCE = 77
+acks.clear()
+cmd(bytes([0x05, 0x00]) + struct.pack("<HIB", len(pts), crc, NONCE))
+a = await_ack(0, len(pts), NONCE)
+check("BEGIN ack correlated + status 0", a is not None and a["status"] == 0)
 for off in range(0, len(pts), 20):
     n = min(20, len(pts) - off)
     cmd(bytes([0x05, 0x01]) + struct.pack("<HB", off, n) + recs[off * 10:(off + n) * 10])
-# duplicate re-send of the last chunk (retry-safety):
-cmd(bytes([0x05, 0x01]) + struct.pack("<HB", 20, 10) + recs[200:300])
+    a = await_ack(1, off, NONCE)
+    check(f"CHUNK off={off} ack correlated + status 0", a is not None and a["status"] == 0)
+cmd(bytes([0x05, 0x01]) + struct.pack("<HB", 20, 10) + recs[200:300])  # exact dup of last chunk
+a = await_ack(1, 20, NONCE)
+check("DUPLICATE chunk ack correlated + status 0 (retry-safe)", a is not None and a["status"] == 0)
+acks.clear()
 cmd([0x05, 0x02])
-time.sleep(0.5)
-ok85 = [s for (o, s) in replies if o == 0x85]
-print(f"  upload replies: {ok85} (dup chunk must also be status 0)")
-rows.clear()
-cmd([0x04, 3, 0, 60, 0])
-time.sleep(6)
-good_replay = sum(1 for r in rows if r[1] & 0x10) > 5
-print(f"  replay after COMMIT: {'PASS' if good_replay else 'FAIL'} ({len(rows)} pkts)")
-cmd([0x04, 0])
+a = await_ack(2, 0, NONCE)
+check("COMMIT ack correlated + status 0", a is not None and a["status"] == 0)
+acks.clear()
+cmd([0x05, 0x02])  # retry: pretend the previous reply was lost
+a = await_ack(2, 0, NONCE)
+check("COMMIT RETRY idempotent (status 0)", a is not None and a["status"] == 0)
+check("replay after COMMIT plays", sim_plays() > 5)
 
-print("B2) PARTIAL upload must refuse to play")
-replies.clear()
-cmd(bytes([0x05, 0x00]) + struct.pack("<HI", len(pts), crc))  # BEGIN only — no chunks, no commit
-rows.clear()
-cmd([0x04, 3, 0, 60, 0])  # try to play
-time.sleep(4)
-sim_after_partial = sum(1 for r in rows if r[1] & 0x10)
-start_reply = [s for (o, s) in replies if o == 0x84]
-print(f"  play attempt on partial slot: sim packets={sim_after_partial}, SIM reply status={start_reply}")
-partial_ok = sim_after_partial == 0 and (1 in start_reply)
-print(f"  refused: {'PASS' if partial_ok else 'FAIL'}")
-cmd([0x05, 0x03])  # abort cleanup
-cmd([0x04, 0])
+# ---------------- B2) transactional staging ------------------------------------------------
+print("B2) stray BEGIN/ABORT must NOT destroy the committed slot")
+cmd(bytes([0x05, 0x00]) + struct.pack("<HIB", len(pts), crc, 78))  # BEGIN only, no chunks
+check("committed slot STILL plays after a stray BEGIN", sim_plays() > 5)
+cmd([0x05, 0x03])  # abort discards only the staging
+check("committed slot STILL plays after ABORT", sim_plays() > 5)
+
+# ---------------- B3) reboot durability -----------------------------------------------------
+print("B3) chunks WITHOUT commit + REBOOT -> staged upload discarded, live slot intact")
+acks.clear()
+cmd(bytes([0x05, 0x00]) + struct.pack("<HIB", len(pts), crc, 79))
+for off in range(0, len(pts), 20):
+    n = min(20, len(pts) - off)
+    cmd(bytes([0x05, 0x01]) + struct.pack("<HB", off, n) + recs[off * 10:(off + n) * 10])
+a = await_ack(1, 20, 79)
+check("pre-reboot staged chunks landed", a is not None and a["status"] == 0)
+print("  rebooting the tag…")
+port = nodes.resolve("gpstag")
 iface.close()
-print("\nOVERALL:", "PASS" if (band_ok and good_replay and partial_ok) else "CHECK NEEDED")
+subprocess.run(["meshtastic", "--port", port, "--reboot"], capture_output=True, timeout=90)
+time.sleep(25)
+for _ in range(20):
+    if nodes.resolve("gpstag"):
+        break
+    time.sleep(2)
+iface = connect()
+check("committed slot survives the reboot and plays", sim_plays(seconds=6) > 5)
+
+print()
+iface.close()
+if FAILURES:
+    print(f"OVERALL: FAIL ({len(FAILURES)}): {FAILURES}")
+    sys.exit(1)
+print("OVERALL: PASS")
+sys.exit(0)

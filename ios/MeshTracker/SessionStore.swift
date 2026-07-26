@@ -171,7 +171,9 @@ final class SessionRecorder {
             m.tags.append(SessionTagMeta(from: sp.from, source: sp.source.rawValue, title: title))
             meta = m
             tagCount = m.tags.count
-            writeMeta() // tag list is now on disk too (crash-safe recovery keeps names)
+            if !writeMeta() { // tag list is now on disk too (crash-safe recovery keeps names)
+                writeFailures += 1
+            }
         }
         if let h = handles[sp.from] {
             do {
@@ -192,7 +194,11 @@ final class SessionRecorder {
         m.endedAt = Date()
         m.tags = m.tags.map { SessionStoreStats.computeStats($0, sessionId: m.id) }
         meta = m
-        writeMeta()
+        if !writeMeta() {
+            // Finalization not persisted (review R3 finding 8): say so — next launch's
+            // recovery pass will rebuild it from the raw point files, nothing is lost.
+            lastError = "Session finalization couldn't be saved — it will be recovered on next launch."
+        }
         isRecording = false
         let id = m.id
         meta = nil
@@ -200,9 +206,10 @@ final class SessionRecorder {
         return id
     }
 
-    private func writeMeta() {
-        guard let m = meta, let d = try? JSONEncoder().encode(m) else { return }
-        try? d.write(to: SessionPaths.metaURL(m.id), options: .atomic)
+    @discardableResult
+    private func writeMeta() -> Bool {
+        guard let m = meta, let d = try? JSONEncoder().encode(m) else { return false }
+        return (try? d.write(to: SessionPaths.metaURL(m.id), options: .atomic)) != nil
     }
 }
 

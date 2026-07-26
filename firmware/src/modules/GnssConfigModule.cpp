@@ -81,15 +81,19 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
         } else {
             status = 2;
         }
-    } else if (op == 0x05) { // TRACK upload: [sub, ...] — BLE-direct/USB only by convention
+    } else if (op == 0x05) { // TRACK upload: [sub, ...] — phone/USB-direct ONLY (enforced)
         uint8_t sub = d.payload.size >= 2 ? d.payload.bytes[1] : 0xEE;
         uint16_t echoOff = 0;
         bool ok = false;
-        if (sub == 0x00 && d.payload.size >= 8) { // BEGIN: count u16, crc32 u32
+        if (!fromPhone) {
+            // R3 finding 7: TRACK is destructive (slot replacement) — a mesh peer must never
+            // drive it. Reject with a NAK; only the locally-attached client may upload.
+            LOG_WARN("GnssConfig: TRACK op from mesh !%08lx REJECTED", (unsigned long)mp.from);
+        } else if (sub == 0x00 && d.payload.size >= 9) { // BEGIN: count u16, crc32 u32, nonce u8
             uint16_t cnt = (uint16_t)(d.payload.bytes[2] | (d.payload.bytes[3] << 8));
             uint32_t crc = (uint32_t)d.payload.bytes[4] | ((uint32_t)d.payload.bytes[5] << 8) |
                            ((uint32_t)d.payload.bytes[6] << 16) | ((uint32_t)d.payload.bytes[7] << 24);
-            ok = gnssSim->trackBegin(cnt, crc);
+            ok = gnssSim->trackBegin(cnt, crc, d.payload.bytes[8]);
             echoOff = cnt;
         } else if (sub == 0x01 && d.payload.size >= 5) { // CHUNK: offRec u16, n u8, n×10B
             uint16_t off = (uint16_t)(d.payload.bytes[2] | (d.payload.bytes[3] << 8));
@@ -97,15 +101,16 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
             if (d.payload.size >= (uint16_t)(5 + n * 10))
                 ok = gnssSim->trackChunk(off, n, &d.payload.bytes[5]);
             echoOff = off;
-        } else if (sub == 0x02) { // COMMIT — idempotent (see GnssSim::trackCommit)
+        } else if (sub == 0x02) { // COMMIT — idempotent + transactional (see GnssSim)
             ok = gnssSim->trackCommit();
-        } else if (sub == 0x03) { // ABORT
+        } else if (sub == 0x03) { // ABORT — discards the STAGED upload only
             gnssSim->trackAbort();
             ok = true;
         }
-        // Correlated ACK (review R2 finding 1): the reply ECHOES the sub-op and offset it
-        // answers — [0x85, status, sub, offLo, offHi] — so the client matches frames exactly
-        // instead of trusting "any later 0x85". Replaces the generic settings reply for op 5.
+        // Correlated ACK (R2 f1 + R3 f3): echoes sub-op, offset AND the per-upload nonce —
+        // [0x85, status, sub, offLo, offHi, nonce]. A stale ACK from a previous upload or a
+        // different tag can never satisfy the current transfer (the client also validates
+        // the sender's node id from the MeshPacket).
         meshtastic_MeshPacket *tr = allocDataPacket();
         if (tr) {
             tr->to = mp.from;
@@ -114,7 +119,8 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
             tr->decoded.payload.bytes[2] = sub;
             tr->decoded.payload.bytes[3] = (uint8_t)(echoOff & 0xFF);
             tr->decoded.payload.bytes[4] = (uint8_t)(echoOff >> 8);
-            tr->decoded.payload.size = 5;
+            tr->decoded.payload.bytes[5] = gnssSim->uploadNonce();
+            tr->decoded.payload.size = 6;
             if (fromPhone) {
                 service->sendToPhone(tr);
             } else {

@@ -61,7 +61,7 @@ def cmd(payload):
     time.sleep(0.25)
 
 # BEGIN
-cmd(bytes([0x05, 0x00]) + struct.pack("<HI", len(pts), crc))
+cmd(bytes([0x05, 0x00]) + struct.pack("<HIB", len(pts), crc, 42))  # nonce 42
 # CHUNKS of 20 records
 n_per = 20
 for off in range(0, len(pts), n_per):
@@ -96,3 +96,4 @@ ok = (len(sim) > 20 and 15 in speeds
 print(f"\n{len(sim)} sim packets · speeds {sorted(speeds)} · lat span {max(lats)-min(lats):.6f} · "
       f"lon span {max(lons)-min(lons):.6f}" if sim else "NO SIM PACKETS")
 print("VERDICT:", "PASS — uploaded track replays on the tag" if ok else "CHECK NEEDED")
+import sys as _s; _s.exit(0 if ok else 1)

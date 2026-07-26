@@ -29,23 +29,35 @@ def touch_1200(port):
         print(f"      (touch raised {e!r} — ok if already in bootloader)")
 
 
-def wait_for_drive(timeout=30):
+def matching_drives(exclude=()):
+    out = []
+    for v in glob.glob("/Volumes/*"):
+        if v in exclude:
+            continue
+        info = os.path.join(v, "INFO_UF2.TXT")
+        if not os.path.isfile(info):
+            continue
+        try:
+            with open(info) as f:
+                txt = f.read().lower()
+        except OSError:
+            continue
+        if "t1000" in txt or "nrf52" in txt:
+            out.append(v)
+    return out
+
+
+def wait_for_drive(timeout=30, pre_existing=()):
+    """Exactly ONE matching NEW drive, or fail closed (review R3 finding 4): a pre-existing
+    volume is never assumed to be the board we just touched, and ambiguity refuses."""
     print("[2/3] waiting for UF2 bootloader drive ...")
     deadline = time.time() + timeout
     while time.time() < deadline:
-        for v in glob.glob("/Volumes/*"):
-            info = os.path.join(v, "INFO_UF2.TXT")
-            if os.path.isfile(info):
-                # Only OUR device class — never flash whatever unrelated UF2 drive is mounted
-                # (review R2 finding 3).
-                try:
-                    with open(info) as f:
-                        txt = f.read().lower()
-                except OSError:
-                    continue
-                if "t1000" in txt or "nrf52" in txt:
-                    return v
-                print(f"      note: {v} is a UF2 drive but not a T1000/nRF52 — ignoring it")
+        fresh = matching_drives(exclude=pre_existing)
+        if len(fresh) == 1:
+            return fresh[0]
+        if len(fresh) > 1:
+            sys.exit(f"ERROR: {len(fresh)} candidate bootloader volumes {fresh} — ambiguous, refusing.")
         time.sleep(1)
     return None
 
@@ -75,9 +87,18 @@ def main():
         sys.exit(2)
 
     if not no_touch:
+        # Snapshot BEFORE the touch: only a volume that APPEARS afterwards can be the board we
+        # reset — pre-existing drives are never trusted (review R3 finding 4).
+        pre = tuple(matching_drives())
         touch_1200(port)
         time.sleep(2)
-    drive = wait_for_drive()
+        drive = wait_for_drive(pre_existing=pre)
+    else:
+        # --no-touch: the device was put in DFU deliberately; require exactly one candidate.
+        drives = matching_drives()
+        if len(drives) > 1:
+            sys.exit(f"ERROR: {len(drives)} candidate bootloader volumes {drives} — ambiguous, refusing.")
+        drive = drives[0] if drives else wait_for_drive()
     if not drive:
         print("ERROR: no UF2 drive appeared. Double-tap the button to enter the bootloader, then re-run.")
         sys.exit(1)

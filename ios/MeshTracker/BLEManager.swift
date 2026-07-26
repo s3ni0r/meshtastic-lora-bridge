@@ -19,8 +19,9 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     var connectedNodeNum: UInt32 = 0 // who this link talks to (from my_info)
     var lastConfigReply: ConfigReply? // portnum-260 replies when the tag link doubles as config
     var configReplyCount = 0          // bumps per reply — ACK tracking for bulk uploads
-    var lastTrackAck: TrackAck?       // correlated 0x85 ACKs (sub + offset echoed by the tag)
+    var lastTrackAck: TrackAck?       // correlated 0x85 ACKs (sub/offset/nonce echoed by the tag)
     var trackAckCount = 0
+    var linkGeneration = 0            // bumps on every (re)connect — uploads bind to one generation
 
     @ObservationIgnored private var central: CBCentralManager!
     @ObservationIgnored private var peripheral: CBPeripheral?
@@ -41,6 +42,7 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         guard central.state == .poweredOn else { return }
         peripheral = nil; toRadio = nil; fromRadio = nil
         directTag = false; connectedNodeNum = 0
+        linkGeneration += 1 // any in-flight upload bound to the old link aborts
         candidates = [:]; candidateNames = [:]
         scanGeneration += 1
         let gen = scanGeneration

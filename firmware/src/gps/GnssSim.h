@@ -43,12 +43,15 @@ class GnssSim : private concurrency::OSThread
     void stop(const char *why);
     uint8_t source() const { return src; }
 
-    // Track-slot upload (op 0x05, BLE-direct/USB only — see DOWNLINK.md). Records are 10 B:
+    // Track-slot upload (op 0x05, phone/USB-direct ONLY — mesh-relayed ops are rejected; see
+    // DOWNLINK.md). Uploads stage into simtrack.tmp — the committed live slot survives until
+    // the replacement verifies (transactional swap at COMMIT). Records are 10 B:
     // lat i32 | lon i32 | speed u8 (km/h) | dt u8 (0.1 s units from the PREVIOUS point).
-    bool trackBegin(uint16_t count, uint32_t crc32);
+    bool trackBegin(uint16_t count, uint32_t crc32, uint8_t nonce);
     bool trackChunk(uint16_t offRec, uint8_t n, const uint8_t *recBytes);
     bool trackCommit();
     void trackAbort();
+    uint8_t uploadNonce() const { return upNonce; } // echoed in every 0x85 ACK (R3 finding 3)
 
   protected:
     int32_t runOnce() override;
@@ -80,6 +83,9 @@ class GnssSim : private concurrency::OSThread
     bool upActive = false;
     uint16_t upCount = 0, upExpected = 0;
     uint32_t upCrc = 0;
+    uint8_t upNonce = 0;
+    uint16_t lastChunkOff = 0;
+    uint8_t lastChunkN = 0; // exact-duplicate detection (R3 low-priority: any-range was too lax)
     // Track playback state
     uint16_t tkCount = 0, tkIdx = 0;
     TrackRec tkCur{}, tkNxt{};
