@@ -1,6 +1,8 @@
 # Dual-stack design: Meshtastic + MeshCore (B1)
 
-> **Status: survey COMPLETE (2026-07-26); architecture PROPOSED, pending owner sign-off.**
+> **Status: POSTPONED (owner decision 2026-07-26). Survey complete and banked; no port
+> work is planned for now — this document is the resume point when dual-stack is picked
+> back up.**
 > Studied from source: `github.com/ripplebiz/MeshCore` @ `a3a1aa5e` (2026-07-19, active),
 > plus its protocol docs (`docs/packet_format.md`, `payloads.md`, `companion_protocol.md`,
 > `number_allocations.md`). Governing principle (TODO §B1): **our product is the wire

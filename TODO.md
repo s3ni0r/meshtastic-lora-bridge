@@ -123,10 +123,13 @@ shows "persists across reboots" consequences explicitly.
 
 ## B. Platform & architecture
 
-### B1. Dual-stack support: Meshtastic AND MeshCore
+### B1. Dual-stack support: Meshtastic AND MeshCore — **POSTPONED (owner decision 2026-07-26)**
 
-The largest architectural decision: everything today is a Meshtastic fork. MeshCore must be
-supported permanently alongside it — not as a migration.
+On hold: the survey is done and banked ([docs/DUAL_STACK.md](docs/DUAL_STACK.md), studied
+from source @ a3a1aa5e), but no spike, no second vendor tree, no port work for now.
+Everything below stays as the ready-to-resume plan. Practical carry-over while postponed:
+keep new modules stack-agnostic where it is FREE (the A4 radio-state module already is) —
+no speculative abstraction beyond that.
 
 - [x] **Survey DONE (2026-07-26)** — [docs/DUAL_STACK.md](docs/DUAL_STACK.md): studied
       MeshCore @ a3a1aa5e from source. Headlines: MIT license; T1000-E first-class
