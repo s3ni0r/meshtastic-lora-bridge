@@ -13,9 +13,15 @@ to parity for every operation that is not GPS-chip-specific — its position sou
 external Dronetag, so GNSS knobs (nav mode, fix rate, SNR/elevation masks) stay out; TX
 spacing, adaptive/calibration behavior, signals, naming and profiles all apply.
 
-- [ ] Design first: enabling radio RX on the bridge ends `HIGHRATE_TX_ONLY` for that flavor
-      — quantify the battery cost (standby µA → RX mA) and the CLIENT_MUTE story, mirroring
-      what tag-downlink did for the GPS tag.
+- [ ] Design first, aligned with the A4 model: `HIGHRATE_TX_ONLY` becomes the runtime DEAF
+      state on BOTH flavors — the bridge is LISTENING only during the calibration stage,
+      then goes deaf for the session, so the continuous-RX battery cost applies only to
+      calibration windows (quantify it anyway: standby µA → RX mA; the bridge has no GNSS
+      draw to hide it under). CLIENT_MUTE story mirrors the GPS tag.
+- [ ] The go-deaf/radio-state op and correlated SIGNAL ACKs (A4 decisions) ship as part of
+      this parity work — the bridge needs them for its calibration-stage role. The button
+      LISTENING↔DEAF toggle is the field escape hatch on both flavors (BLE advertising on
+      the bridge stays in scope for config parity, but deaf-recovery does NOT depend on it).
 - [ ] Split `GnssConfigModule` into transport + capability sets; the settings reply must
       advertise WHICH knob groups the tag supports (extend the existing
       length-is-capability signal into an explicit capability byte — cleaner than a fourth
@@ -54,24 +60,48 @@ first) can drive identification/connection cycles without name heuristics (today
 - [ ] Renames must propagate into MeshTracker labels, session metadata, and the A2 typed
       advertisement.
 
-### A4. Persistent operating profiles (both tag flavors)
+### A4. Radio states + persistent profiles — MODEL AGREED 2026-07-26 (owner sign-off)
 
-Today every safety-relevant mode is deliberately RAM-only (CALIBRATION and the simulator
-die by TTL; reboot = adaptive). Users need a sanctioned way to make a chosen behavior
-permanent — e.g. "never fall back to adaptive".
+"TX-only" stops being a build flag and becomes a **runtime radio state** both tag flavors
+walk through. Portnum 260 is needed only for the calibration stage; the session runs deaf.
 
-- [ ] Profile model, chosen in the iOS app and persisted on the tag:
-      - **Hybrid** (today's behavior, stays the default): adaptive at boot; calibration
-        bursts via TTL dead-man; nothing risky persists.
-      - **Permanent**: the selected TX parameters persist across reboots — including
-        disabling the adaptive fallback for a fixed-rate tag.
-- [ ] Safety design REQUIRED before code: a persistent max-rate profile must not be able to
-      silently violate EU868 duty (CAPACITY.md math enforced at SET time: reject
-      persist-requests whose sustained rate is illegal for the configured region) and must
-      remain escapable at range (a 260 op that always restores Hybrid, plus the
-      known-good reflash path).
-- [ ] Wire: extend settings v3 → v4 (profile byte + validation), stream-flags echo of the
-      active profile, app UI with explicit "this persists across reboots" consent.
+**The two radio states (both flavors):**
+- **LISTENING** — RX between transmissions: commands/signals/simulator work at LoRa range.
+- **DEAF** — today's TX-only: radio sleeps between TX; best battery, zero TX deferral, no
+  LoRa command can reach it. BLE/USB commands still work (phone path bypasses the radio).
+
+**HYBRID profile (default — the AutoShot choreography):**
+1. Power-on → LISTENING + adaptive TX, always (a fresh tag is always commandable at range).
+2. Calibration stage: CALIBRATION mode (TTL dead-man unchanged) + convergence beeps —
+   both flavors (the bridge has the same buzzer/LED; it only lacks GNSS knobs).
+3. Session start: record-start signal, then the **go-deaf command**; the tag sends its
+   correlated ACK FIRST, then mutes and runs session behavior (GPS tag adaptive, bridge
+   relaying) fully deaf.
+4. Deafness is NEVER persisted: reboot → LISTENING + adaptive. Recovery paths below.
+
+**PERMANENT profile (explicit app consent):** boots straight into its configured behavior,
+no transitions, no TTLs: fixed TX parameters (e.g. adaptive fallback disabled) AND a fixed
+radio state (permanently LISTENING or permanently DEAF). Duty legality enforced at SET
+time (CAPACITY.md math; illegal sustained rates rejected for the configured region); app
+shows "persists across reboots" consequences explicitly.
+
+**Agreed decisions (2026-07-26):**
+- [ ] **ACKs are required** — for the go-deaf/radio-state command AND for calibration
+      SIGNAL ops sent over LoRa (beep/flash). ACKs must be CORRELATED like TRACK's (echo
+      op + pattern + seq / requested state), never satisfiable by a stale or foreign
+      reply; the app retries on missing ACK. Go-deaf always ACKs BEFORE muting; ordering:
+      record-start beep → go-deaf.
+- [ ] **Fully deaf** — no post-TX listen window (option rejected; simplicity + max battery).
+- [ ] **Button escape hatch, no BLE dependency**: pressing the T1000-E button X times
+      toggles LISTENING ↔ DEAF in the field, each direction with a DISTINCT beep
+      signature (vocabulary addition owner-approved 2026-07-26). Pick X to not collide
+      with stock Meshtastic button actions; works on both flavors even without BLE.
+- [ ] Payload v5 status byte (radio state + active profile) for ongoing visibility after
+      app restarts — the 20-byte payload stays in the same ShortFast symbol group, zero
+      added airtime. ACK confirms transitions; the status byte answers "what state is
+      this tag in NOW".
+- [ ] Wire: settings v3 → v4 (profile byte + validation); a 260 op that restores Hybrid;
+      known-good reflash remains the last-resort escape.
 
 ## B. Platform & architecture
 
