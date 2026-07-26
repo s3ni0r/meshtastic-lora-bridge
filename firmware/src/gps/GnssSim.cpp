@@ -8,23 +8,60 @@
 #include "modules/HighRatePositionModule.h"
 #include <math.h>
 
-// Track slot on LittleFS (28 KB total internal FS shared with prefs — cap the slot well below).
-// COMMIT durability: a separate marker file carries the committed CRC — data alone, however
-// CRC-perfect, is NOT playable until the marker exists (review R2: a reboot after the last
-// chunk but before COMMIT must not leave a playable uncommitted slot). Marker create/delete is
-// plain file I/O — no reliance on LittleFS rename/mid-file-write semantics.
-static const char *kTrackPath = "/prefs/simtrack.bin";
-static const char *kTrackTmpPath = "/prefs/simtrack.tmp"; // staging: uploads NEVER touch the live slot
-static const char *kTrackMarkPath = "/prefs/simtrack.ok";
-static const uint8_t kTrackMagic = 0xA9, kTrackVer = 1;
-static const uint16_t kTrackMaxRecs = 1600; // 10 B/record -> <=16 KB
-static const uint8_t kTrackHdrLen = 8;      // magic, ver, count u16, crc32 u32
+// Track storage: A/B generation slots on LittleFS (R4 finding 2). Each slot is a standalone
+// file whose 16-byte header carries its own commit state: generation 0 = staged/incomplete
+// (never playable), generation N>0 = committed at epoch N. The upload stages into the slot
+// that is NOT currently active; the active slot is never opened for writing, so power loss,
+// a torn write or a CRC failure at ANY point leaves the previous committed track untouched
+// and selectable (highest valid generation wins). No marker/selector file exists to tear.
+//
+// Capacity honesty (R4 finding 6): the internal FS is 28 KiB shared with all prefs. Both
+// slots at the 800-record cap total 2 x (16 + 8000) = 16,032 B, leaving ~12 KiB for prefs.
+// An abandoned staged slot occupies only its own pre-budgeted slot file and is reused by the
+// next BEGIN.
+static const char *kSlotAPath = "/prefs/simtrk.a";
+static const char *kSlotBPath = "/prefs/simtrk.b";
+// Legacy v1 layout (single slot + marker + tmp) — removed on first track op after upgrade.
+static const char *kLegacyBin = "/prefs/simtrack.bin";
+static const char *kLegacyTmp = "/prefs/simtrack.tmp";
+static const char *kLegacyMark = "/prefs/simtrack.ok";
+static const uint8_t kTrackMagic = 0xAA, kTrackVer = 2;
+static const uint16_t kTrackMaxRecs = 800; // 10 B/record -> 8,016 B/slot, 2 slots budgeted
+static const uint8_t kTrackHdrLen = 16;    // magic, ver, count u16, crc u32, gen u32, tid u32
 static const uint8_t kTrackRecLen = 10;
 
-/// Read the claimed CRC out of a slot file's header. Returns false on any shape problem —
-/// the CRC value itself is returned via out-param so a legitimate CRC of 0 is not treated
-/// as invalid (review R3, low-priority finding).
-static bool trackHeaderCrc(const char *path, uint32_t *out)
+struct TrackSlotHdr {
+    uint16_t count;
+    uint32_t crc, gen, tid;
+};
+
+static void packU32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v & 0xFF);
+    p[1] = (uint8_t)((v >> 8) & 0xFF);
+    p[2] = (uint8_t)((v >> 16) & 0xFF);
+    p[3] = (uint8_t)((v >> 24) & 0xFF);
+}
+
+static uint32_t unpackU32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void trackHdrBytes(uint8_t *out, const TrackSlotHdr &h)
+{
+    out[0] = kTrackMagic;
+    out[1] = kTrackVer;
+    out[2] = (uint8_t)(h.count & 0xFF);
+    out[3] = (uint8_t)(h.count >> 8);
+    packU32(&out[4], h.crc);
+    packU32(&out[8], h.gen);
+    packU32(&out[12], h.tid);
+}
+
+/// Parse a slot header + shape check (magic, version, count bounds, exact file size).
+/// CRC of the record region is verified separately (it is the expensive part).
+static bool trackSlotHdr(const char *path, TrackSlotHdr *out)
 {
 #ifdef FSCom
     auto f = FSCom.open(path, FILE_O_READ);
@@ -32,33 +69,97 @@ static bool trackHeaderCrc(const char *path, uint32_t *out)
         return false;
     uint8_t hdr[kTrackHdrLen];
     bool ok = f.read(hdr, kTrackHdrLen) == kTrackHdrLen && hdr[0] == kTrackMagic && hdr[1] == kTrackVer;
+    uint32_t fsize = f.size();
     f.close();
     if (!ok)
         return false;
-    *out = (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) | ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
-    return true;
+    out->count = (uint16_t)(hdr[2] | (hdr[3] << 8));
+    out->crc = unpackU32(&hdr[4]);
+    out->gen = unpackU32(&hdr[8]);
+    out->tid = unpackU32(&hdr[12]);
+    return out->count >= 2 && out->count <= kTrackMaxRecs &&
+           fsize == (uint32_t)kTrackHdrLen + (uint32_t)out->count * kTrackRecLen;
 #else
     return false;
 #endif
 }
 
-/// True only when the marker exists AND matches the live data file's claimed CRC.
-static bool trackSlotCommitted()
+/// CRC the stored record region against the header's claim (CRC value 0 is legal — validity
+/// is a separate boolean, review R3 low-priority finding).
+static bool trackSlotCrcValid(const char *path)
 {
 #ifdef FSCom
-    auto m = FSCom.open(kTrackMarkPath, FILE_O_READ);
-    if (!m)
+    TrackSlotHdr h;
+    if (!trackSlotHdr(path, &h))
         return false;
-    uint8_t b[4];
-    bool ok = m.read(b, 4) == 4;
-    m.close();
-    if (!ok)
+    auto f = FSCom.open(path, FILE_O_READ);
+    if (!f)
         return false;
-    uint32_t marked = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
-    uint32_t claimed = 0;
-    return trackHeaderCrc(kTrackPath, &claimed) && marked == claimed;
+    if (!f.seek(kTrackHdrLen)) {
+        f.close();
+        return false;
+    }
+    uint32_t c = ~0UL, bytes = 0;
+    uint8_t buf[40];
+    int n;
+    while ((n = f.read(buf, sizeof(buf))) > 0) {
+        bytes += n;
+        for (int i = 0; i < n; i++) {
+            c ^= buf[i];
+            for (int k = 0; k < 8; k++)
+                c = (c >> 1) ^ (0xEDB88320UL & (-(int32_t)(c & 1)));
+        }
+    }
+    f.close();
+    return bytes == (uint32_t)h.count * kTrackRecLen && ~c == h.crc;
 #else
     return false;
+#endif
+}
+
+/// A slot is COMMITTED iff its header parses, generation > 0, and the content CRC verifies.
+static bool trackSlotCommitted(const char *path, TrackSlotHdr *out)
+{
+    if (!trackSlotHdr(path, out) || out->gen == 0)
+        return false;
+    return trackSlotCrcValid(path);
+}
+
+/// The playable slot: the committed slot with the highest generation (nullptr if none).
+static const char *trackActiveSlot(TrackSlotHdr *out)
+{
+    TrackSlotHdr a, b;
+    bool va = trackSlotCommitted(kSlotAPath, &a);
+    bool vb = trackSlotCommitted(kSlotBPath, &b);
+    if (va && vb) {
+        *out = (a.gen >= b.gen) ? a : b;
+        return (a.gen >= b.gen) ? kSlotAPath : kSlotBPath;
+    }
+    if (va) {
+        *out = a;
+        return kSlotAPath;
+    }
+    if (vb) {
+        *out = b;
+        return kSlotBPath;
+    }
+    return nullptr;
+}
+
+/// One-time cleanup of the pre-R4 single-slot layout (bin + tmp + marker files).
+static void trackMaintenance()
+{
+#ifdef FSCom
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+    const char *legacy[] = {kLegacyBin, kLegacyTmp, kLegacyMark};
+    for (auto p : legacy)
+        if (FSCom.exists((char *)p)) {
+            FSCom.remove((char *)p);
+            LOG_INFO("GnssSim: removed legacy track file %s", p);
+        }
 #endif
 }
 
@@ -185,33 +286,42 @@ void GnssSim::publish(float speedKmh, float dtS)
 
 // ---- Track slot: upload -----------------------------------------------------------------
 
-bool GnssSim::trackBegin(uint16_t count, uint32_t crc, uint8_t nonce)
+bool GnssSim::trackBegin(uint16_t count, uint32_t crc, uint32_t tid)
 {
 #ifdef FSCom
-    if (count < 2 || count > kTrackMaxRecs || nonce == 0)
+    if (count < 2 || count > kTrackMaxRecs || tid == 0)
         return false;
-    // Staging (review R3 finding 7): the upload builds simtrack.TMP — the committed live slot
-    // stays intact and playable until COMMIT verifies the replacement.
+    // Playback pins its slot file (tkPath); staging targets the OTHER slot. A second commit
+    // during one long playback would have to stage into the pinned file — refuse instead of
+    // splicing playback state into fresh data (R4 finding 2). Stop the sim first.
+    if (src == TRACK) {
+        LOG_WARN("GnssSim: BEGIN rejected — track playback active");
+        return false;
+    }
+    trackMaintenance();
     FSCom.mkdir("/prefs");
-    if (FSCom.exists((char *)kTrackTmpPath))
-        FSCom.remove((char *)kTrackTmpPath);
-    auto f = FSCom.open(kTrackTmpPath, FILE_O_WRITE);
+    // Stage into the inactive slot: the active (highest-generation committed) slot is never
+    // opened for writing by any path in this file.
+    TrackSlotHdr act;
+    const char *activePath = trackActiveSlot(&act);
+    upPath = (activePath == kSlotAPath) ? kSlotBPath : kSlotAPath;
+    if (FSCom.exists((char *)upPath))
+        FSCom.remove((char *)upPath);
+    auto f = FSCom.open(upPath, FILE_O_WRITE);
     if (!f)
         return false;
-    uint8_t hdr[kTrackHdrLen] = {kTrackMagic, kTrackVer,
-                                 (uint8_t)(count & 0xFF), (uint8_t)(count >> 8),
-                                 (uint8_t)(crc & 0xFF), (uint8_t)((crc >> 8) & 0xFF),
-                                 (uint8_t)((crc >> 16) & 0xFF), (uint8_t)((crc >> 24) & 0xFF)};
+    uint8_t hdr[kTrackHdrLen];
+    trackHdrBytes(hdr, TrackSlotHdr{count, crc, 0 /* gen 0 = staged, unplayable */, tid});
     bool ok = f.write(hdr, sizeof(hdr)) == sizeof(hdr);
     f.close();
     upActive = ok;
     upCount = count;
     upExpected = 0;
     upCrc = crc;
-    upNonce = nonce;
+    upTid = tid;
     lastChunkOff = 0;
     lastChunkN = 0;
-    LOG_INFO("GnssSim: track upload BEGIN count=%u nonce=%u (staged)", count, nonce);
+    LOG_INFO("GnssSim: track upload BEGIN count=%u tid=%08lx -> %s (staged)", count, (unsigned long)tid, upPath);
     return ok;
 #else
     return false;
@@ -229,7 +339,7 @@ bool GnssSim::trackChunk(uint16_t offRec, uint8_t n, const uint8_t *recBytes)
         return true;
     if (offRec != upExpected || (uint32_t)offRec + n > upCount)
         return false;
-    auto f = FSCom.open(kTrackTmpPath, FILE_O_WRITE); // Adafruit LittleFS: O_WRITE appends at end
+    auto f = FSCom.open(upPath, FILE_O_WRITE); // Adafruit LittleFS: O_WRITE appends at end
     if (!f)
         return false;
     f.seek(f.size());
@@ -246,115 +356,80 @@ bool GnssSim::trackChunk(uint16_t offRec, uint8_t n, const uint8_t *recBytes)
 #endif
 }
 
-// CRC the stored record region against the header's claim. Used by COMMIT *and* by every
-// startTrack: a half-uploaded, aborted or bit-rotted slot can never play (external review
-// 2026-07-26 — playback previously checked shape only).
-static bool trackSlotCrcValid(const char *path)
+bool GnssSim::trackCommit(uint32_t tid)
 {
 #ifdef FSCom
-    auto f = FSCom.open(path, FILE_O_READ);
-    if (!f)
+    if (tid == 0)
         return false;
-    uint8_t hdr[kTrackHdrLen];
-    if (f.read(hdr, kTrackHdrLen) != kTrackHdrLen || hdr[0] != kTrackMagic || hdr[1] != kTrackVer) {
-        f.close();
-        return false;
+    if (!upActive) {
+        // Idempotent RETRY only: succeed iff THIS transfer already committed — same tid AND
+        // the active slot is that transfer's data (tid + CRC in its header). A retry after a
+        // failed commit can never be credited by an older surviving track (R4 finding 1).
+        TrackSlotHdr act;
+        return tid == lastCommitTid && trackActiveSlot(&act) != nullptr && act.tid == tid &&
+               act.crc == lastCommitCrc;
     }
-    uint16_t count = (uint16_t)(hdr[2] | (hdr[3] << 8));
-    uint32_t want = (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) | ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
-    uint32_t c = ~0UL, bytes = 0;
-    uint8_t buf[40];
-    int n;
-    while ((n = f.read(buf, sizeof(buf))) > 0) {
-        bytes += n;
-        for (int i = 0; i < n; i++) {
-            c ^= buf[i];
-            for (int k = 0; k < 8; k++)
-                c = (c >> 1) ^ (0xEDB88320UL & (-(int32_t)(c & 1)));
-        }
-    }
-    f.close();
-    return bytes == (uint32_t)count * kTrackRecLen && ~c == want;
-#else
-    return false;
-#endif
-}
-
-bool GnssSim::trackCommit()
-{
-#ifdef FSCom
-    // Idempotent: a repeated COMMIT (its previous reply was lost, the app retried) succeeds
-    // as long as the LIVE slot is genuinely committed and intact (review R2 finding 2).
-    if (!upActive)
-        return trackSlotCommitted() && trackSlotCrcValid(kTrackPath);
+    if (tid != upTid)
+        return false; // a COMMIT for some other transfer never touches this staging
     if (upExpected != upCount)
-        return false;
+        return false; // incomplete — staging stays open, remaining chunks may still arrive
     upActive = false;
-    // Transactional swap (review R3 finding 7): verify the STAGED file first — the old
-    // committed slot is destroyed only after its replacement has proven intact.
-    if (!trackSlotCrcValid(kTrackTmpPath)) {
-        LOG_INFO("GnssSim: track COMMIT FAILED (staged CRC) — live slot untouched");
-        FSCom.remove((char *)kTrackTmpPath);
+    // Verify the STAGED slot in place (shape + content CRC against both the header claim and
+    // the BEGIN's declared CRC). The active slot is not involved at all.
+    TrackSlotHdr staged;
+    if (!trackSlotHdr(upPath, &staged) || staged.tid != upTid || staged.crc != upCrc ||
+        staged.count != upCount || !trackSlotCrcValid(upPath)) {
+        LOG_INFO("GnssSim: track COMMIT FAILED (staged verify) — active slot untouched");
+        FSCom.remove((char *)upPath);
         return false;
     }
-    if (FSCom.exists((char *)kTrackMarkPath))
-        FSCom.remove((char *)kTrackMarkPath); // unplayable window starts here (safe: no marker = no play)
-    if (FSCom.exists((char *)kTrackPath))
-        FSCom.remove((char *)kTrackPath);
-    // Copy tmp -> live (LittleFS rename support varies across core versions; a copy is certain).
+    // Promote: stamp generation = active+1 in the staged header. This is the ONLY mutation;
+    // if it tears or power drops, the staged slot stays at gen 0 (unplayable) and the old
+    // active slot still wins. Nothing ever deletes or rewrites the previous track.
+    TrackSlotHdr act;
+    const char *activePath = trackActiveSlot(&act);
+    uint32_t newGen = activePath ? act.gen + 1 : 1;
     bool ok = false;
     {
-        auto in = FSCom.open(kTrackTmpPath, FILE_O_READ);
-        auto out = FSCom.open(kTrackPath, FILE_O_WRITE);
-        if (in && out) {
-            uint8_t buf[40];
-            int n;
-            ok = true;
-            while ((n = in.read(buf, sizeof(buf))) > 0)
-                if (out.write(buf, n) != (size_t)n) {
-                    ok = false;
-                    break;
-                }
-        }
-        if (in)
-            in.close();
-        if (out)
-            out.close();
-    }
-    ok = ok && trackSlotCrcValid(kTrackPath);
-    if (ok) { // durable marker: only NOW does the new slot become playable, reboot or not
-        auto m = FSCom.open(kTrackMarkPath, FILE_O_WRITE);
-        if (m) {
-            uint8_t b[4] = {(uint8_t)(upCrc & 0xFF), (uint8_t)((upCrc >> 8) & 0xFF),
-                            (uint8_t)((upCrc >> 16) & 0xFF), (uint8_t)((upCrc >> 24) & 0xFF)};
-            ok = m.write(b, 4) == 4;
-            m.close();
-        } else {
-            ok = false;
+        auto f = FSCom.open(upPath, FILE_O_WRITE);
+        if (f) {
+            uint8_t hdr[kTrackHdrLen];
+            trackHdrBytes(hdr, TrackSlotHdr{upCount, upCrc, newGen, upTid});
+            ok = f.seek(0) && f.write(hdr, kTrackHdrLen) == kTrackHdrLen;
+            f.close();
         }
     }
-    FSCom.remove((char *)kTrackTmpPath);
-    LOG_INFO("GnssSim: track COMMIT %s (%u recs)", ok ? "OK" : "FAILED", upCount);
-    if (!ok) {
-        FSCom.remove((char *)kTrackPath);
-        if (FSCom.exists((char *)kTrackMarkPath))
-            FSCom.remove((char *)kTrackMarkPath);
+    ok = ok && trackSlotCommitted(upPath, &staged) && staged.gen == newGen;
+    if (ok) {
+        lastCommitTid = upTid;
+        lastCommitCrc = upCrc;
+    } else {
+        FSCom.remove((char *)upPath); // failed promotion is discarded; old track still active
     }
+    LOG_INFO("GnssSim: track COMMIT %s (%u recs gen=%lu tid=%08lx)", ok ? "OK" : "FAILED", upCount,
+             (unsigned long)newGen, (unsigned long)upTid);
     return ok;
 #else
     return false;
 #endif
 }
 
-void GnssSim::trackAbort()
+bool GnssSim::trackAbort(uint32_t tid)
 {
 #ifdef FSCom
+    // Abort discards ONLY the staged upload it names — the committed track survives, and an
+    // abort for a stale transfer id cannot kill someone else's in-flight staging.
+    if (!upActive)
+        return true; // nothing staged: the named transfer is certainly not staged — idempotent
+    if (tid != upTid)
+        return false;
     upActive = false;
-    // Abort discards ONLY the staged upload — the committed live slot survives (R3 finding 7:
-    // a remote/accidental ABORT must not be able to erase a valid track).
-    if (FSCom.exists((char *)kTrackTmpPath))
-        FSCom.remove((char *)kTrackTmpPath);
-    LOG_INFO("GnssSim: track upload ABORTED (staged file discarded; live slot intact)");
+    if (upPath && FSCom.exists((char *)upPath))
+        FSCom.remove((char *)upPath);
+    LOG_INFO("GnssSim: track upload ABORTED tid=%08lx (staged slot discarded)", (unsigned long)tid);
+    return true;
+#else
+    return false;
 #endif
 }
 
@@ -363,7 +438,9 @@ void GnssSim::trackAbort()
 bool GnssSim::trackReadRec(uint16_t idx, TrackRec *out)
 {
 #ifdef FSCom
-    auto f = FSCom.open(kTrackPath, FILE_O_READ);
+    if (!tkPath)
+        return false;
+    auto f = FSCom.open(tkPath, FILE_O_READ);
     if (!f)
         return false;
     uint8_t b[kTrackRecLen];
@@ -404,27 +481,19 @@ bool GnssSim::trackAdvance()
 bool GnssSim::startTrack(bool loopFlag, uint16_t ttlS)
 {
 #ifdef FSCom
-    // NOTE: an in-progress upload does NOT block playback — staging lives in simtrack.tmp and
-    // the live slot is untouched until COMMIT's verified swap. (Own bench caught the earlier
-    // over-broad guard: a stray/abandoned BEGIN must never disable a valid committed track.)
-    if (!trackSlotCommitted()) { // durable COMMIT marker required — data alone never plays
-        LOG_WARN("GnssSim: track slot not committed");
+    // NOTE: an in-progress upload does NOT block playback — staging lives in the OTHER slot.
+    // (Own bench caught the earlier over-broad guard: a stray/abandoned BEGIN must never
+    // disable a valid committed track.) The slot is pinned here for the whole playback: a
+    // COMMIT that lands mid-play promotes the other slot and never touches this file.
+    trackMaintenance();
+    TrackSlotHdr act;
+    const char *path = trackActiveSlot(&act); // committed (gen>0) + shape + content CRC
+    if (!path) {
+        LOG_WARN("GnssSim: no committed track slot");
         return false;
     }
-    if (!trackSlotCrcValid(kTrackPath)) { // shape AND content re-checked at every play
-        LOG_WARN("GnssSim: track slot CRC invalid");
-        return false;
-    }
-    auto f = FSCom.open(kTrackPath, FILE_O_READ);
-    if (!f)
-        return false;
-    uint8_t hdr[kTrackHdrLen];
-    bool ok = f.read(hdr, kTrackHdrLen) == kTrackHdrLen;
-    f.close();
-    uint16_t count = ok ? (uint16_t)(hdr[2] | (hdr[3] << 8)) : 0;
-    if (!ok || count < 2)
-        return false;
-    tkCount = count;
+    tkPath = path;
+    tkCount = act.count;
     tkIdx = 0;
     if (!trackReadRec(0, &tkCur) || !trackReadRec(1, &tkNxt))
         return false;

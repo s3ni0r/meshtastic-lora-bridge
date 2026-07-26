@@ -285,6 +285,8 @@ struct TagSettings: Equatable {
 }
 
 struct ConfigReply {
+    let from: UInt32   // MeshPacket.from — WHICH node these settings belong to (R4 finding 3:
+                       // a cached reply from tag A must never be shown or applied as tag B's)
     let op: UInt8      // 0x80 = GET reply, 0x81 = SET reply
     let status: UInt8  // 0 ok / 1 rejected / 2 malformed
     let settings: TagSettings
@@ -317,51 +319,56 @@ func encodeToRadioData(to: UInt32, portnum: Int, payload: Data, packetId: UInt32
 }
 
 /// Parse a FromRadio frame as a GNSS config reply (portnum 260, 9-byte payload) — nil otherwise.
+/// Keeps MeshPacket.from so callers can bind the settings to the node that sent them.
 func parseConfigReply(_ data: Data) -> ConfigReply? {
     var r = ProtoReader(data)
     while let (field, wire) = r.readTag() {
         if field == 2, wire == 2 {
             guard let pkt = r.readBytes() else { return nil }
             var pr = ProtoReader(pkt)
+            var from: UInt32 = 0
+            var decoded: ArraySlice<UInt8>?
             while let (f, w) = pr.readTag() {
-                if f == 4, w == 2 {
-                    guard let dec = pr.readBytes() else { return nil }
-                    var dr = ProtoReader(dec)
-                    var portnum = 0
-                    var payload: ArraySlice<UInt8>?
-                    while let (df, dw) = dr.readTag() {
-                        switch (df, dw) {
-                        case (1, 0): portnum = Int(dr.readVarint() ?? 0)
-                        case (2, 2): payload = dr.readBytes()
-                        default: dr.skip(dw)
-                        }
-                    }
-                    guard portnum == kGnssConfigPortnum, let pl = payload, pl.count >= 9 else { return nil }
-                    let b = Array(pl)
-                    guard b[0] & 0x80 != 0, let st = TagSettings.fromWire(Array(b[2...])) else { return nil }
-                    return ConfigReply(op: b[0], status: b[1], settings: st)
+                switch (f, w) {
+                case (1, 5): from = pr.readFixed32() ?? 0
+                case (4, 2): decoded = pr.readBytes()
+                default: pr.skip(w)
                 }
-                pr.skip(w)
             }
-            return nil
+            guard let dec = decoded else { return nil }
+            var dr = ProtoReader(dec)
+            var portnum = 0
+            var payload: ArraySlice<UInt8>?
+            while let (df, dw) = dr.readTag() {
+                switch (df, dw) {
+                case (1, 0): portnum = Int(dr.readVarint() ?? 0)
+                case (2, 2): payload = dr.readBytes()
+                default: dr.skip(dw)
+                }
+            }
+            guard portnum == kGnssConfigPortnum, let pl = payload, pl.count >= 9 else { return nil }
+            let b = Array(pl)
+            guard b[0] & 0x80 != 0, b[0] != 0x85, let st = TagSettings.fromWire(Array(b[2...])) else { return nil }
+            return ConfigReply(from: from, op: b[0], status: b[1], settings: st)
         }
         r.skip(wire)
     }
     return nil
 }
 
-/// Correlated ACK for the TRACK op (0x05): `[0x85, status, sub, offLo, offHi, nonce]`. The tag
-/// echoes exactly WHICH frame of WHICH upload it answers, and the parser keeps the sender's
-/// node id — a stale ACK from a previous upload or a different tag can never be credited.
+/// Correlated ACK for the TRACK op (0x05): `[0x85, status, sub, offLo, offHi, tid u32 LE]`.
+/// The tag echoes exactly WHICH frame of WHICH transfer it answers (the tid travels in EVERY
+/// sub-op, R4 finding 7), and the parser keeps the sender's node id — a stale ACK from a
+/// previous transfer or a different tag can never be credited.
 struct TrackAck: Equatable {
     let from: UInt32 // MeshPacket.from — the replying node (must be the upload's target)
     let status: UInt8
     let sub: UInt8   // 0 BEGIN / 1 CHUNK / 2 COMMIT / 3 ABORT
     let off: UInt16  // BEGIN: record count · CHUNK: offset · else 0
-    let nonce: UInt8 // per-upload nonce chosen by the client in BEGIN
+    let tid: UInt32  // per-transfer id chosen by the client, echoed from the REQUEST frame
 }
 
-/// Parse a FromRadio frame as a track ACK (portnum 260, 6-byte 0x85 payload) — nil otherwise.
+/// Parse a FromRadio frame as a track ACK (portnum 260, 9-byte 0x85 payload) — nil otherwise.
 func parseTrackAck(_ data: Data) -> TrackAck? {
     var r = ProtoReader(data)
     while let (field, wire) = r.readTag() {
@@ -388,11 +395,12 @@ func parseTrackAck(_ data: Data) -> TrackAck? {
                 default: dr.skip(dw)
                 }
             }
-            guard portnum == kGnssConfigPortnum, let pl = payload, pl.count == 6 else { return nil }
+            guard portnum == kGnssConfigPortnum, let pl = payload, pl.count == 9 else { return nil }
             let b = Array(pl)
             guard b[0] == 0x85 else { return nil }
             return TrackAck(from: from, status: b[1], sub: b[2],
-                            off: UInt16(b[3]) | (UInt16(b[4]) << 8), nonce: b[5])
+                            off: UInt16(b[3]) | (UInt16(b[4]) << 8),
+                            tid: UInt32(b[5]) | (UInt32(b[6]) << 8) | (UInt32(b[7]) << 16) | (UInt32(b[8]) << 24))
         }
         r.skip(wire)
     }

@@ -13,8 +13,10 @@ struct TrackRecord {
 }
 
 enum TrackBuilder {
-    /// Tag-side slot cap (LittleFS is 28 KB total; the slot stays ≤16 KB — 10 B/record).
-    static let maxRecords = 1600
+    /// Tag-side slot cap. The tag keeps TWO A/B slots (R4 f2) on its 28 KiB shared LittleFS:
+    /// 2 × (16 + 800×10) = 16,032 B budgeted, leaving ~12 KiB for prefs (R4 f6 — the old
+    /// 1600 cap was impossible to honor with live + staging copies).
+    static let maxRecords = 800
 
     // MARK: GPX -> records
 

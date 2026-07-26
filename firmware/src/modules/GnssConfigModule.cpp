@@ -81,36 +81,45 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
         } else {
             status = 2;
         }
-    } else if (op == 0x05) { // TRACK upload: [sub, ...] — phone/USB-direct ONLY (enforced)
-        uint8_t sub = d.payload.size >= 2 ? d.payload.bytes[1] : 0xEE;
+    } else if (op == 0x05) { // TRACK upload: [sub, tid u32 LE, ...] — phone/USB-direct ONLY
+        // Every sub-op carries the client-chosen u32 transfer id (R4 finding 7): CHUNK/COMMIT/
+        // ABORT for a different transfer can never mutate the active staging, and the ACK
+        // echoes the REQUEST's tid so correlation is exact, not probabilistic.
+        uint8_t sub = 0xEE;
+        uint32_t tid = 0;
         uint16_t echoOff = 0;
         bool ok = false;
+        if (d.payload.size >= 6) {
+            sub = d.payload.bytes[1];
+            tid = (uint32_t)d.payload.bytes[2] | ((uint32_t)d.payload.bytes[3] << 8) |
+                  ((uint32_t)d.payload.bytes[4] << 16) | ((uint32_t)d.payload.bytes[5] << 24);
+        }
         if (!fromPhone) {
             // R3 finding 7: TRACK is destructive (slot replacement) — a mesh peer must never
             // drive it. Reject with a NAK; only the locally-attached client may upload.
             LOG_WARN("GnssConfig: TRACK op from mesh !%08lx REJECTED", (unsigned long)mp.from);
-        } else if (sub == 0x00 && d.payload.size >= 9) { // BEGIN: count u16, crc32 u32, nonce u8
-            uint16_t cnt = (uint16_t)(d.payload.bytes[2] | (d.payload.bytes[3] << 8));
-            uint32_t crc = (uint32_t)d.payload.bytes[4] | ((uint32_t)d.payload.bytes[5] << 8) |
-                           ((uint32_t)d.payload.bytes[6] << 16) | ((uint32_t)d.payload.bytes[7] << 24);
-            ok = gnssSim->trackBegin(cnt, crc, d.payload.bytes[8]);
+        } else if (tid == 0) {
+            // malformed / missing transfer id — NAK (ok stays false)
+        } else if (sub == 0x00 && d.payload.size >= 12) { // BEGIN: tid, count u16, crc32 u32
+            uint16_t cnt = (uint16_t)(d.payload.bytes[6] | (d.payload.bytes[7] << 8));
+            uint32_t crc = (uint32_t)d.payload.bytes[8] | ((uint32_t)d.payload.bytes[9] << 8) |
+                           ((uint32_t)d.payload.bytes[10] << 16) | ((uint32_t)d.payload.bytes[11] << 24);
+            ok = gnssSim->trackBegin(cnt, crc, tid);
             echoOff = cnt;
-        } else if (sub == 0x01 && d.payload.size >= 5) { // CHUNK: offRec u16, n u8, n×10B
-            uint16_t off = (uint16_t)(d.payload.bytes[2] | (d.payload.bytes[3] << 8));
-            uint8_t n = d.payload.bytes[4];
-            if (d.payload.size >= (uint16_t)(5 + n * 10))
-                ok = gnssSim->trackChunk(off, n, &d.payload.bytes[5]);
+        } else if (sub == 0x01 && d.payload.size >= 9) { // CHUNK: tid, offRec u16, n u8, n×10B
+            uint16_t off = (uint16_t)(d.payload.bytes[6] | (d.payload.bytes[7] << 8));
+            uint8_t n = d.payload.bytes[8];
+            if (d.payload.size >= (uint16_t)(9 + n * 10))
+                ok = gnssSim->trackChunk(off, n, &d.payload.bytes[9]);
             echoOff = off;
-        } else if (sub == 0x02) { // COMMIT — idempotent + transactional (see GnssSim)
-            ok = gnssSim->trackCommit();
-        } else if (sub == 0x03) { // ABORT — discards the STAGED upload only
-            gnssSim->trackAbort();
-            ok = true;
+        } else if (sub == 0x02) { // COMMIT — idempotent RETRY only for the SAME (tid, crc)
+            ok = gnssSim->trackCommit(tid);
+        } else if (sub == 0x03) { // ABORT — discards only the staging this tid owns
+            ok = gnssSim->trackAbort(tid);
         }
-        // Correlated ACK (R2 f1 + R3 f3): echoes sub-op, offset AND the per-upload nonce —
-        // [0x85, status, sub, offLo, offHi, nonce]. A stale ACK from a previous upload or a
-        // different tag can never satisfy the current transfer (the client also validates
-        // the sender's node id from the MeshPacket).
+        // Correlated ACK: [0x85, status, sub, offLo, offHi, tid u32 LE] (9 bytes). The tid is
+        // the one from the REQUEST — a stale ACK from any previous transfer or another tag
+        // can never satisfy the current frame (the client also validates the sender node).
         meshtastic_MeshPacket *tr = allocDataPacket();
         if (tr) {
             tr->to = mp.from;
@@ -119,8 +128,11 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
             tr->decoded.payload.bytes[2] = sub;
             tr->decoded.payload.bytes[3] = (uint8_t)(echoOff & 0xFF);
             tr->decoded.payload.bytes[4] = (uint8_t)(echoOff >> 8);
-            tr->decoded.payload.bytes[5] = gnssSim->uploadNonce();
-            tr->decoded.payload.size = 6;
+            tr->decoded.payload.bytes[5] = (uint8_t)(tid & 0xFF);
+            tr->decoded.payload.bytes[6] = (uint8_t)((tid >> 8) & 0xFF);
+            tr->decoded.payload.bytes[7] = (uint8_t)((tid >> 16) & 0xFF);
+            tr->decoded.payload.bytes[8] = (uint8_t)((tid >> 24) & 0xFF);
+            tr->decoded.payload.size = 9;
             if (fromPhone) {
                 service->sendToPhone(tr);
             } else {

@@ -60,17 +60,19 @@ def cmd(payload):
     iface._sendPacket(p)
     time.sleep(0.25)
 
+# v4.3 wire: every TRACK sub-op is [0x05, sub, tid u32 LE, ...]
+TID = 0x7EAC0042
 # BEGIN
-cmd(bytes([0x05, 0x00]) + struct.pack("<HIB", len(pts), crc, 42))  # nonce 42
+cmd(bytes([0x05, 0x00]) + struct.pack("<IHI", TID, len(pts), crc))
 # CHUNKS of 20 records
 n_per = 20
 for off in range(0, len(pts), n_per):
     n = min(n_per, len(pts) - off)
     chunk = recs[off * 10:(off + n) * 10]
-    cmd(bytes([0x05, 0x01]) + struct.pack("<HB", off, n) + chunk)
+    cmd(bytes([0x05, 0x01]) + struct.pack("<IHB", TID, off, n) + chunk)
     print(f"  chunk off={off} n={n}")
 # COMMIT
-cmd([0x05, 0x02])
+cmd(bytes([0x05, 0x02]) + struct.pack("<I", TID))
 time.sleep(1.0)
 stat = [r for r in replies if r[0] == 0x85]
 print("upload replies (op 0x85):", stat[-6:] if stat else "none seen")

@@ -276,6 +276,18 @@ final class SessionLibrary {
                   let data = try? Data(contentsOf: SessionPaths.metaURL(id)),
                   var m = try? JSONDecoder().decode(SessionMeta.self, from: data) else { continue }
             if m.endedAt == nil { // crashed mid-recording: finalize from the raw files
+                // Recovery is driven by the DIRECTORY, not the metadata's tag list (R4 f10):
+                // if persisting the tag list failed during the session, meta.tags is empty or
+                // partial while the .jsonl point files exist — those tracks must still be
+                // discovered, or the promised recovery silently drops them.
+                for f in (try? fm.contentsOfDirectory(at: sub, includingPropertiesForKeys: nil)) ?? []
+                where f.pathExtension == "jsonl" {
+                    if let from = UInt32(f.deletingPathExtension().lastPathComponent, radix: 16),
+                       !m.tags.contains(where: { $0.from == from }) {
+                        m.tags.append(SessionTagMeta(from: from, source: PacketSource.legacy.rawValue,
+                                                     title: String(format: "!%08x (recovered)", from)))
+                    }
+                }
                 var lastT = m.startedAt.timeIntervalSince1970
                 m.tags = m.tags.map { tag in
                     let t = SessionStoreStats.computeStats(tag, sessionId: m.id)

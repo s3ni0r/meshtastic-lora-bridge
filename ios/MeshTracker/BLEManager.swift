@@ -19,8 +19,9 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     var connectedNodeNum: UInt32 = 0 // who this link talks to (from my_info)
     var lastConfigReply: ConfigReply? // portnum-260 replies when the tag link doubles as config
     var configReplyCount = 0          // bumps per reply — ACK tracking for bulk uploads
-    var lastTrackAck: TrackAck?       // correlated 0x85 ACKs (sub/offset/nonce echoed by the tag)
-    var trackAckCount = 0
+    var trackAcks: [TrackAck] = []    // SEQUENCED 0x85 ACK queue (R4 finding 7: latest-only
+                                      // could drop an ACK that landed between two 50 ms polls;
+                                      // consumers scan from their own index, nothing is lost)
     var linkGeneration = 0            // bumps on every (re)connect — uploads bind to one generation
 
     @ObservationIgnored private var central: CBCentralManager!
@@ -43,6 +44,11 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         peripheral = nil; toRadio = nil; fromRadio = nil
         directTag = false; connectedNodeNum = 0
         linkGeneration += 1 // any in-flight upload bound to the old link aborts
+        // A new link starts with NO cached protocol state: a config reply or ACK from the
+        // previous peripheral must never be shown/credited against the next one (R4 finding 3).
+        lastConfigReply = nil
+        configReplyCount = 0
+        trackAcks = []
         candidates = [:]; candidateNames = [:]
         scanGeneration += 1
         let gen = scanGeneration
@@ -163,8 +169,10 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
                 configReplyCount += 1
             }
             if let ta = parseTrackAck(v) {
-                lastTrackAck = ta
-                trackAckCount += 1
+                // Append-only within a link (cleared on every reconnect): consumers hold plain
+                // indices into this array, so it must never be compacted mid-link. ~42 ACKs per
+                // full upload — bounded in practice by the link session itself.
+                trackAcks.append(ta)
             }
             if var pw = parseTelemetry(v) {                  // battery: Base every 15 s, tags via LoRa
                 if pw.from == 0 { pw.from = connectedNodeNum }

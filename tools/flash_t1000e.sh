@@ -118,19 +118,21 @@ echo "   checksums OK ($FLAVOR.uf2 + $FLAVOR-dfu.zip verified against the manife
 if [ "${2:-}" = "uf2" ]; then
     # Fail closed on ambiguity (review R3 finding 4): EXACTLY ONE matching bootloader volume,
     # or we refuse — never "the first match".
+    # Identity is T1000-only (R4 finding 5): a generic nRF52 bootloader from some unrelated
+    # board must never be accepted as a flash target.
     CANDIDATES=""
     NCAND=0
     for v in /Volumes/*; do
         [ -f "$v/INFO_UF2.TXT" ] || continue
-        if grep -qiE "t1000|nrf52" "$v/INFO_UF2.TXT"; then
+        if grep -qi "t1000" "$v/INFO_UF2.TXT" || basename "$v" | grep -qi "t1000"; then
             CANDIDATES="$CANDIDATES $v"
             NCAND=$((NCAND + 1))
         else
-            echo "   note: UF2 volume $v is not a T1000/nRF52 bootloader — leaving it alone" >&2
+            echo "   note: UF2 volume $v does not identify as a T1000-E — leaving it alone" >&2
         fi
     done
     if [ "$NCAND" -eq 0 ]; then
-        echo "ERROR: no T1000/nRF52 UF2 volume mounted (double-tap the button first)." >&2
+        echo "ERROR: no T1000-E UF2 volume mounted (double-tap the button first)." >&2
         exit 1
     fi
     if [ "$NCAND" -gt 1 ]; then
