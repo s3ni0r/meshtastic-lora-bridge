@@ -125,16 +125,17 @@ The endgame for fleet operations: no USB, no double-tap — update a tag from th
 - **Standing rule in force**: anything written for agents (procedures, onboarding,
   contracts) lands vendor-neutral first; tool-specific layouts only ever contain pointers.
 
-### C2. Repo noise cleanup
+### C2. Repo noise cleanup — DONE 2026-07-26
 
-- [ ] Remove/ignore what doesn't belong in a reviewer's checkout: stray `.DS_Store` (add a
-      global ignore), stale `firmware/build-out/` artifacts (pre-release leftovers — ignore
-      the directory, it is a build product), `ios/build/` + `ios/dist/` (already ignored?
-      verify), `__pycache__` dirs, and any dormant targets (decide the fate of
-      `MeshTrackerWatch/` — it is drifting and unused).
-- [ ] Sweep `tools/` for superseded one-offs (`m1_gps_rate_check.md`, `m2_stream_poc.py`,
-      `freshness_analyze.py` …): keep what the docs still reference, fold the rest into
-      `docs/HISTORY.md` mentions and delete.
+- [x] Verified already ignored/untracked: `firmware/build-out/` (stale artifacts also
+      deleted locally), `ios/build/`, `ios/dist/`, `__pycache__`, `.DS_Store` (stray root
+      copy deleted).
+- [x] `ios/MeshTrackerWatch/` removed (dormant — it was never a target in `project.yml`;
+      the phase-2 Apple Watch idea remains in PLAN §8, the dead scaffold is in git
+      history). watchOS deployment option dropped from `project.yml`.
+- [x] `tools/` sweep: `m1_gps_rate_check.md` (superseded by `docs/gnss/UNLOCK_NOTES.md`)
+      and `freshness_analyze.py` (no living references) deleted; `m2_stream_poc.py` KEPT —
+      it is the reference decoder cited by `docs/BATTERY_INTEGRATION.md` and FORK.md.
 
 ## Carried over (still pending, unchanged)
 

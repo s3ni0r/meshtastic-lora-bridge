@@ -3,7 +3,6 @@ options:
   bundleIdPrefix: com.s3ni0r
   deploymentTarget:
     iOS: "17.0"
-    watchOS: "10.0"
   createIntermediateGroups: true
 settings:
   base:

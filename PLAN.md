@@ -135,7 +135,8 @@ CoreBluetooth client:
 - **M0** Baseline: stock firmware both units, `EU_868`/`ShortFast`/`TRACKER`; confirm 1 Hz position
   link + stock-app map. (Proves the 1 Hz / 5 s / 0.1 Hz floors are real.)
 - **M1** GNSS rate proof (no firmware commit): send `$PAIR050,250` / `$PAIR050,100` over UART;
-  confirm `$PAIR001,050,0` ACK + RMC timestamps advance. → `tools/m1_gps_rate_check.md`
+  confirm `$PAIR001,050,0` ACK + RMC timestamps advance. → milestone notes superseded by
+  `docs/gnss/UNLOCK_NOTES.md` (the original `tools/m1_gps_rate_check.md` lives in git history)
 - **M2** Custom-stream proof in Python: `sendData(payload, portNum=256, wantAck=False, hopLimit=1)`
   at 2 Hz; receive + log on the second node. → `tools/m2_stream_poc.py`
 - **M3** iOS minimal client: BLE + 12 B parse + live map + CSV; validate vs M2 with no debounce lag.
