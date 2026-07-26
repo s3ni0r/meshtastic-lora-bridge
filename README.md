@@ -33,7 +33,6 @@ track replay on the tag. The immutable v4.3 binary passed its historical hardwar
 | Operations (flashing, releases, rollback, TestFlight) | [firmware/releases/](firmware/releases/) · `tools/flash_t1000e.sh` · [docs/testflight-release.md](docs/testflight-release.md) |
 | Agent onboarding + step-by-step procedures | [AGENTS.md](AGENTS.md) + `.claude/skills/` |
 | Roadmap (sensor fusion, sea-threshold tuning) | [TODO.md](TODO.md); history: [docs/HISTORY.md](docs/HISTORY.md) |
-| BLE observer subproject (Zephyr sniffer experiments) | [observer/](observer/) (own AGENTS.md) |
 
 ## Quick start
 

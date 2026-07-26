@@ -56,7 +56,6 @@ Tag B: GPS tag (onboard AG3335, 4 Hz target → LoRa) ─┘
 - `tools/` — `nodes.py` (fleet registry + role→port resolution), `flash_t1000e.sh`
   (hands-free serial-DFU flasher), `flash_uf2.py` (explicit double-tap/UF2-volume flasher),
   `downlink_latency.py`, `tools/bench/` (hardware regression suite).
-- `observer/` — separate Zephyr BLE-sniffer subproject; has its own `AGENTS.md`.
 
 ## Fleet (bench hardware, resolved by `tools/nodes.py`)
 
