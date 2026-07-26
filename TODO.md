@@ -86,11 +86,17 @@ time (CAPACITY.md math; illegal sustained rates rejected for the configured regi
 shows "persists across reboots" consequences explicitly.
 
 **Agreed decisions (2026-07-26):**
-- [ ] **ACKs are required** — for the go-deaf/radio-state command AND for calibration
-      SIGNAL ops sent over LoRa (beep/flash). ACKs must be CORRELATED like TRACK's (echo
-      op + pattern + seq / requested state), never satisfiable by a stale or foreign
-      reply; the app retries on missing ACK. Go-deaf always ACKs BEFORE muting; ordering:
-      record-start beep → go-deaf.
+- [ ] **Guaranteed signal delivery (the ACK's real purpose)** — a calibration SIGNAL
+      (beep/flash) must REACH the tag no matter what: the user acts on hearing it, so a
+      silently lost command is a calibration failure. Semantics: **at-least-once delivery,
+      exactly-once playback** — the sender retransmits with the SAME seq until a
+      correlated ACK arrives (ACK echoes op + pattern + seq; never satisfiable by a stale
+      or foreign reply); the tag's existing seq-dedupe ACKs duplicates without replaying,
+      so retries can never double-beep. Bounded retries (interval sized to the measured
+      ~0.3 s downlink), then a LOUD in-app failure — "tag did not confirm the signal" is
+      surfaced, never swallowed. The go-deaf/radio-state command gets the same
+      retry-until-ACK treatment and always ACKs BEFORE muting; ordering: record-start
+      beep (confirmed) → go-deaf.
 - [ ] **Fully deaf** — no post-TX listen window (option rejected; simplicity + max battery).
 - [ ] **Button escape hatch, no BLE dependency**: pressing the T1000-E button X times
       toggles LISTENING ↔ DEAF in the field, each direction with a DISTINCT beep
