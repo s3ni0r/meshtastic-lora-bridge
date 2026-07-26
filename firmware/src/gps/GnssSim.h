@@ -44,16 +44,19 @@ class GnssSim : private concurrency::OSThread
     uint8_t source() const { return src; }
 
     // Track-slot upload (op 0x05, phone/USB-direct ONLY — mesh-relayed ops are rejected; see
-    // DOWNLINK.md). Storage is A/B generation slots (R4 finding 2): the upload stages into the
-    // INACTIVE slot; the active slot is never opened for writing, so no failure mode — torn
-    // write, power loss, bad CRC — can destroy the last committed track. COMMIT verifies the
-    // staged content and then stamps its generation header; highest valid generation wins at
-    // playback. Every sub-op carries the client-chosen u32 transfer id (tid ≠ 0, R4 finding 7)
-    // and COMMIT idempotence is keyed on (tid, crc) — a retry can never be credited by an
-    // OLDER committed track (R4 finding 1). Records are 10 B:
+    // DOWNLINK.md). Storage is A/B generation slots: the upload stages into the INACTIVE slot;
+    // the active slot is never opened for writing, so API failures, bad CRCs and orderly resets
+    // leave the last committed track playable. Physical power loss during the adapter's 4 KiB
+    // page operation remains unverified. COMMIT appends a self-validating footer (never rewrites
+    // the file head, which would COW-copy the whole file in LittleFS); highest valid generation
+    // wins at playback. Every sub-op carries the client-chosen u32 transfer id
+    // (tid != 0), including CHUNK where it is checked before any file access. A successful
+    // COMMIT retry is proven from the active slot's on-disk footer, including after reboot.
+    // BEGIN rejects reuse of the active committed tid so a failed replacement can never be
+    // confused with that older success. Records are 10 B:
     // lat i32 | lon i32 | speed u8 (km/h) | dt u8 (0.1 s units from the PREVIOUS point).
     bool trackBegin(uint16_t count, uint32_t crc32, uint32_t tid);
-    bool trackChunk(uint16_t offRec, uint8_t n, const uint8_t *recBytes);
+    bool trackChunk(uint32_t tid, uint16_t offRec, uint8_t n, const uint8_t *recBytes);
     bool trackCommit(uint32_t tid);
     bool trackAbort(uint32_t tid);
 
@@ -90,8 +93,7 @@ class GnssSim : private concurrency::OSThread
     uint32_t upTid = 0;             // client-chosen transfer id, carried in EVERY sub-op
     const char *upPath = nullptr;   // the inactive slot this transfer stages into
     uint16_t lastChunkOff = 0;
-    uint8_t lastChunkN = 0; // exact-duplicate detection (R3 low-priority: any-range was too lax)
-    uint32_t lastCommitTid = 0, lastCommitCrc = 0; // idempotent COMMIT-retry key (R4 finding 1)
+    uint8_t lastChunkN = 0; // duplicate retry must also byte-match the data already on disk
     // Track playback state
     const char *tkPath = nullptr;   // slot pinned at startTrack — commits target the OTHER slot
     uint16_t tkCount = 0, tkIdx = 0;

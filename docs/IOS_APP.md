@@ -13,15 +13,18 @@ Deployment: build → install on the physical iPhone every time (see
 `BLEManager` scans for the standard Meshtastic GATT service and prefers a **Base**
 (name-matched); if none appears within ~6 s it falls back to a **direct tag link** (that
 tag only, BLE range). One BLE client per node — a connected app locks out the node's USB
-PhoneAPI (bench implication documented in `tools/bench/README.md`). Every (re)connect bumps
-a `linkGeneration` and clears cached protocol state; config replies are adopted only when
-their sender (`MeshPacket.from`) is the intended tag.
+PhoneAPI (bench implication documented in `tools/bench/README.md`). Every connection attempt
+owns a `linkGeneration`; replaced peripherals are detached/cancelled and every delegate
+callback is identity-fenced. Config replies are adopted only when their exact sender
+(`MeshPacket.from`) matches and their per-link sequence follows the current GET/SET request.
 
 `TagConfigManager` is a second, short-lived link straight to a GPS tag for configuration
 while the Base link keeps streaming. It trusts nothing until the peripheral's own
 `my_info.my_node_num` matches the target (identity gate); the peripheral↔node mapping is
 persisted only after that match and deleted on mismatch, and callbacks from a previous
-central/peripheral are fenced out.
+central/peripheral are fenced out. A remembered UUID that fails or does not prove identity
+within its timeout is forgotten and scanning resumes; stopping the manager cancels its tasks
+and detaches both delegates.
 
 ## Screens / aspects
 
@@ -43,8 +46,10 @@ central/peripheral are fenced out.
     replay — import a GPX or a recorded session, decimate to the 800-record slot cap
     (`TrackReplay.swift`), upload over a direct link (BEGIN/CHUNK/COMMIT with a u32
     transfer id, every frame individually ACK-verified against a sequenced per-link ACK
-    queue), then play/stop from anywhere. Uploads are owned `Task`s bound to one tag and
-    one link generation — leaving the screen or switching targets cancels, never orphans.
+    queue), then play/stop from anywhere. Uploads are owned `Task`s bound to one tag, one
+    link generation and one upload generation. Cancellation remains distinct from failure,
+    and every post-`await` UI mutation revalidates that generation, so a replaced task cannot
+    fail or complete its successor.
 - **Sessions** — measurement-grade recording: every received packet lands verbatim as
   crash-safe JSONL under `Documents/sessions/<uuid>/` (`SessionStore.swift`); recovery on
   next launch rebuilds finalization from the raw files and discovers tracks by scanning

@@ -19,16 +19,30 @@ with generation proof (distinct staged coordinates + uptime-verified reboot).
   node that streams logs fine, this is why.
 - Run from the **repo root** with the pipx python.
 
-## Run it (backgrounded, streamed — never wait blindly)
+## Run the host-only layout gate first
 
 ```bash
 cd <repo-root>
-/Users/s3ni0r/.local/pipx/venvs/meshtastic/bin/python -u tools/bench/verify_fixes.py \
-  2>&1 | tee /tmp/bench.log | grep --line-buffered -E "\[FAIL\]|OVERALL|Traceback|Error"
+python3 tools/bench/verify_track_layout.py
 ```
-Takes ~6 minutes (75 s band test + uploads + a real reboot with ~45 s of waits). Stream the
-output (Monitor or equivalent); if there is no output for 2× the expected phase duration,
-treat it as a stall and investigate — do not keep waiting.
+
+This exercises the immutable-header/appended-footer format (including every torn-footer
+length), source invariants, and both full 800-record slots on the exact bundled LittleFS
+implementation and T1000-E geometry. `OVERALL: PASS` + exit 0 is mandatory, and no board is
+touched.
+
+## Run it (foreground, fully streamed — never wait blindly)
+
+```bash
+cd <repo-root>
+set -o pipefail
+/Users/s3ni0r/.local/pipx/venvs/meshtastic/bin/python -u tools/bench/verify_fixes.py \
+  2>&1 | tee /tmp/bench.log
+```
+`pipefail` preserves the Python failure status; never append a filtering `grep` that can turn
+a traceback or `[FAIL]` into pipeline exit 0. Takes ~6 minutes (75 s band test + uploads + a
+real reboot with ~45 s of waits). Keep the complete phase/PASS output visible; if there is no
+output for 2× the expected phase duration, treat it as a stall and investigate.
 
 Companion scripts: `verify_track.py` (upload+replay walkthrough), `verify_sim.py`
 (parametric simulator), `tools/downlink_latency.py` (signal/mode latency legs).

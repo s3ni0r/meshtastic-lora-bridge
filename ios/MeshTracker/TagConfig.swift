@@ -12,8 +12,10 @@ private let kFromNum = CBUUID(string: "ed9da18c-a800-4f66-a670-aa7547e34453")
 /// Connects to the GPS tag over its own BLE and speaks the portnum-260 config protocol
 /// (GnssConfigModule): handshake -> GET (populate) -> SET (apply + confirm). The tag applies
 /// settings live and persists them — no reflash, no reboot.
+@MainActor
 @Observable
-final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+final class TagConfigManager: NSObject, @preconcurrency CBCentralManagerDelegate,
+                               @preconcurrency CBPeripheralDelegate {
     enum Stage: Equatable { case idle, scanning, connecting, handshaking, ready, applying, failed(String) }
     var stage = Stage.idle
     var discovered: [(id: UUID, name: String)] = []
@@ -34,57 +36,152 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     @ObservationIgnored private var fromRadio: CBCharacteristic?
     @ObservationIgnored private var targetNode: UInt32 = 0
     @ObservationIgnored private var handshakeDone = false
+    @ObservationIgnored private var activeAttemptGeneration: Int?
+    @ObservationIgnored private var connectionTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored private var configReplySequence = 0
+    @ObservationIgnored private var configRequestFloor: Int?
+    @ObservationIgnored private var configRequestGeneration: Int?
+    @ObservationIgnored private var configRequestExpectedOp: UInt8?
 
     private var rememberKey: String { "tagPeriph.\(targetNode)" }
 
     func begin(targetNode: UInt32) {
-        // Fence the previous session completely before replacing the central: detach our
-        // delegate so callbacks from the old connection can never mutate the new session's
-        // state (R4 finding 4 — begin() used to swap centrals with the old one still live).
-        if let p = peripheral { p.delegate = nil; central?.cancelPeripheralConnection(p) }
-        central?.delegate = nil
-        central?.stopScan()
-        peripheral = nil; toRadio = nil; fromRadio = nil
+        invalidateSession()
         self.targetNode = targetNode
         stage = .scanning
         discovered = []
         settings = nil
         lastStatus = nil
+        replyCount = 0
+        lastReplyOp = 0
+        lastReplyStatus = 0
         trackAcks = []
         handshakeDone = false
         linkNodeNum = 0
-        linkGeneration += 1
         central = CBCentralManager(delegate: self, queue: nil)
     }
 
     func stop() {
-        central?.stopScan()
-        if let p = peripheral { central?.cancelPeripheralConnection(p) }
-        peripheral = nil; toRadio = nil; fromRadio = nil
-        linkNodeNum = 0
-        linkGeneration += 1
+        invalidateSession()
         stage = .idle
+    }
+
+    private func invalidateSession() {
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
+        central?.stopScan()
+        if let p = peripheral {
+            p.delegate = nil
+            if p.state != .disconnected {
+                central?.cancelPeripheralConnection(p)
+            }
+        }
+        central?.delegate = nil
+        central = nil
+        peripheral = nil
+        toRadio = nil
+        fromRadio = nil
+        activeAttemptGeneration = nil
+        configReplySequence = 0
+        configRequestFloor = nil
+        configRequestGeneration = nil
+        configRequestExpectedOp = nil
+        linkNodeNum = 0
+        linkGeneration &+= 1
+    }
+
+    private func owns(_ c: CBCentralManager, _ p: CBPeripheral) -> Bool {
+        c === central && p === peripheral && activeAttemptGeneration == linkGeneration
+    }
+
+    private func owns(_ p: CBPeripheral) -> Bool {
+        p === peripheral && activeAttemptGeneration == linkGeneration
+    }
+
+    private func armConnectionTimeout(for id: UUID, generation: Int, after delay: Duration) {
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            guard let self, self.linkGeneration == generation,
+                  self.activeAttemptGeneration == generation,
+                  self.peripheral?.identifier == id, self.linkNodeNum == 0 else { return }
+            self.recoverFromUnverifiedConnection()
+        }
+    }
+
+    /// A remembered peripheral that is gone can otherwise leave Core Bluetooth connecting
+    /// indefinitely. Forget it, invalidate this attempt, and resume discovery on the same central.
+    private func recoverFromUnverifiedConnection() {
+        UserDefaults.standard.removeObject(forKey: rememberKey)
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
+        if let p = peripheral {
+            p.delegate = nil
+            if p.state != .disconnected {
+                central?.cancelPeripheralConnection(p)
+            }
+        }
+        peripheral = nil
+        toRadio = nil
+        fromRadio = nil
+        activeAttemptGeneration = nil
+        configReplySequence = 0
+        configRequestFloor = nil
+        configRequestGeneration = nil
+        configRequestExpectedOp = nil
+        linkNodeNum = 0
+        handshakeDone = false
+        trackAcks = []
+        linkGeneration &+= 1
+        guard let c = central, c.state == .poweredOn else {
+            stage = .failed("Bluetooth unavailable")
+            return
+        }
+        stage = .scanning
+        c.scanForPeripherals(withServices: [kService])
     }
 
     func centralManagerDidUpdateState(_ c: CBCentralManager) {
         guard c === central else { return } // stale central from a previous begin() — ignore
         guard c.state == .poweredOn else {
+            connectionTimeoutTask?.cancel()
+            connectionTimeoutTask = nil
+            if let p = peripheral { p.delegate = nil }
+            peripheral = nil
+            toRadio = nil
+            fromRadio = nil
+            activeAttemptGeneration = nil
+            configReplySequence = 0
+            configRequestFloor = nil
+            configRequestGeneration = nil
+            configRequestExpectedOp = nil
+            handshakeDone = false
+            linkNodeNum = 0
+            trackAcks = []
+            settings = nil
+            lastStatus = nil
+            linkGeneration &+= 1
             if c.state != .unknown { stage = .failed("Bluetooth unavailable") }
             return
         }
+        stage = .scanning
         c.scanForPeripherals(withServices: [kService])
         // Auto-reconnect to the peripheral used for this tag before. The mapping is written
         // only after a verified identity match and DELETED on mismatch (R4 finding 4), so a
         // stale mapping cannot trap us in a connect-fail-retry loop with the wrong device.
         if let saved = UserDefaults.standard.string(forKey: rememberKey), let id = UUID(uuidString: saved),
            let p = c.retrievePeripherals(withIdentifiers: [id]).first {
-            connect(p)
+            connect(p, remembered: true)
         }
     }
 
     func centralManager(_ c: CBCentralManager, didDiscover p: CBPeripheral,
                         advertisementData: [String: Any], rssi: NSNumber) {
-        guard c === central else { return }
+        guard c === central, peripheral == nil else { return }
         let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? p.name ?? "?"
         if !discovered.contains(where: { $0.id == p.identifier }) {
             discovered.append((p.identifier, name))
@@ -93,20 +190,42 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
 
     func connect(_ id: UUID) {
         guard let c = central, let p = c.retrievePeripherals(withIdentifiers: [id]).first else { return }
-        connect(p)
+        connect(p, remembered: false)
     }
 
-    private func connect(_ p: CBPeripheral) {
+    private func connect(_ p: CBPeripheral, remembered: Bool) {
+        connectionTimeoutTask?.cancel()
+        if let old = peripheral {
+            old.delegate = nil
+            if old.state != .disconnected {
+                central?.cancelPeripheralConnection(old)
+            }
+        }
+        central?.stopScan()
+        toRadio = nil
+        fromRadio = nil
+        linkNodeNum = 0
+        handshakeDone = false
+        configReplySequence = 0
+        configRequestFloor = nil
+        configRequestGeneration = nil
+        configRequestExpectedOp = nil
+        trackAcks = []
+        linkGeneration &+= 1
+        activeAttemptGeneration = linkGeneration
         peripheral = p
         p.delegate = self
         deviceName = p.name ?? "tag"
         stage = .connecting
-        central?.stopScan()
         central?.connect(p)
+        // Remembered UUIDs are the trap this timeout primarily prevents. Applying it to manual
+        // choices too gives every unverified attempt the same finite, recoverable lifecycle.
+        armConnectionTimeout(for: p.identifier, generation: linkGeneration,
+                             after: .seconds(remembered ? 12 : 20))
     }
 
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) {
-        guard c === central, p === peripheral else { return }
+        guard owns(c, p) else { return }
         // NOTE: deliberately NOT remembered yet — only the peripheral's own my_info proves
         // this is the target node (see didUpdateValueFor).
         stage = .handshaking
@@ -114,25 +233,36 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     }
 
     func centralManager(_ c: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
-        guard c === central, p === peripheral else { return }
-        stage = .failed("connect failed")
+        guard owns(c, p) else { return }
+        recoverFromUnverifiedConnection()
     }
 
     func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
-        guard c === central, p === peripheral else { return }
+        guard owns(c, p) else { return }
+        if linkNodeNum == 0 {
+            recoverFromUnverifiedConnection()
+            return
+        }
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
+        p.delegate = nil
+        peripheral = nil
+        toRadio = nil
+        fromRadio = nil
+        activeAttemptGeneration = nil
         linkNodeNum = 0
-        linkGeneration += 1 // any in-flight upload bound to the old link aborts
+        linkGeneration &+= 1 // any in-flight upload bound to the old link aborts
         if stage != .idle { stage = .failed("disconnected") }
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
-        guard p === peripheral else { return }
+        guard owns(p) else { return }
         guard let svc = p.services?.first(where: { $0.uuid == kService }) else { return }
         p.discoverCharacteristics([kToRadio, kFromRadio, kFromNum], for: svc)
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor svc: CBService, error: Error?) {
-        guard p === peripheral else { return }
+        guard owns(p) else { return }
         for ch in svc.characteristics ?? [] {
             switch ch.uuid {
             case kToRadio: toRadio = ch
@@ -141,14 +271,17 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
             default: break
             }
         }
-        guard let tr = toRadio else { stage = .failed("missing characteristics"); return }
+        guard let tr = toRadio else {
+            recoverFromUnverifiedConnection()
+            return
+        }
         // Handshake: want_config, then drain FromRadio until an empty read.
         p.writeValue(encodeWantConfig(UInt32.random(in: 1...UInt32.max)), for: tr, type: .withResponse)
         if let fr = fromRadio { p.readValue(for: fr) }
     }
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
-        guard p === peripheral else { return } // stale connection's callbacks never touch state
+        guard owns(p) else { return } // stale connection's callbacks never touch state
         if ch.uuid == kFromNum {
             if let fr = fromRadio { p.readValue(for: fr) }
             return
@@ -162,25 +295,25 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
             if linkNodeNum == 0, let me = parseMyNodeNum(v) {
                 linkNodeNum = me
                 if me != targetNode {
-                    // Drop the saved mapping BEFORE disconnecting: a mapping that points at
-                    // the wrong device would otherwise auto-reconnect on every retry, trapping
-                    // configuration permanently (R4 finding 4 — likely for mappings saved by
-                    // the pre-R3 identity bug). Next attempt scans fresh instead.
-                    UserDefaults.standard.removeObject(forKey: rememberKey)
-                    stage = .failed(String(format: "wrong node !%08x — expected !%08x (forgot the saved device; retry will rescan)", me, targetNode))
-                    if let pp = peripheral { central?.cancelPeripheralConnection(pp) }
+                    recoverFromUnverifiedConnection()
                     return
                 }
                 // Verified: THIS peripheral is the target node — now it's worth remembering.
+                connectionTimeoutTask?.cancel()
+                connectionTimeoutTask = nil
                 UserDefaults.standard.set(p.identifier.uuidString, forKey: rememberKey)
             }
-            if linkNodeNum == targetNode, let reply = parseConfigReply(v), reply.from == targetNode || reply.from == 0 {
-                settings = reply.settings
-                if reply.op == 0x81 { lastStatus = reply.status }
-                lastReplyOp = reply.op
-                lastReplyStatus = reply.status
-                replyCount += 1
-                stage = .ready
+            if linkNodeNum == targetNode, let reply = parseConfigReply(v), reply.from == targetNode {
+                configReplySequence &+= 1
+                if configRequestGeneration == linkGeneration, let floor = configRequestFloor,
+                   configReplySequence > floor, reply.op == configRequestExpectedOp {
+                    settings = reply.settings
+                    if reply.op == 0x81 { lastStatus = reply.status }
+                    lastReplyOp = reply.op
+                    lastReplyStatus = reply.status
+                    replyCount &+= 1
+                    stage = .ready
+                }
             }
             if let ta = parseTrackAck(v) {
                 trackAcks.append(ta) // sequenced queue — consumers scan by index (R4 f7)
@@ -189,9 +322,7 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
         } else if !handshakeDone {
             handshakeDone = true
             guard linkNodeNum == targetNode else { // drained without identity = wrong/broken node
-                UserDefaults.standard.removeObject(forKey: rememberKey) // same trap-breaker as above
-                stage = .failed("peripheral identity unverified — not the target tag")
-                if let pp = peripheral { central?.cancelPeripheralConnection(pp) }
+                recoverFromUnverifiedConnection()
                 return
             }
             sendGet() // identity verified + config drained — ask for the GNSS settings
@@ -199,14 +330,23 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     }
 
     private func send(_ payload: Data) {
-        guard let p = peripheral, let tr = toRadio else { return }
+        guard let p = peripheral, let tr = toRadio,
+              activeAttemptGeneration == linkGeneration else { return }
         let frame = encodeToRadioData(to: targetNode, portnum: kGnssConfigPortnum, payload: payload,
                                       packetId: UInt32.random(in: 1...UInt32.max))
         p.writeValue(frame, for: tr, type: .withResponse)
         if let fr = fromRadio { p.readValue(for: fr) }
     }
 
-    func sendGet() { send(Data([0x00])) }
+    private func sendConfigRequest(_ payload: Data) {
+        guard let op = payload.first, op <= 0x01 else { return }
+        configRequestFloor = configReplySequence
+        configRequestGeneration = linkGeneration
+        configRequestExpectedOp = 0x80 | op
+        send(payload)
+    }
+
+    func sendGet() { sendConfigRequest(Data([0x00])) }
 
     /// Raw portnum-260 frame over this direct link (track uploads etc. — DOWNLINK.md op 0x05).
     func sendRaw(_ payload: Data) { send(payload) }
@@ -214,7 +354,7 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     func apply(_ s: TagSettings) {
         stage = .applying
         lastStatus = nil
-        send(Data([0x01]) + s.wire)
+        sendConfigRequest(Data([0x01]) + s.wire)
     }
 }
 

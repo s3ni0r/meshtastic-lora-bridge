@@ -110,7 +110,7 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
             uint16_t off = (uint16_t)(d.payload.bytes[6] | (d.payload.bytes[7] << 8));
             uint8_t n = d.payload.bytes[8];
             if (d.payload.size >= (uint16_t)(9 + n * 10))
-                ok = gnssSim->trackChunk(off, n, &d.payload.bytes[9]);
+                ok = gnssSim->trackChunk(tid, off, n, &d.payload.bytes[9]);
             echoOff = off;
         } else if (sub == 0x02) { // COMMIT — idempotent RETRY only for the SAME (tid, crc)
             ok = gnssSim->trackCommit(tid);

@@ -20,12 +20,15 @@ Ground truth measured on this fleet 2026-07-26 — trust it over intuition:
 ## Path 1 — released firmware, hands-free (default)
 
 ```bash
-tools/flash_t1000e.sh gps-tag gpstag          # <flavor> <role|port>; latest release
+tools/flash_t1000e.sh gps-tag gpstag          # <flavor> <role|port|serial>; latest release
 VERSION=v4.3 tools/flash_t1000e.sh base-plain base
 ```
 Does everything fail-closed: manifest checksums → hardware-serial pin → 1200 touch →
 re-find same silicon → `adafruit-nrfutil dfu serial` upload. Flavors: `gps-tag`,
-`bridge-tag`, `base-plain`. Roles resolve via `tools/nodes.py`.
+`bridge-tag`, `base-plain`. Roles resolve via `tools/nodes.py`; omitted-target autodetection
+considers only registry-known serials across both measured VIDs (0x239A/0x2886). An
+unregistered board requires an explicit `/dev` path or 16-hex serial. The script validates
+the serial, VID and complete nrfutil toolchain before the hazardous 1200-baud touch.
 
 ## Path 2 — dev build, hands-free
 
@@ -51,9 +54,11 @@ Requires the user to **double-tap the button** → a `T1000-E` disk mounts. Then
 /Users/s3ni0r/.local/pipx/venvs/meshtastic/bin/python tools/flash_uf2.py gpstag \
   firmware/releases/v4.3/gps-tag.uf2
 ```
-Validates the UF2 image (block magics + nRF52840 family), requires a T1000-identified
-volume, and attributes the volume to its owning USB serial through the IORegistry so a
-role/serial pin can never hit another board. `cp` errors like "Device not configured"
+Validates every UF2 block (magics, only the family-ID flag, nRF52840 family, payload bounds,
+complete/unique numbering, no overlapping targets, and the T1000-E linker-script application
+range `0x27000..<0xED000`), requires a T1000-identified volume, and walks the structured
+IORegistry parent tree from that volume's exact BSD node to its nearest USB device. A sibling
+or parent hub serial can never satisfy the role pin. `cp` errors like "Device not configured"
 mid-copy are NORMAL; the truth signal is the volume unmounting (image accepted).
 
 ## Always verify the boot (any path)

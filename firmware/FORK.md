@@ -13,10 +13,11 @@ indoor simulator ride portnum 260 — the full command contract lives in
 | Flavor | Build flag | Position source | src bits |
 |---|---|---|---|
 | **BLE5/LoRa bridge** | `-DODID_SNIFFER …` | Dronetag Remote ID adverts (its GNSS, >1 Hz); radio stays TX-only | 1 |
-| **GPS tag** | `-DGPS_TAG` | Onboard AG3335 **@ 10 Hz** (boot-time unlock, §3/§9); radio RX **enabled** since tag-downlink (CLIENT_MUTE still bars rebroadcast) | 2 |
+| **GPS tag** | `-DGPS_TAG` | Onboard AG3335, **4 Hz shipped target / 10 Hz capable** (boot-time unlock, §3/§9); radio RX **enabled** since tag-downlink (CLIENT_MUTE still bars rebroadcast) | 2 |
 | Base (receiver) | *(plain build)* | — (tag-downlink adds: priority TX fast-lane + 15 ms API poll for command latency — vendor patches in `RadioLibInterface.cpp` / `StreamAPI.cpp`) | — |
 
-> **Bench/test only.** At >2.4 Hz this exceeds the EU868 10% duty cycle. Set
+> **Bench/test only.** Above ≈2.1 Hz with the current v4 packet this exceeds the EU868 10%
+> duty cycle. Set
 > `lora.override_duty_cycle=true` on the sender. Not for deployment. See `../PLAN.md` §1.
 
 The files here (`src/modules/HighRatePositionModule.{h,cpp}`) are **drop-ins** for a Meshtastic
@@ -44,7 +45,8 @@ git submodule update --init --recursive
 changes is the TRACKED outer repo:
 
 - `meshtastic-fork.patch` — every edit to vendor files, one reviewable diff vs the build tag;
-- `src/modules/…`, `src/gps/…`, `patch_bluefruit_ext.py` — project-owned drop-in files.
+- `src/modules/…`, `src/gps/…`, `patch_bluefruit_ext.py`, `release_identity.py`, and
+  `vendor/bin/readprops.py` — project-owned source/build-hook files.
 
 Workflow: **edit inside `meshtastic-firmware/` → build/flash → run `./sync-fork.sh`** (regenerates
 the patch + copies the drop-ins) → commit the outer repo. `./apply-fork.sh` is the inverse — it
@@ -112,17 +114,32 @@ Each build lands at `.pio/build/tracker-t1000-e/firmware.uf2` — copy it out un
 (e.g. `build-out/bridge-tag.uf2`, `build-out/gps-tag.uf2`, `build-out/base-plain.uf2`) before the
 next build overwrites it.
 
+Release-stamped builds additionally attest the ignored build inputs: the vendor clone must
+match `meshtastic-fork.patch` plus every tracked drop-in, and all resolved files under
+`.pio/libdeps/tracker-t1000-e` must match
+`platformio-dependencies.lock.json`. Ordinary development builds resolve the dependencies
+first; release identity then fails closed on a missing, modified, or injected library file.
+The lock is a source-input fingerprint, not a promise of bit-exact output across toolchains;
+release packaging separately validates the stamped UF2 and DFU payloads.
+The build hook executes the tracked `readprops.py` and `release_identity.py` sources directly
+instead of trusting ignored import caches. Release procedure also removes project `.pyc`/`.pyo`
+files and sets `PYTHONDONTWRITEBYTECODE=1`; any remaining ignored bytecode fails attestation.
+Because PlatformIO begins in the ignored clone, release builds must enter through tracked
+`release_build.py` with `python3 -I`; it attests before the clone executes, clean-builds one
+exact flavor, strips inherited PlatformIO/Python/SCons/Git overrides, re-attests afterwards,
+and exports only an identity-checked UF2/HEX pair.
+
 Rate knobs (defaults shown): `-DHIGHRATE_MIN_SPACING_MS=150` caps the event-driven TX at ~6.7 Hz
 (use ≥500 for EU868-legal 2 Hz deployment); `-DHIGHRATE_POSITION_INTERVAL_MS=250` is only the
 fallback poll when a cross-task wake is missed.
 
 ## 5. Flash
 
-**Preferred:** `tools/flash_t1000e.sh <flavor> [port|role]` — flashes a **versioned release** from
-`firmware/releases/` (checksummed, hardware-serial-pinned bootloader serial-DFU; the explicit
-`uf2` target instead copies onto a double-tapped T1000-E volume) with the per-flavor config
-cheat-sheet printed after. `--list` shows releases + connected boards. Procedures + wedge
-recovery: `.claude/skills/flash-t1000e/SKILL.md`.
+**Preferred:** `tools/flash_t1000e.sh <flavor> [port|role|serial]` — flashes a **versioned
+release** from `firmware/releases/` (checksummed, hardware-serial-pinned bootloader serial-DFU;
+the explicit `uf2` target instead copies onto a double-tapped T1000-E volume) with the
+per-flavor config cheat-sheet printed after. `--list` shows releases + connected boards.
+Procedures + wedge recovery: `.claude/skills/flash-t1000e/SKILL.md`.
 
 Manual UF2 fallback: hold the button and connect the magnetic charge cable **twice** until the
 green LED is **solid**; a `T1000-E` USB drive mounts — drag the matching `.uf2` onto it. On a big
@@ -146,10 +163,11 @@ After flashing, confirm via serial log the active preset is **ShortFast** (not L
 ## 7. Validate
 
 - Receiver side: run `../tools/m2_stream_poc.py recv --port <recv-node> --csv run.csv` (it decodes
-  the same 12-byte PRIVATE_APP payload the firmware now emits) — or the iOS client once built.
+  the current 19-byte v4 PRIVATE_APP payload, while retaining legacy-length decoders) — or the
+  iOS client once built.
 - Confirm the effective rate at the receiver matches the send cadence and log RSSI/SNR vs distance.
 - Compliance check: read `AirTime::utilizationTXPercent()` (device metrics) — at 2 Hz it should sit
-  ~8% (deployment-legal); at 4 Hz ~16% (bench-only, why `override_duty_cycle` is set).
+  ~9.5% (deployment-legal); at 4 Hz ~19% (bench-only, why `override_duty_cycle` is set).
 
 ## 8. Low-latency event-driven sender (`feat/low-latency-bridge`)
 

@@ -1,0 +1,3 @@
+# Unified-diff blank context lines contain one format-significant space. Validate the
+# represented vendor source itself with `git -C firmware/meshtastic-firmware diff --check`.
+firmware/meshtastic-fork.patch -whitespace

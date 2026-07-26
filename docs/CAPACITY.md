@@ -10,17 +10,17 @@ region/preset facts read from the firmware we ship (`src/mesh/RadioInterface.cpp
 |---|---|
 | Payload | 19 B on `PRIVATE_APP(256)`: lat/lon/ms/seq/flags + alt/speed/heading/hacc + battery (v3) + motion energy (v4) |
 | On-air packet | **≈42 B** = 16 B radio header + encrypted Data protobuf (~6 B) + payload — same ShortFast symbol group as 41 B, so v4 added **zero airtime** (boundary at 44 B, §8) |
-| GPS tag (`!18e77545`) | fresh fix every 250 ms (4 Hz GNSS), TX spacing ≥150 ms (**phone-adjustable live**; 500 = EU868 profile), **2 s heartbeat when no fix** |
+| GPS tag (`!18e77545`) | fresh fix every 250 ms (4 Hz GNSS), **500 ms shipped TX spacing** (2 Hz EU868 profile; phone-selectable 100–5000 ms), **2 s heartbeat when no fix** |
 | Bridge tag (`!b4dbb54c`) | Dronetag novelty rate ~2–4.5 Hz, same payload/heartbeat |
 | Base | RX only (broadcast — extra Bases/phones listen for free) |
-| MAC behavior | tags are TX-only with CAD (listen-before-talk) + latest-wins queue |
+| MAC behavior | both tags use CAD (listen-before-talk) + latest-wins queue; the bridge is TX-only, while the GPS tag keeps RX enabled for portnum-260 commands |
 
-Payload v3 shipped 2026-07-13 (18 B: +battery byte; the moving bit is still pending in
-`TODO.md` and costs nothing — it lives in the existing flags byte). The extra byte crosses a
-ShortFast symbol-group boundary: 45 → 48 ms airtime. All tables below are recomputed for 41 B;
-EU868 @ 2 Hz is now 9.5% duty — tighter, still legal.
+Payload v4 shipped 2026-07-26 (19 B: battery + motion energy, with the `moving` classifier
+in flags bit1). The earlier v3 battery byte crossed the ShortFast symbol-group boundary from
+45 to 48 ms; v4's motion byte remains in that same group and adds no airtime. All tables below
+use today's ≈42 B on-air packet; EU868 @ 2 Hz is ≈9.5% duty — tight, but still legal.
 
-## 2. Presets: airtime and throughput for our 41 B packet
+## 2. Presets: airtime and throughput for our ≈42 B packet
 
 | Preset | SF/BW(kHz)/CR | Airtime | Raw msgs/s (100% ch.) | Sensitivity* |
 |---|---|---|---|---|
@@ -106,9 +106,9 @@ Max sustained msgs/s per tag = duty% ÷ airtime:
 | LongFast | 0.18 /s | 0.02 /s | 1.8 |
 | LongSlow | 0.03 /s | — | 0.33 |
 
-EU868 headline: **2 Hz per tag on ShortFast is the legal sustained maximum** (9.5% duty since
-the v3 battery byte); our GPS tag's 4 Hz GNSS stays, only TX spacing changes
-(`HIGHRATE_MIN_SPACING_MS=500`).
+EU868 headline: **2 Hz per tag on ShortFast is the legal sustained maximum** (≈9.5% duty for
+the current v4 packet); our GPS tag's 4 Hz GNSS stays, while its runtime
+`txSpacingMs` setting is 500 ms in the shipped EU profile.
 
 ## 6. How many tags simultaneously?
 
@@ -118,8 +118,8 @@ erode it, so round down when tags spread over km.
 
 | Preset | @ 4 Hz/tag | @ 2 Hz/tag | @ 1 Hz/tag | @ 1 fix/5 s |
 |---|---|---|---|---|
-| ShortTurbo (US-class) | **3–4** | 7 | 15 | 76 |
-| ShortFast | 1–2 | **3–4** | 7 | 38 |
+| ShortTurbo (US-class) | **3** | 7 | 15 | 76 |
+| ShortFast | 1 | **3** | 7 | 38 |
 | ShortSlow | — | 2 | 4 | 20 |
 | MediumFast | — | 1 | 2 | 10 |
 | MediumSlow | — | — | 1 | 5 |
@@ -130,15 +130,18 @@ erode it, so round down when tags spread over km.
 - Bench (US/ShortTurbo): GPS tag @4 Hz = 10% airtime, bridge @~2.3 Hz novelty = 5.5% → **~15%
   aggregate, comfortable**; room for ~2 more moving 4 Hz tags.
 - France deployment (EU_868/ShortFast): GPS tag must drop to 2 Hz (9.5% duty ✓), bridge capped
-  the same → 2 moving tags ≈ 19% channel ✓; **fleet ceiling ≈ 3–4 moving tags @2 Hz** or 7 @1 Hz.
-- Parked tags cost ~0.5% each (2 s heartbeats), so with motion-gated TX (`TODO.md` #3)
-  "N tags" really means "N *moving* at once" — a 10-tag fleet is fine on EU868 if ≤4 move.
+  the same → 2 moving tags ≈ 19% channel ✓; **fleet ceiling ≈3 moving tags @2 Hz** or 7 @1 Hz.
+- An adaptive GPS tag in the default slow tier sends every 3 s (≈1.6% airtime); a frozen/no-fix
+  source falls back to the 2 s heartbeat (≈2.4%). The v4 motion bit is telemetry, not itself
+  the TX gate. Budget mixed fleets explicitly: ten default adaptive GPS tags leave room for
+  only two moving at 2 Hz inside the 35% collision budget
+  (`2×9.6% + 8×1.6% ≈ 32%`), not four.
 
 ## 7. Worldwide recipes for this system
 
 | Scenario | Region/preset | Config |
 |---|---|---|
-| **France field use** (home) | `EU_868` + ShortFast | 2 Hz TX (`MIN_SPACING 500`), ≤4 moving tags, ~0.6–1 km urban / 2 km open / far with elevation |
+| **France field use** (home) | `EU_868` + ShortFast | 2 Hz TX (`MIN_SPACING 500`), ≤3 moving tags, ~0.6–1 km urban / 2 km open / far with elevation |
 | EU, more tags | `EU_868` + ShortFast | 1 Hz (`MIN_SPACING 1000`), ≤7 moving tags |
 | US/AU trips, max fidelity | `US`/`ANZ` + ShortTurbo | 4 Hz, ≤4 tags — today's bench config, legal there |
 | Long range, few tags | LongFast | 1 fix/5 s, ≤3 tags, ~1.5 km urban / 4 km open / 10s of km elevated |
@@ -148,7 +151,7 @@ erode it, so round down when tags spread over km.
 
 ```
 symbol_time  = 2^SF / BW
-payload_syms = 8 + max(ceil((8·PL − 4·SF + 44)/(4·(SF − 2·DE))) · (CR+4), 0)   # PL=41 today (v3)
+payload_syms = 8 + max(ceil((8·PL − 4·SF + 44)/(4·(SF − 2·DE))) · (CR+4), 0)   # PL≈42 today (v4)
 airtime      = (20.25 + payload_syms) · symbol_time
 per_tag_duty = rate_hz × airtime                  # ≤ region duty for legality
 fleet        = 0.35 / (rate_hz × airtime)         # collision-safe simultaneous moving tags

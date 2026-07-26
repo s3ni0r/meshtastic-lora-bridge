@@ -14,7 +14,8 @@ CLONE=meshtastic-firmware
 [ -d "$CLONE" ] || { echo "clone not found: $CLONE"; exit 1; }
 
 # Project-owned files: clean full drop-in copies.
-mkdir -p src/modules src/gps
+mkdir -p src/modules src/gps vendor/bin
+cp "$CLONE/bin/readprops.py"                         vendor/bin/readprops.py
 cp "$CLONE/src/modules/HighRatePositionModule.h"   src/modules/HighRatePositionModule.h
 cp "$CLONE/src/modules/HighRatePositionModule.cpp" src/modules/HighRatePositionModule.cpp
 cp "$CLONE/src/gps/GnssRateProbe.h"                src/gps/GnssRateProbe.h
@@ -35,7 +36,8 @@ cp "$CLONE/patch_bluefruit_ext.py"                 patch_bluefruit_ext.py
 # the clone keeps a local t1000e-fork branch with changes COMMITTED, so a plain `git diff`
 # (worktree vs HEAD) is empty and would silently wipe the patch.
 BASE_TAG=v2.7.15.567b8ea
-git -C "$CLONE" diff "$BASE_TAG" -- \
+git -C "$CLONE" diff --no-ext-diff --binary --no-renames "$BASE_TAG" -- \
+    bin/platformio-custom.py \
     src/main.cpp \
     src/configuration.h \
     src/gps/GPS.cpp \
@@ -49,5 +51,5 @@ git -C "$CLONE" diff "$BASE_TAG" -- \
     variants/nrf52840/tracker-t1000-e/platformio.ini \
     > meshtastic-fork.patch
 
-echo "synced: firmware/src/{modules,gps} drop-ins + firmware/meshtastic-fork.patch"
+echo "synced: firmware/src/{modules,gps} + vendor/bin/readprops.py + firmware/meshtastic-fork.patch"
 wc -l meshtastic-fork.patch

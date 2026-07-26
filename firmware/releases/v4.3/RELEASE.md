@@ -18,20 +18,38 @@ shipped MeshTracker build updates in lockstep.
 ## v4.3 over v4.2 (WIRE CHANGE on op 0x05)
 
 - **Every TRACK sub-op carries the client's u32 transfer id** (`[0x05, sub, tid u32 LE, …]`);
-  the ACK is 9 bytes and echoes the REQUEST's tid — cross-transfer CHUNK/COMMIT/ABORT can
-  never mutate someone else's staging, and correlation is exact, not 1-in-255.
+  the ACK is 9 bytes and echoes the REQUEST's tid, making correlation exact rather than
+  1-in-255. The release enforced ownership for COMMIT/ABORT, but not CHUNK; see the
+  post-release transfer-isolation caveat below.
 - **A/B generation slots replace the tmp+marker layout**: staging writes the inactive slot
   (header generation 0 = unplayable); COMMIT verifies content in place and promotes it by
   stamping generation = active+1. The previous committed track is **never opened for
-  writing** — power loss, torn writes and CRC failures at any point leave it playable
-  (highest valid generation wins; there is no marker/selector file to tear). Legacy
-  `simtrack.*` files are removed on first track op; re-upload after upgrading.
+  writing**, and the highest valid generation wins without a separate marker/selector file.
+  The v4.3 bench verified that the previous generation survives CRC failure and an orderly
+  reboot with an uncommitted staged slot. It did **not** power-cut the device or fault-inject
+  a torn promotion write, so those cases remain architecture reasoning rather than measured
+  release evidence. Legacy `simtrack.*` files are removed on first track op; re-upload after
+  upgrading.
 - **COMMIT idempotence is keyed on (tid, crc)**: a retry after a FAILED commit keeps
   NAKing — an older surviving track can never credit a failed replacement as "verified".
 - **Record cap 800** (was an unhonorable 1600): both slots at cap total 16,032 B of the
   28 KiB shared LittleFS. The iOS decimator targets the same cap.
 - **BEGIN during TRACK playback is NAKed** — playback pins its slot file; a commit landing
   mid-play promotes the other slot, so splicing playback state into fresh data is impossible.
+
+> **Post-release capacity caveat:** v4.3's 800-record budget was logical, not an operational
+> guarantee. These historical binaries promote a slot by rewriting offset 0, which can fail
+> with `ENOSPC` under LittleFS copy-on-write pressure. Current post-v4.3 source replaces that
+> rewrite with an appended commit footer and host-gates two full 800-record slots plus an
+> 8 KiB prefs reserve against the exact bundled LittleFS geometry. The v4.3 artifacts and
+> checksums are unchanged; that later proof does not apply retroactively to them.
+>
+> **Post-release transfer-isolation caveat:** although every v4.3 CHUNK carried a transfer id,
+> the shipped handler parsed and discarded that field before writing. A wrong-tid CHUNK with
+> an otherwise valid range could therefore mutate the current staging slot; only COMMIT/ABORT
+> ownership was enforced as claimed. Current post-v4.3 source validates CHUNK ownership before
+> any file access and verifies duplicate bytes exactly. Again, the immutable v4.3 artifacts and
+> checksums are unchanged, and the stronger rule is not retroactive.
 
 ## Verification (tools/bench/verify_fixes.py, hard-asserted, exit-coded)
 
@@ -41,12 +59,14 @@ ACKs indexed after each send so a prior ACK can never be reused) including the d
 duplicate chunk; wrong-tid COMMIT NAK; COMMIT + idempotent same-tid retry; **failed-commit
 retry keeps NAKing** (the R4 f1 scenario); committed-slot survival across stray
 BEGIN/ABORT; BEGIN-while-playing NAK; and **reboot durability with proof** — the reboot is
-verified by the device's restarted log-uptime counter (~22 s), and the staged
-data is geographically distinct from the committed course, so the post-reboot playback
-coordinates prove WHICH generation played.
+an orderly software reboot verified by the device's restarted log-uptime counter (~22 s).
+The staged data is geographically distinct from the committed course, so the post-reboot
+playback coordinates prove WHICH generation played. No power-cut or torn-write fault
+injection was part of this release run.
 
-Flash: `tools/flash_t1000e.sh <flavor> [port|role|uf2]` — per-artifact checksums,
-hardware-serial pinning, T1000-only volume identity (fail-closed). `tools/flash_uf2.py` is
-the explicit double-tap/UF2-volume path: full image validation (block magics + nRF52840
-family), single-candidate + bootloader-USB-serial pinning. Rollback:
+Flash: `tools/flash_t1000e.sh <flavor> [port|role|serial|uf2]` — per-artifact checksums and
+hardware-serial pinning on serial-DFU paths. The `uf2` shortcut is explicit, unpinned, and
+single-volume only; use `tools/flash_uf2.py <role|serial> ...` for pinned double-tap recovery.
+That tool enforces complete/unique blocks, nRF52840 family and the T1000-E application range,
+then requires a T1000-only volume owned by the pinned USB serial. Rollback:
 `firmware/known-good/restore.sh` (v3.0). License: GPL-3.0 (root `LICENSE`).

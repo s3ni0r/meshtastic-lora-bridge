@@ -50,6 +50,8 @@ struct TagSetupView: View {
     @State private var trackInfo = ""
     @State private var uploadNote: String?
     @State private var uploadTask: Task<Void, Never>? // owned: cancellable on leave/rebind (R3 f2)
+    @State private var uploadGeneration = 0
+    @State private var directConfigRequest: ConfigRequestToken?
     private let ttlRefresh = Timer.publish(every: 45, on: .main, in: .common).autoconnect()
 
     // MARK: - Connection routing (single PhoneAPI client per node — see BLEManager)
@@ -59,9 +61,14 @@ struct TagSetupView: View {
     }
     /// Settings are only ever adopted when the REPLY's sender is the current target (R4 f3):
     /// a cached reply from tag A (or one relayed from another node) is never shown, edited or
-    /// applied as tag B's. `from == 0` = the connected node itself replied on its phone queue.
+    /// applied as tag B's. The reply must also follow this screen's GET on the same link.
     private var boundReply: ConfigReply? {
-        guard direct, let r = ble.lastConfigReply, r.from == target || r.from == 0 else { return nil }
+        guard direct, let request = directConfigRequest, request.node == target,
+              request.linkGeneration == ble.linkGeneration,
+              ble.lastConfigReplyGeneration == request.linkGeneration,
+              ble.lastConfigReplySequence > request.replyFloor,
+              let r = ble.lastConfigReply, r.from == request.node,
+              r.op == request.expectedOp else { return nil }
         return r
     }
     private var confirmed: TagSettings? { direct ? boundReply?.settings : mgr.settings }
@@ -112,9 +119,9 @@ struct TagSetupView: View {
             .safeAreaInset(edge: .bottom) { if dirty { applyBar } }
             .onAppear { engage() }
             .onDisappear {
-                uploadTask?.cancel() // leaving the screen orphans no upload work (R3 f2)
-                uploadTask = nil
-                if !direct { mgr.stop() }
+                cancelUpload(clearUI: true)
+                directConfigRequest = nil
+                mgr.stop()
             }
             .onChange(of: ui.setupTarget) {
                 if ui.setupTarget != nil { engage() } // engage() nils it — don't re-trigger
@@ -128,11 +135,16 @@ struct TagSetupView: View {
             .onChange(of: target) {
                 // trackReady describes ONE tag's slot — a new target starts from unknown, and
                 // any in-flight upload to the old tag is cancelled, not orphaned (R3 f2).
-                uploadTask?.cancel()
-                uploadTask = nil
-                uploadProgress = nil
-                trackReady = false
-                trackInfo = ""
+                cancelUpload(clearUI: true)
+            }
+            .onChange(of: ble.linkGeneration) {
+                if directConfigRequest != nil { baseline = nil }
+                directConfigRequest = nil
+            }
+            .onChange(of: ble.connectedNodeNum) {
+                if ble.directTag, let t = target, ble.connectedNodeNum == t {
+                    requestDirectSettings()
+                }
             }
         }
     }
@@ -144,22 +156,27 @@ struct TagSetupView: View {
         baseline = nil
         guard let t = newTarget else { return }
         if ble.directTag && ble.connectedNodeNum == t {
-            ble.sendTagConfig(Data([0x00])) // refresh over the live direct link
-            // Adopt the cached reply immediately: the fresh GET usually echoes IDENTICAL values,
-            // so onChange(of: confirmed) would never fire and the view would wait forever
-            // ("Reading settings…" on every re-entry). A genuinely newer reply still updates us.
-            if let s = confirmed {
-                baseline = s
-                draft = s
-            }
+            requestDirectSettings()
         } else {
+            directConfigRequest = nil
             mgr.begin(targetNode: t)
         }
     }
 
+    private func requestDirectSettings() {
+        guard ble.directTag, let t = target, ble.connectedNodeNum == t else {
+            directConfigRequest = nil
+            return
+        }
+        if mgr.stage != .idle { mgr.stop() }
+        // The token captures the reply floor before the GET is written. Even an identical
+        // response transitions confirmed nil -> settings, so no cached-reply shortcut is needed.
+        directConfigRequest = ble.sendTagConfigRequest(Data([0x00]))
+    }
+
     private func apply() {
         if direct {
-            ble.sendTagConfig(Data([0x01]) + draft.wire)
+            directConfigRequest = ble.sendTagConfigRequest(Data([0x01]) + draft.wire)
         } else {
             mgr.apply(draft)
         }
@@ -518,15 +535,17 @@ struct TagSetupView: View {
     /// connection rebinds abort immediately (R3 f2). NAK/timeout → one retry (the firmware is
     /// idempotent per-frame, and a COMMIT retry after a REAL failure keeps NAKing — R4 f1).
     private func sendAcked(_ link: UploadLink, _ frame: Data, sub: UInt8, off: UInt16,
-                           tid: UInt32) async -> Bool {
+                           tid: UInt32) async throws -> Bool {
         for _ in 0..<2 {
-            guard !Task.isCancelled, link.generationOK() else { return false }
+            try Task.checkCancellation()
+            guard link.generationOK() else { return false }
             var seen = link.ackQueue().count // only ACKs appended AFTER this send can count
             link.send(frame)
             let deadline = Date().addingTimeInterval(2.0)
             var verdict: Bool?
             while Date() < deadline {
-                do { try await Task.sleep(for: .milliseconds(50)) } catch { return false } // cancelled
+                try await Task.sleep(for: .milliseconds(50))
+                try Task.checkCancellation()
                 guard link.generationOK() else { return false }
                 let q = link.ackQueue()
                 while verdict == nil && seen < q.count {
@@ -554,11 +573,26 @@ struct TagSetupView: View {
         uploadTrack(recs)
     }
 
+    private func cancelUpload(clearUI: Bool) {
+        uploadGeneration &+= 1
+        uploadTask?.cancel()
+        uploadTask = nil
+        if clearUI {
+            uploadProgress = nil
+            trackReady = false
+            trackInfo = ""
+            uploadNote = nil
+        }
+    }
+
     private func uploadTrack(_ recs: [TrackRecord]) {
         guard let link = trackUploadLink() else {
             uploadNote = "Track upload needs a direct BLE link to the tag (not via the Base)."
             return
         }
+        uploadTask?.cancel()
+        uploadGeneration &+= 1
+        let operationGeneration = uploadGeneration
         uploadNote = nil
         trackReady = false
         uploadProgress = 0
@@ -567,51 +601,67 @@ struct TagSetupView: View {
         let boundTarget = target // upload is BOUND to this tag; a mid-flight switch aborts
         let tid = UInt32.random(in: 1...UInt32.max) // per-transfer id, carried in EVERY frame (R4 f7)
         let tidData = withUnsafeBytes(of: tid.littleEndian) { Data($0) }
-        uploadTask?.cancel()
         uploadTask = Task { @MainActor in
             let fail: (String) -> Void = { msg in
+                guard self.uploadGeneration == operationGeneration, !Task.isCancelled else { return }
                 self.uploadProgress = nil
                 self.trackReady = false
                 self.uploadNote = msg
             }
-            var begin = Data([0x05, 0x00]) + tidData
-            begin += withUnsafeBytes(of: UInt16(recs.count).littleEndian) { Data($0) }
-            begin += withUnsafeBytes(of: crc.littleEndian) { Data($0) }
-            guard await sendAcked(link, begin, sub: 0, off: UInt16(recs.count), tid: tid) else {
-                return fail("Tag rejected the upload start (stop any running track replay first).")
-            }
-            let per = 20
-            var off = 0
-            while off < recs.count {
-                guard !Task.isCancelled, target == boundTarget else {
-                    return fail("Upload aborted (target or screen changed).")
+            defer {
+                if self.uploadGeneration == operationGeneration {
+                    self.uploadTask = nil
                 }
-                let n = min(per, recs.count - off)
-                var p = Data([0x05, 0x01]) + tidData
-                p += withUnsafeBytes(of: UInt16(off).littleEndian) { Data($0) }
-                p.append(UInt8(n))
-                p += wire.subdata(in: off * 10 ..< (off + n) * 10)
-                guard await sendAcked(link, p, sub: 1, off: UInt16(off), tid: tid) else {
-                    return fail("Upload failed at point \(off)/\(recs.count) — check the link and retry.")
+            }
+            do {
+                var begin = Data([0x05, 0x00]) + tidData
+                begin += withUnsafeBytes(of: UInt16(recs.count).littleEndian) { Data($0) }
+                begin += withUnsafeBytes(of: crc.littleEndian) { Data($0) }
+                guard try await sendAcked(link, begin, sub: 0, off: UInt16(recs.count), tid: tid) else {
+                    fail("Tag rejected the upload start (stop any running track replay first).")
+                    return
                 }
-                off += n
-                uploadProgress = Double(off) / Double(recs.count)
+                let per = 20
+                var off = 0
+                while off < recs.count {
+                    try Task.checkCancellation()
+                    guard uploadGeneration == operationGeneration, target == boundTarget else { return }
+                    let n = min(per, recs.count - off)
+                    var p = Data([0x05, 0x01]) + tidData
+                    p += withUnsafeBytes(of: UInt16(off).littleEndian) { Data($0) }
+                    p.append(UInt8(n))
+                    p += wire.subdata(in: off * 10 ..< (off + n) * 10)
+                    guard try await sendAcked(link, p, sub: 1, off: UInt16(off), tid: tid) else {
+                        fail("Upload failed at point \(off)/\(recs.count) — check the link and retry.")
+                        return
+                    }
+                    try Task.checkCancellation()
+                    guard uploadGeneration == operationGeneration, target == boundTarget else { return }
+                    off += n
+                    uploadProgress = Double(off) / Double(recs.count)
+                }
+                try Task.checkCancellation()
+                guard uploadGeneration == operationGeneration, target == boundTarget else { return }
+                // COMMIT: the tag verifies the STAGED slot in place and promotes it by appending
+                // a proven generation footer — the previous track is never touched. Success is
+                // ONLY a status-0 ACK carrying OUR tid. Retry proof uses the active on-disk tid,
+                // and BEGIN rejects active-tid reuse, so an older track can never earn "verified"
+                // for this transfer (R4 f1).
+                guard try await sendAcked(link, Data([0x05, 0x02]) + tidData,
+                                          sub: 2, off: 0, tid: tid) else {
+                    fail("Tag CRC/commit failed — track NOT stored. Retry the upload.")
+                    return
+                }
+                try Task.checkCancellation()
+                guard uploadGeneration == operationGeneration, target == boundTarget else { return }
+                uploadProgress = nil
+                trackReady = true
+                trackInfo = "\(recs.count) pts · \(Int(TrackBuilder.durationS(recs))) s · verified"
+            } catch is CancellationError {
+                return
+            } catch {
+                fail("Upload interrupted — check the link and retry.")
             }
-            guard !Task.isCancelled, target == boundTarget else {
-                return fail("Upload aborted (target or screen changed).")
-            }
-            // COMMIT: the tag verifies the STAGED slot's content in place and promotes it by
-            // stamping its generation header — the previous track is never touched. Success
-            // is ONLY a status-0 ACK carrying OUR tid; a NAK retry keeps NAKing (the firmware
-            // keys idempotence on this transfer's tid+CRC), so "verified" can never be
-            // credited by an older surviving track (R4 f1).
-            guard await sendAcked(link, Data([0x05, 0x02]) + tidData, sub: 2, off: 0, tid: tid) else {
-                return fail("Tag CRC/commit failed — track NOT stored. Retry the upload.")
-            }
-            guard !Task.isCancelled, target == boundTarget else { return }
-            uploadProgress = nil
-            trackReady = true
-            trackInfo = "\(recs.count) pts · \(Int(TrackBuilder.durationS(recs))) s · verified"
         }
     }
 

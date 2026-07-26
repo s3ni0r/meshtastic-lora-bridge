@@ -14,9 +14,11 @@ Tag B: GPS tag (onboard AG3335 @ 4 Hz → LoRa)        ─┘
 
 **Current state (2026-07-26):** firmware **v4.3** deployed (four external-review rounds
 absorbed; TRACK wire = u32 transfer id + A/B slot storage), payload **v4** (position +
-battery + motion), adaptive speed-gated TX, beep-first calibration signals, GPX/session
-track replay on the tag, hardware regression suite green (22/22, exit 0) against the
-released binary. Dated narrative: [docs/HISTORY.md](docs/HISTORY.md).
+battery + motion), adaptive speed-gated TX, beep-first calibration signals, and GPX/session
+track replay on the tag. The immutable v4.3 binary passed its historical hardware suite
+(22/22); the post-v4.3 working-tree hardening passed the expanded physical-hardware suite
+(28/28), including reboot recovery and post-reboot COMMIT retry. Dated narrative:
+[docs/HISTORY.md](docs/HISTORY.md).
 
 ## The aspects, and where each is documented
 

@@ -1,10 +1,15 @@
 # Tag downlink — remote control, signals, adaptive TX, simulator (tag-downlink branch)
 
-> **Review snapshot (2026-07-26, after FOUR external-review rounds; firmware release v4.3).**
-> This document is the authoritative contract for everything added on branch `tag-downlink`
-> (2026-07-25/26), all bench-validated on real hardware (Base `!b0bb9cda` ↔ GPS tag
-> `!18e77545`; the current 22-assertion suite ran clean against the RELEASED v4.3 gps-tag
-> binary): downlink command channel (ops 0x02–0x05 below), beep-first operator signals,
+> **Review snapshot (2026-07-26, post-v4.3 working tree).**
+> This document is the authoritative current contract for branch `tag-downlink`. The released
+> v4.3 baseline ran its historical 22-assertion suite clean on real hardware (Base
+> `!b0bb9cda` ↔ GPS tag `!18e77545`). Statements below about the v3 appended-footer layout,
+> pre-access CHUNK ownership, exact-byte duplicate handling and reboot-persistent COMMIT retry
+> describe later source. Its host layout/capacity and unit gates pass, and its extended
+> 28-assertion HIL run passed on the same physical GPS tag on 2026-07-26, including an
+> acknowledged SIM start, A/B recovery after a verified reboot, generation-coordinate proof,
+> and post-reboot COMMIT retry. The broader feature set is: downlink command channel
+> (ops 0x02–0x05 below), beep-first operator signals,
 > speed-gated adaptive TX with phone-tunable knobs (settings wire v3), payload v4 (motion
 > energy + moving flag — see `BATTERY_INTEGRATION.md` for the full payload byte map), and the
 > on-tag indoor simulator (parametric programs, shake mode, GPX/track replay with A/B-slot
@@ -37,7 +42,12 @@ and drive its LED/buzzer at any tracking distance — no reflash, no BLE proximi
 | `0x02` MODE | `mode u8` (+ `ttl_s u16 LE`, CALIBRATION only; 0 → 90 s default) | `0` = **CALIBRATION**: fixed max rate (the configured `txSpacingMs`), guarded by the TTL dead-man; `1` = **ADAPTIVE**: speed-gated throughput |
 | `0x03` SIGNAL | `pattern u8, seq u8` | render an operator signal (table below); duplicate `seq` is acknowledged but not replayed — re-sends are safe |
 | `0x04` SIM | `src u8, flags u8 (bit0 loop), ttl_s u16 LE` (+ `nSeg u8, nSeg×(speed u8, dur u8)` for src 1) | indoor synthetic-fix generator ON the tag: src 0 = off, 1 = segment program (≤8, one packet), 2 = accel-coupled "shake to move", 3 = **track replay** of the uploaded slot, 0xFF = TTL keep-alive. Every simulated packet sets **flags bit4**; dead-man TTL (default 600 s); never persisted. Bench-validated 2026-07-26: full adaptive cycle (idle → instant fast → 15 s downshift → idle) driven by a simulated 1↔12 km/h loop, 140/140 marked, STOP immediate |
-| `0x05` TRACK | `sub u8, tid u32 LE`, then per sub: `0x00` BEGIN (`count u16, crc32 u32`) · `0x01` CHUNK (`offRec u16, n u8, n×10 B records`) · `0x02` COMMIT · `0x03` ABORT — **the client-chosen transfer id `tid` (≠ 0) travels in EVERY sub-op** (R4 f7): a CHUNK/COMMIT/ABORT carrying a different tid can never mutate the active staging | uploads the replay slot (≤**800** records; record: `lat i32, lon i32, speed u8 km/h, dt u8` 0.1 s from previous point). **Phone/USB-direct ONLY — mesh-relayed TRACK ops are rejected with a NAK** (destructive op, R3 f7). **Storage is A/B generation slots** (R4 f2): the upload stages into the INACTIVE slot (`simtrk.a`/`simtrk.b`, header gen 0 = unplayable); COMMIT verifies the staged content in place and promotes it by stamping generation = active+1 — the previous committed track is NEVER opened for writing, so power loss, torn writes or CRC failures at any point leave it playable (highest valid generation wins; no marker/selector file exists to tear). Both slots at cap total 16,032 B of the 28 KiB FS (R4 f6). **COMMIT idempotence is keyed on (tid, crc)** (R4 f1): a retry succeeds only if THIS transfer's data is the active slot — after a failed commit the retry keeps NAKing; an older surviving track can never credit it. BEGIN during TRACK playback is NAKed (playback pins its slot file — no splice, R4 f2). **Reply: `[0x85, status, sub, offLo, offHi, tid u32 LE]` (9 B)** — echoes the REQUEST's tid; the client must match sender node + tid + sub + offset exactly and consume ACKs from a sequenced per-link queue (latest-only polling could drop one, R4 f7). Duplicate handling is exact: only a re-send of the previous chunk (same offset AND length) ACKs without rewriting. The tag interpolates between records at its configured fix cadence; playback needs no link. Bench (tools/bench/verify_fixes.py, hard-asserted, exit 0 only if all pass — 22/22 PASS 2026-07-26 on hardware): consumed-once correlation per frame incl. duplicate chunk, wrong-tid COMMIT NAK, failed-commit retry keeps NAKing, stray BEGIN/ABORT survival, BEGIN-while-playing NAK, and reboot durability with PROOF (device uptime restart + geographically distinct staged data — the committed course, not the staged one, plays after reboot). iOS: tid-verified upload bound to one tag + one connection generation, cancelled on screen/target change |
+| `0x05` TRACK | `sub u8, tid u32 LE`, then per sub: `0x00` BEGIN (`count u16, crc32 u32`) · `0x01` CHUNK (`offRec u16, n u8, n×10 B records`) · `0x02` COMMIT · `0x03` ABORT — **the client-chosen transfer id `tid` (≠ 0) travels in EVERY sub-op**: a foreign CHUNK/COMMIT/ABORT is rejected before staging access | uploads the replay slot (≤**800** records; record: `lat i32, lon i32, speed u8 km/h, dt u8` 0.1 s from previous point). **Phone/USB-direct ONLY**; mesh-relays get a NAK. Storage is A/B slots: v3 staging has an immutable 16-byte header and no footer; COMMIT verifies the records then **appends** a 16-byte generation/tid/proof footer. Exact shape, footer proof and record CRC select the newest committed slot; the prior slot is never opened for writing. Legacy v2 generation-header slots remain readable. Two max committed slots are 16,064 logical bytes; the exact 224×128 bundled-LittleFS host gate proves promotion with an 8,192-byte prefs filler at 209/224 live blocks (the old offset-zero promotion reproduces `LFS_ERR_NOSPC`). COMMIT retry succeeds from the active slot's on-disk tid even after reboot; BEGIN rejects reuse of that active tid, so a failed replacement cannot borrow an older success. BEGIN during playback is NAKed. **Reply: `[0x85, status, sub, offLo, offHi, tid u32 LE]` (9 B)**; clients match sender + tid + sub + offset against a per-link sequence. A duplicate ACKs only when the previous chunk's offset, length **and stored bytes** match. The extended post-v4.3 HIL gate passed **28/28** on physical hardware on 2026-07-26, covering acknowledged SIM startup, wrong-tid CHUNK/COMMIT, changed-byte duplicates, failed commit, active-tid BEGIN refusal, A/B survival, and post-reboot COMMIT retry. iOS binds uploads to one tag/link generation and generation-fences every post-await mutation. |
+
+The capacity gate models the exact logical 224×128 LittleFS geometry, but the T1000-E flash
+adapter erases/programs 4 KiB physical pages. It proves allocation headroom and filesystem-level
+footer rejection, not preservation during electrical power loss inside a page operation. An
+orderly reboot is covered by HIL; physical power-cut/fault injection remains outstanding.
 
 Reply (ops 0x00–0x04): `[0x80|op, status, settings]` — status 0 ok / 1 rejected / 2 malformed.
 v3 firmware always replies with 13-byte settings; **the reply length is the capability signal**
@@ -47,10 +57,11 @@ frame *reached* the target (possibly relayed over LoRa) — a client claiming a 
 verify the peripheral's own `my_info.my_node_num == target` before trusting/persisting it;
 MeshTracker's config client does exactly that, refuses mismatched peripherals, and **deletes
 the persisted peripheral↔node mapping on mismatch** so a stale mapping can never trap
-reconnection (R4 f4). **Reply binding rule (R4 f3)**: settings replies are adopted only when
-`MeshPacket.from` matches the intended tag — the client parser keeps the sender, and cached
-replies are cleared on every reconnect, so tag A's settings can never be shown, edited or
-applied as tag B's.
+reconnection (R4 f4); a remembered UUID that fails or times out before identity proof is also
+forgotten and discovery resumes. **Reply binding rule (R4 f3)**: settings replies are adopted
+only when `MeshPacket.from` exactly matches the intended tag and the reply follows the current
+GET/SET sequence floor on the same link generation. Cached or prior-link replies therefore
+cannot be shown, edited or applied as the current tag's settings.
 
 **iOS (MeshTracker Tag Setup)**: TX-mode card — Calibration/Adaptive buttons with the live mode
 read back from the stream-flags echo, calibration TTL (120 s) auto-refreshed every 45 s while

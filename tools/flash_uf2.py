@@ -27,8 +27,11 @@ Safety gates (all fail closed — R3 f4 + R4 f5):
 """
 import glob
 import os
+import plistlib
+import re
 import shutil
 import struct
+import subprocess
 import sys
 import time
 
@@ -37,37 +40,103 @@ UF2_MAGIC1 = 0x9E5D5157
 UF2_MAGIC_END = 0x0AB16F30
 UF2_FLAG_FAMILY_ID = 0x00002000
 NRF52840_FAMILY = 0xADA52840
+# tracker-t1000-e uses src/platform/nrf52/nrf52840_s140_v7.ld:
+#   FLASH ORIGIN = 0x27000, LENGTH = 0xED000 - 0x27000
+# Keep SoftDevice below and bootloader/settings above completely outside application UF2s.
+T1000_APP_FLASH_START = 0x00027000
+T1000_APP_FLASH_END = 0x000ED000  # exclusive
+UF2_BLOCK_SIZE = 512
+UF2_DATA_OFFSET = 32
+UF2_MAX_PAYLOAD = 476  # bytes before the trailing magic at offset 508
 T1000_MARKERS = ("t1000",)
 
 
 def validate_uf2(path):
-    """Every 512-byte block must carry the UF2 magics and (when flagged) the nRF52840 family
-    id — a wrong-family or truncated image is refused before any volume is touched."""
+    """Validate a plain nRF52840 application UF2 for the T1000-E flash layout.
+
+    This intentionally accepts less than the general UF2 specification: every physical block
+    must be a main-flash, family-tagged block; numbering must describe this exact file; and
+    payload ranges must be non-overlapping and wholly inside the T1000-E application partition.
+    """
     size = os.path.getsize(path)
-    if size == 0 or size % 512 != 0:
-        sys.exit(f"ERROR: {path} is not a UF2 image (size {size} not a multiple of 512).")
-    family_seen = False
+    if size == 0 or size % UF2_BLOCK_SIZE != 0:
+        sys.exit(
+            f"ERROR: {path} is not a UF2 image "
+            f"(size {size} not a multiple of {UF2_BLOCK_SIZE})."
+        )
+    physical_blocks = size // UF2_BLOCK_SIZE
+    seen_numbers = set()
+    payload_ranges = []
     with open(path, "rb") as f:
         idx = 0
         while True:
-            block = f.read(512)
+            block = f.read(UF2_BLOCK_SIZE)
             if not block:
                 break
             m0, m1 = struct.unpack_from("<II", block, 0)
             mend = struct.unpack_from("<I", block, 508)[0]
             if m0 != UF2_MAGIC0 or m1 != UF2_MAGIC1 or mend != UF2_MAGIC_END:
                 sys.exit(f"ERROR: {path} block {idx} has invalid UF2 magics — refusing.")
-            flags = struct.unpack_from("<I", block, 8)[0]
-            family = struct.unpack_from("<I", block, 28)[0]
-            if flags & UF2_FLAG_FAMILY_ID:
-                family_seen = True
-                if family != NRF52840_FAMILY:
-                    sys.exit(f"ERROR: {path} block {idx} family 0x{family:08X} != nRF52840 "
-                             f"(0x{NRF52840_FAMILY:08X}) — wrong-target image, refusing.")
+            flags, target, payload_size, block_no, total, family = struct.unpack_from(
+                "<IIIIII", block, 8
+            )
+            if flags != UF2_FLAG_FAMILY_ID:
+                sys.exit(
+                    f"ERROR: {path} block {idx} flags 0x{flags:08X} are unsupported — "
+                    "every block must be a plain main-flash block with only the family-ID flag."
+                )
+            if family != NRF52840_FAMILY:
+                sys.exit(
+                    f"ERROR: {path} block {idx} family 0x{family:08X} != nRF52840 "
+                    f"(0x{NRF52840_FAMILY:08X}) — wrong-target image, refusing."
+                )
+            if payload_size == 0 or payload_size > UF2_MAX_PAYLOAD:
+                sys.exit(
+                    f"ERROR: {path} block {idx} payload size {payload_size} is outside "
+                    f"1..{UF2_MAX_PAYLOAD} bytes."
+                )
+            if total == 0 or total != physical_blocks:
+                sys.exit(
+                    f"ERROR: {path} block {idx} declares {total} blocks, but the file contains "
+                    f"{physical_blocks} — incomplete/inconsistent UF2."
+                )
+            if block_no >= total:
+                sys.exit(
+                    f"ERROR: {path} block {idx} has block number {block_no}, outside 0..{total - 1}."
+                )
+            if block_no in seen_numbers:
+                sys.exit(f"ERROR: {path} repeats UF2 block number {block_no} — refusing.")
+            seen_numbers.add(block_no)
+
+            if target > 0xFFFFFFFF - payload_size:
+                sys.exit(
+                    f"ERROR: {path} block {idx} target 0x{target:08X} + {payload_size} "
+                    "overflows the 32-bit address space."
+                )
+            end = target + payload_size
+            if target < T1000_APP_FLASH_START or end > T1000_APP_FLASH_END:
+                sys.exit(
+                    f"ERROR: {path} block {idx} range 0x{target:08X}..0x{end:08X} is outside "
+                    f"the T1000-E application partition 0x{T1000_APP_FLASH_START:08X}.."
+                    f"0x{T1000_APP_FLASH_END:08X}."
+                )
+            payload_ranges.append((target, end, block_no))
             idx += 1
-    if not family_seen:
-        sys.exit(f"ERROR: {path} carries no familyID blocks — cannot prove nRF52840 target, refusing.")
-    print(f"   uf2 image OK: {idx} blocks, family nRF52840")
+
+    if seen_numbers != set(range(physical_blocks)):
+        missing = sorted(set(range(physical_blocks)) - seen_numbers)
+        sys.exit(f"ERROR: {path} is missing UF2 block number(s) {missing[:8]} — refusing.")
+    payload_ranges.sort()
+    for previous, current in zip(payload_ranges, payload_ranges[1:]):
+        if current[0] < previous[1]:
+            sys.exit(
+                f"ERROR: {path} UF2 blocks {previous[2]} and {current[2]} overlap in flash "
+                f"(0x{current[0]:08X} < 0x{previous[1]:08X})."
+            )
+    print(
+        f"   uf2 image OK: {physical_blocks} complete blocks, family nRF52840, "
+        f"targets inside 0x{T1000_APP_FLASH_START:08X}..0x{T1000_APP_FLASH_END:08X}"
+    )
 
 
 def volume_identity(v):
@@ -94,38 +163,91 @@ def t1000_volumes():
     return out
 
 
+USB_DEVICE_CLASSES = {"IOUSBHostDevice", "IOUSBDevice", "AppleUSBDevice"}
+USB_SERIAL_KEYS = ("USB Serial Number", "kUSBSerialNumberString")
+
+
+def _is_usb_device(entry):
+    cls = entry.get("IOObjectClass") or entry.get("IOClass")
+    if not isinstance(cls, str):
+        return False
+    return (
+        cls in USB_DEVICE_CLASSES
+        or cls.endswith("USBDevice")
+        or cls.endswith("USBHostDevice")
+    )
+
+
+def _usb_device_serial(entry):
+    for key in USB_SERIAL_KEYS:
+        value = entry.get(key)
+        if isinstance(value, bytes):
+            value = value.decode("ascii", errors="ignore")
+        if isinstance(value, str):
+            value = value.strip()
+            if re.fullmatch(r"[0-9A-Fa-f]{8,}", value):
+                return value.upper()
+    return None
+
+
+def _owner_serial_from_ioreg(tree, bsd_name):
+    """Return the serial on the nearest USB-device ancestor of one BSD media node.
+
+    `tree` is plistlib's structured result from `ioreg -a`. Only the recursion path that
+    contains the exact BSD node is inspected. Once the nearest USB device is reached, a
+    missing serial fails closed instead of borrowing a parent hub's or sibling's serial.
+    """
+    roots = tree if isinstance(tree, list) else [tree]
+
+    def walk(entry, ancestors):
+        if not isinstance(entry, dict):
+            return False, None
+        path = ancestors + (entry,)
+        if entry.get("BSD Name") == bsd_name:
+            for ancestor in reversed(path):
+                if _is_usb_device(ancestor):
+                    return True, _usb_device_serial(ancestor)
+            return True, None
+        children = entry.get("IORegistryEntryChildren") or []
+        if isinstance(children, list):
+            for child in children:
+                found, serial = walk(child, path)
+                if found:
+                    return found, serial
+        return False, None
+
+    for root in roots:
+        found, serial = walk(root, ())
+        if found:
+            return serial
+    return None
+
+
 def volume_owner_serial(volume):
-    """The USB hardware serial that OWNS a mounted volume, resolved through the IORegistry
-    (diskutil -> BSD name -> nearest ancestor USB serial). This is the only trustworthy
-    per-device correlation on macOS: product strings go stale across re-enumeration, and the
-    fleet carries two bootloader generations with different naming (older 'T1000-E-BOOT' /
-    VID 0x239A vs Seeed 0.9.1 'T1000-E' / VID 0x2886 — measured 2026-07-26). Returns the
-    serial, or None when it cannot be resolved."""
-    import re
-    import subprocess
+    """Resolve a mounted volume to its owning USB hardware serial through plist trees.
+
+    `diskutil info -plist` supplies the exact BSD node (including a partition suffix), then
+    `ioreg -a` supplies the parent/child tree. No text-order or "nearest preceding line"
+    heuristic is used.
+    """
     try:
-        info = subprocess.run(["diskutil", "info", volume], capture_output=True, text=True, timeout=15)
-        m = re.search(r"Device Identifier:\s+(disk\d+)", info.stdout)
-        if not m:
+        info = subprocess.run(
+            ["diskutil", "info", "-plist", volume], capture_output=True, timeout=15
+        )
+        if info.returncode != 0 or not info.stdout:
             return None
-        bsd = m.group(1)
-        reg = subprocess.run(["ioreg", "-l", "-w0"], capture_output=True, text=True, timeout=20)
-        lines = reg.stdout.splitlines()
-        target = None
-        for idx, line in enumerate(lines):
-            if f'"BSD Name" = "{bsd}"' in line:
-                target = idx
-                break
-        if target is None:
+        info_plist = plistlib.loads(info.stdout)
+        bsd = info_plist.get("DeviceIdentifier")
+        if not isinstance(bsd, str) or not re.fullmatch(r"disk\d+(?:s\d+)*", bsd):
             return None
-        # ioreg prints ancestors before descendants: the nearest PRECEDING USB serial is the
-        # device this media hangs off.
-        pat = re.compile(r'(?:kUSBSerialNumberString"="|"USB Serial Number" = ")([0-9A-Fa-f]{8,})"')
-        for line in reversed(lines[:target]):
-            mm = pat.search(line)
-            if mm:
-                return mm.group(1).upper()
-        return None
+        reg = subprocess.run(
+            ["ioreg", "-a", "-l", "-w", "0", "-p", "IOService"],
+            capture_output=True,
+            timeout=20,
+        )
+        if reg.returncode != 0 or not reg.stdout:
+            return None
+        return _owner_serial_from_ioreg(plistlib.loads(reg.stdout), bsd)
     except Exception:
         return None
 
@@ -155,6 +277,8 @@ def main():
                 sys.exit(f"ERROR: '{who}' is neither a role in nodes.py nor a 16-hex serial. "
                          "Pass '-' explicitly to flash without an identity pin.")
         print(f"   pinned hardware serial: {expect_serial}")
+    else:
+        print("   WARNING: no hardware-serial pin ('-' selected); single-board recovery only")
 
     vols = t1000_volumes()
     if not vols:

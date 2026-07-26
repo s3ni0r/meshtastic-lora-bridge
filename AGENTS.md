@@ -42,6 +42,12 @@ Tag B: GPS tag (onboard AG3335, 4 Hz target → LoRa) ─┘
   the patch to vendor files. `firmware/sync-fork.sh` exports clone → repo after editing;
   `firmware/apply-fork.sh` reconstructs a fresh clone from vendor tag + patch + drop-ins.
   **Edit in the clone, then run `sync-fork.sh`. Never let the two drift.**
+- `firmware/platformio-dependencies.lock.json` — the path/content fingerprint for every
+  resolved `.pio/libdeps/tracker-t1000-e` input. Release identity fails closed on an ignored
+  cached-library edit or injection. Ignored Python bytecode is executable input too: release
+  builds must follow the cache-free, `PYTHONDONTWRITEBYTECODE=1` procedure in
+  `.claude/skills/firmware-release/SKILL.md`. Never stamp a release by invoking `pio`
+  directly; the trusted entry point is `python3 -I firmware/release_build.py`.
 - `firmware/releases/vX.Y/` — versioned artifacts (`<flavor>.uf2`, `<flavor>-dfu.zip`,
   `SHA256SUMS`, `RELEASE.md` with pinned source commit). `firmware/known-good/restore.sh`
   reflashes the validated v3.0 fleet state (rollback).
@@ -76,18 +82,24 @@ pio run -e tracker-t1000-e                                                     #
 tools/flash_t1000e.sh gps-tag gpstag            # release artifacts, by role
 VERSION=v4.3 tools/flash_t1000e.sh base-plain base
 
+# Host-only TRACK layout/capacity gate (must pass before the HIL suite):
+python3 tools/bench/verify_track_layout.py
+
 # Hardware regression suite (exit 0 = the ONLY acceptable outcome before shipping firmware):
 /Users/s3ni0r/.local/pipx/venvs/meshtastic/bin/python -u tools/bench/verify_fixes.py
 
 # iOS — build + install on the iPhone (STANDING RULE: every iOS change ends with this,
 # not just a compile check; device id = the connected iPhone 17 Pro):
-cd ios && xcodebuild -project MeshTracker.xcodeproj -scheme MeshTracker -configuration Debug \
-  -destination 'id=3E5C778B-8B00-5E9A-9D74-B00576E90FB4' -derivedDataPath build \
-  -allowProvisioningUpdates build
-xcrun devicectl device install app --device 3E5C778B-8B00-5E9A-9D74-B00576E90FB4 \
-  ios/build/Build/Products/Debug-iphoneos/MeshTracker.app
+(
+  cd ios
+  xcodebuild -project MeshTracker.xcodeproj -scheme MeshTracker -configuration Debug \
+    -destination 'id=3E5C778B-8B00-5E9A-9D74-B00576E90FB4' -derivedDataPath build \
+    -allowProvisioningUpdates build
+  xcrun devicectl device install app --device 3E5C778B-8B00-5E9A-9D74-B00576E90FB4 \
+    build/Build/Products/Debug-iphoneos/MeshTracker.app
+)
 
-# TestFlight release (needs git-ignored .release-env at repo root):
+# Back at the repo root; TestFlight release needs the git-ignored .release-env:
 ios/scripts/release.sh [version] --note "text"
 ```
 

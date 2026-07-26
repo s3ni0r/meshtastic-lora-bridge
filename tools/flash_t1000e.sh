@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Flash a released firmware flavor onto a Seeed T1000-E.
 #
-#   tools/flash_t1000e.sh <flavor> [port|role]      flavor: gps-tag | bridge-tag | base-plain
+#   tools/flash_t1000e.sh <flavor> [port|role|serial]  flavor: gps-tag | bridge-tag | base-plain
 #   tools/flash_t1000e.sh --list                    show available releases/flavors + connected boards
-#   tools/flash_t1000e.sh gps-tag                   auto-detect (works when exactly ONE T1000-E is attached)
+#   tools/flash_t1000e.sh gps-tag                   auto-detect one registry-known T1000-E
 #   tools/flash_t1000e.sh gps-tag gpstag            resolve port by role via tools/nodes.py
 #   tools/flash_t1000e.sh base-plain /dev/cu.usbmodem1111301
 #   VERSION=v1.0 tools/flash_t1000e.sh gps-tag      pin a release (default: latest in firmware/releases)
 #
 # Flash path (proven on this fleet): 1200-baud touch drops the running app into the bootloader's
-# serial-DFU CDC, then adafruit-nrfutil uploads the <flavor>-dfu.zip. If a UF2 volume is already
-# mounted (user double-tapped the button), the .uf2 is copied instead. After flashing, the node
-# keeps (or needs) its Meshtastic config — the script prints the per-flavor cheat-sheet.
+# serial-DFU CDC, then adafruit-nrfutil uploads the <flavor>-dfu.zip. UF2-volume copying is a
+# separate, explicit `<flavor> uf2` mode. After flashing, the node keeps (or needs) its
+# Meshtastic config — the script prints the per-flavor cheat-sheet.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,22 +24,24 @@ usage() {
 Flash a released firmware flavor onto a Seeed T1000-E.
 
 Usage:
-  $(basename "$0") <flavor> [port|role]   flash a board
+  $(basename "$0") <flavor> [port|role|serial]   flash a board
   $(basename "$0") --list                 show releases + connected boards (with roles)
   $(basename "$0") -h | --help            this help
 
 Flavors (from firmware/releases/, currently $VERSION):
-  gps-tag      self-contained tag — onboard AG3335 @ 4 Hz, LoRa TX-only, BLE kept
+  gps-tag      self-contained tag — onboard AG3335 @ 4 Hz, LoRa RX + BLE kept
   bridge-tag   BLE5/LoRa bridge — relays Dronetag Remote ID, no BLE advertising
   base-plain   receiver — forwards the stream to the iOS app over BLE
 
 Target selection (2nd argument):
-  omitted           auto-detect — works when exactly ONE T1000-E is connected
+  omitted           auto-detect — exactly one REGISTRY-KNOWN T1000-E must be connected
   tag|base|gpstag   role, resolved via tools/nodes.py (stable USB serial)
+  16-hex serial     explicit hardware identity (must be on VID 0x239A or 0x2886)
   /dev/cu.usbmodemX explicit serial port
-  uf2               EXPLICIT UF2-volume mode: copy onto an already-mounted T1000/nRF52
+  uf2               EXPLICIT UF2-volume mode: copy onto an already-mounted T1000-E
                     bootloader drive (button double-tap). Volumes are never touched
                     otherwise, and success requires the bootloader to unmount the drive.
+                    This shortcut is unpinned; use tools/flash_uf2.py for role/serial pinning.
 
 Environment:
   VERSION=vX.Y      pin a release (default: latest in firmware/releases/)
@@ -50,8 +52,9 @@ are verified against SHA256SUMS (listed + matching) before any device is touched
 per-flavor Meshtastic config cheat-sheet is printed after. Full docs: firmware/FORK.md §4–§6.
 
 Examples:
-  $(basename "$0") gps-tag                    # one new board plugged in alone
+  $(basename "$0") gps-tag                    # one registry-known board plugged in alone
   $(basename "$0") base-plain base            # reflash the known Base by role
+  $(basename "$0") gps-tag 15B20E7A7AAD8AF0  # select exact hardware serial
   VERSION=v1.0 $(basename "$0") bridge-tag /dev/cu.usbmodem1111201
 EOF
 }
@@ -73,21 +76,30 @@ try:
 except Exception:
     pass
 for p in list_ports.comports():
-    if p.vid == 0x239A:  # Adafruit/Seeed nRF52 bootloader VID (app + bootloader)
+    if p.vid in (0x239A, 0x2886):  # both measured T1000-E bootloader generations
         sn = (p.serial_number or '').upper()
-        role = known.get(sn, {}).get('role', '?')
-        print(f"  {p.device}  serial={sn}  role={role}  ({p.product})")
+        if sn in known:
+            role = known[sn].get('role', '?')
+            status = f"role={role}, eligible for auto-detect"
+        else:
+            status = "UNREGISTERED — explicit port or 16-hex serial required"
+        print(f"  {p.device}  vid=0x{p.vid:04X}  serial={sn or '?'}  {status}  ({p.product})")
 EOF
 }
 
 case "${1:-}" in -h|--help|"") usage; exit 0;; esac
+
+[ "$#" -le 2 ] || {
+    echo "ERROR: expected <flavor> and at most one target; got $# arguments." >&2
+    exit 2
+}
 
 if [ "${1:-}" = "--list" ]; then
     echo "Releases in $RELEASES:"
     for v in $(ls "$RELEASES" | sort -V); do
         echo "  $v: $(ls "$RELEASES/$v" | grep -c '\.uf2$') flavors — $(ls "$RELEASES/$v"/*.uf2 2>/dev/null | xargs -n1 basename | tr '\n' ' ')"
     done
-    echo "Connected T1000-E boards:"
+    echo "Connected 0x239A/0x2886 USB candidates:"
     list_boards
     exit 0
 fi
@@ -114,57 +126,66 @@ echo "   checksums OK ($FLAVOR.uf2 + $FLAVOR-dfu.zip verified against the manife
 
 # EXPLICIT UF2-volume mode only: `flash_t1000e.sh <flavor> uf2`. This is the ONLY path that
 # touches mounted bootloader volumes — the old automatic scan could hit a device unrelated to
-# the selected serial target (review R2 finding 3).
+# the selected serial target (review R2 finding 3). Delegate to the one strict implementation:
+# it validates every UF2 block and target range, rejects non-T1000/ambiguous volumes, copies,
+# then requires the selected volume to unmount. `-` deliberately means no serial pin; for a
+# pinned recovery use `tools/flash_uf2.py <role|serial> <image>` directly.
 if [ "${2:-}" = "uf2" ]; then
-    # Fail closed on ambiguity (review R3 finding 4): EXACTLY ONE matching bootloader volume,
-    # or we refuse — never "the first match".
-    # Identity is T1000-only (R4 finding 5): a generic nRF52 bootloader from some unrelated
-    # board must never be accepted as a flash target.
-    CANDIDATES=""
-    NCAND=0
-    for v in /Volumes/*; do
-        [ -f "$v/INFO_UF2.TXT" ] || continue
-        if grep -qi "t1000" "$v/INFO_UF2.TXT" || basename "$v" | grep -qi "t1000"; then
-            CANDIDATES="$CANDIDATES $v"
-            NCAND=$((NCAND + 1))
-        else
-            echo "   note: UF2 volume $v does not identify as a T1000-E — leaving it alone" >&2
-        fi
-    done
-    if [ "$NCAND" -eq 0 ]; then
-        echo "ERROR: no T1000-E UF2 volume mounted (double-tap the button first)." >&2
-        exit 1
-    fi
-    if [ "$NCAND" -gt 1 ]; then
-        echo "ERROR: $NCAND candidate bootloader volumes ($CANDIDATES) — ambiguous target, refusing." >&2
-        echo "       Unplug/eject all but the ONE board you intend to flash, then retry." >&2
-        exit 1
-    fi
-    v="$(echo $CANDIDATES | awk '{print $1}')"
-    echo "== Flashing $FLAVOR ($VERSION) -> UF2 volume $v"
-    sed -n '1,3p' "$v/INFO_UF2.TXT" | sed 's/^/   /'
-    cp "$UF2" "$v/" 2>/dev/null || true # exit code meaningless (device reboots mid-copy)
-    for _ in $(seq 1 30); do
-        if [ ! -d "$v" ]; then
-            echo "DONE (UF2): bootloader accepted the image (volume unmounted); device reboots."
-            exit 0
-        fi
-        sleep 0.5
-    done
-    echo "ERROR: $v never unmounted — flash NOT confirmed. Re-enter the bootloader and retry." >&2
-    exit 1
+    exec "$PY" "$REPO/tools/flash_uf2.py" - "$UF2"
 fi
 
-# Resolve the target port: explicit path, role name via nodes.py, or single-board autodetect.
-TARGET="${2:-}"
-if [ -n "$TARGET" ] && [ ! -e "$TARGET" ]; then
-    RESOLVED="$(cd "$REPO/tools" && "$PY" nodes.py --port "$TARGET" 2>/dev/null || true)"
-    [ -n "$RESOLVED" ] || { echo "ERROR: '$TARGET' is neither a device path nor a connected role (tag|base|gpstag)" >&2; exit 2; }
-    TARGET="$RESOLVED"
-elif [ -z "$TARGET" ]; then
-    MAPPED="$("$PY" - <<'EOF'
+# Resolve the target port: explicit path/serial, registry role, or registry-only autodetect.
+# Unknown devices are NEVER auto-selected: VID 0x239A is shared by unrelated Adafruit boards.
+TARGET_SPEC="${2:-}"
+TARGET="$TARGET_SPEC"
+EXPECTED_SERIAL=""
+AUTO_TARGET=0
+if [ -n "$TARGET_SPEC" ] && [ -e "$TARGET_SPEC" ]; then
+    : # Explicit device path: deliberate operator selection, identity is pinned below.
+elif [[ "$TARGET_SPEC" =~ ^[0-9A-Fa-f]{16}$ ]]; then
+    EXPECTED_SERIAL="$(printf '%s' "$TARGET_SPEC" | tr '[:lower:]' '[:upper:]')"
+    TARGET="$("$PY" - "$EXPECTED_SERIAL" <<'EOF'
 from serial.tools import list_ports
-c = [p.device for p in list_ports.comports() if p.vid == 0x239A]
+import sys
+serial = sys.argv[1]
+matches = [
+    p.device for p in list_ports.comports()
+    if p.vid in (0x239A, 0x2886) and (p.serial_number or "").upper() == serial
+]
+if len(matches) == 1:
+    print(matches[0])
+EOF
+)"
+    [ -n "$TARGET" ] || {
+        echo "ERROR: no unique T1000-E USB port with serial $EXPECTED_SERIAL (VID 0x239A/0x2886)." >&2
+        exit 2
+    }
+elif [ -n "$TARGET_SPEC" ]; then
+    RESOLVED="$(cd "$REPO/tools" && "$PY" nodes.py --port "$TARGET_SPEC" 2>/dev/null || true)"
+    [ -n "$RESOLVED" ] || {
+        echo "ERROR: '$TARGET_SPEC' is neither a device path, 16-hex serial, nor connected role" >&2
+        echo "       (tag|base|gpstag)." >&2
+        exit 2
+    }
+    EXPECTED_SERIAL="$("$PY" - "$REPO" "$TARGET_SPEC" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1] + "/tools")
+import nodes
+print(nodes.BY_ROLE.get(sys.argv[2].lower(), ""))
+EOF
+)"
+    TARGET="$RESOLVED"
+else
+    AUTO_TARGET=1
+    MAPPED="$("$PY" - "$REPO" <<'EOF'
+from serial.tools import list_ports
+import sys
+sys.path.insert(0, sys.argv[1] + "/tools")
+import nodes
+c = [
+    p.device for p in list_ports.comports()
+    if p.vid in (0x239A, 0x2886) and (p.serial_number or "").upper() in nodes.NODES
+]
 print('\n'.join(c))
 EOF
 )"
@@ -172,7 +193,8 @@ EOF
     if [ "$COUNT" -eq 1 ]; then
         TARGET="$MAPPED"
     else
-        echo "ERROR: $COUNT T1000-E boards connected — specify a port or role:" >&2
+        echo "ERROR: $COUNT registry-known T1000-E boards connected — specify a role, port," >&2
+        echo "       or exact 16-hex serial. Unregistered boards are never auto-selected:" >&2
         list_boards >&2
         exit 2
     fi
@@ -183,16 +205,61 @@ echo "== Flashing $FLAVOR ($VERSION) -> $TARGET"
 # Pin the target by HARDWARE SERIAL before the touch: the 1200-baud reset re-enumerates the
 # USB device and the /dev path can change or get swapped with another board (review R2
 # finding 3). After the touch we re-find the SAME silicon, not the same path.
-HWSER="$("$PY" - "$TARGET" <<'EOF'
+IDENTITY="$("$PY" - "$TARGET" <<'EOF'
 from serial.tools import list_ports
 import sys
 for p in list_ports.comports():
     if p.device == sys.argv[1]:
-        print((p.serial_number or '').upper())
+        print(f"{(p.serial_number or '').upper()} {(p.vid or 0):04X}")
         break
 EOF
 )"
-[ -n "$HWSER" ] && echo "   target hardware serial: $HWSER"
+HWSER="${IDENTITY%% *}"
+TARGET_VID="${IDENTITY#* }"
+if ! [[ "$HWSER" =~ ^[0-9A-F]{16}$ ]]; then
+    echo "ERROR: could not read a 16-hex hardware serial for $TARGET — refusing BEFORE" >&2
+    echo "       the hazardous 1200-baud touch." >&2
+    exit 1
+fi
+case "$TARGET_VID" in
+    239A|2886) ;;
+    *)
+        echo "ERROR: $TARGET reports VID 0x$TARGET_VID, not a measured T1000-E VID" >&2
+        echo "       (0x239A/0x2886) — refusing before the 1200-baud touch." >&2
+        exit 1
+        ;;
+esac
+if [ -n "$EXPECTED_SERIAL" ] && [ "$HWSER" != "$EXPECTED_SERIAL" ]; then
+    echo "ERROR: $TARGET now belongs to serial $HWSER, not requested $EXPECTED_SERIAL — refusing." >&2
+    exit 1
+fi
+if [ "$AUTO_TARGET" -eq 1 ] && ! "$PY" - "$REPO" "$HWSER" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1] + "/tools")
+import nodes
+raise SystemExit(0 if sys.argv[2] in nodes.NODES else 1)
+EOF
+then
+    echo "ERROR: auto-selected port is no longer a registry-known board — refusing." >&2
+    exit 1
+fi
+echo "   target hardware identity: serial=$HWSER vid=0x$TARGET_VID"
+
+# Preflight the complete DFU toolchain BEFORE opening the port at 1200 baud. A touch without
+# an immediately usable DFU client can leave this bootloader's CDC permanently mute.
+[ -d "$NRFUTIL_DIR" ] || {
+    echo "ERROR: adafruit-nrfutil package directory missing: $NRFUTIL_DIR" >&2
+    exit 1
+}
+[ -f "$NRFUTIL_DIR/adafruit-nrfutil.py" ] || {
+    echo "ERROR: adafruit-nrfutil.py missing under $NRFUTIL_DIR" >&2
+    exit 1
+}
+if ! (cd "$NRFUTIL_DIR" && PYTHONPATH=site-packages "$PY" adafruit-nrfutil.py version >/dev/null); then
+    echo "ERROR: adafruit-nrfutil or its Python dependencies are unusable — refusing before touch." >&2
+    exit 1
+fi
+echo "   DFU toolchain preflight OK"
 
 # Normal path: 1200-baud touch -> bootloader serial-DFU -> nrfutil upload of the DFU zip.
 echo "   1200-baud touch on $TARGET"
@@ -206,36 +273,28 @@ except Exception as e:
 EOF
 
 # Re-find the SAME hardware after re-enumeration (by serial, not by the stale /dev path).
-if [ -n "$HWSER" ]; then
-    NEWTARGET=""
-    for _ in $(seq 1 24); do
-        NEWTARGET="$("$PY" - "$HWSER" <<'EOF'
+NEWTARGET=""
+for _ in $(seq 1 24); do
+    NEWTARGET="$("$PY" - "$HWSER" <<'EOF'
 from serial.tools import list_ports
 import sys
 for p in list_ports.comports():
-    if (p.serial_number or '').upper() == sys.argv[1]:
+    if p.vid in (0x239A, 0x2886) and (p.serial_number or '').upper() == sys.argv[1]:
         print(p.device)
         break
 EOF
 )"
-        [ -n "$NEWTARGET" ] && break
-        sleep 0.5
-    done
-    if [ -z "$NEWTARGET" ]; then
-        echo "ERROR: device with serial $HWSER did not re-enumerate after the touch." >&2
-        exit 1
-    fi
-    if [ "$NEWTARGET" != "$TARGET" ]; then
-        echo "   re-enumerated: $TARGET -> $NEWTARGET (same silicon $HWSER)"
-    fi
-    TARGET="$NEWTARGET"
-else
-    # Fail closed (review R3 finding 4): without a hardware serial we cannot prove the
-    # post-touch port is the same physical board — refuse rather than guess.
-    echo "ERROR: could not read the hardware serial of $TARGET before the touch — refusing to" >&2
-    echo "       continue against a path that may re-enumerate onto a different board." >&2
+    [ -n "$NEWTARGET" ] && break
+    sleep 0.5
+done
+if [ -z "$NEWTARGET" ]; then
+    echo "ERROR: device with serial $HWSER did not re-enumerate after the touch." >&2
     exit 1
 fi
+if [ "$NEWTARGET" != "$TARGET" ]; then
+    echo "   re-enumerated: $TARGET -> $NEWTARGET (same silicon $HWSER)"
+fi
+TARGET="$NEWTARGET"
 
 echo "   serial DFU upload: $(basename "$DFUZIP")"
 (cd "$NRFUTIL_DIR" && PYTHONPATH=site-packages "$PY" adafruit-nrfutil.py dfu serial \

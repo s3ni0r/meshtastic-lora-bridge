@@ -31,6 +31,7 @@ git -C "$CLONE" submodule update --init --recursive --quiet
 # sync-fork.sh — external review 2026-07-26 caught exactly that: four hardcoded files here had
 # silently missed six newer drop-ins, so fresh reconstruction was broken.
 cp -R src/. "$CLONE/src/"
+cp vendor/bin/readprops.py "$CLONE/bin/readprops.py"
 cp patch_bluefruit_ext.py "$CLONE/"
 git -C "$CLONE" apply ../meshtastic-fork.patch
 

@@ -1,3 +1,26 @@
+diff --git a/bin/platformio-custom.py b/bin/platformio-custom.py
+index 4a1887d..18062a6 100644
+--- a/bin/platformio-custom.py
++++ b/bin/platformio-custom.py
+@@ -9,9 +9,16 @@ import re
+ import time
+ from datetime import datetime
+ 
+-from readprops import readProps
+-
+ Import("env")
++
++# Load the project build hook from source, never from ignored Python bytecode. A valid
++# bin/__pycache__/readprops*.pyc can otherwise execute before release attestation starts.
++_readprops_path = join(env["PROJECT_DIR"], "bin", "readprops.py")
++_readprops_scope = {"__file__": _readprops_path, "__name__": "tracker_readprops"}
++with open(_readprops_path, "rb") as _readprops_file:
++    exec(compile(_readprops_file.read(), _readprops_path, "exec"), _readprops_scope)
++readProps = _readprops_scope["readProps"]
++
+ platform = env.PioPlatform()
+ 
+ 
 diff --git a/src/configuration.h b/src/configuration.h
 index 75cdac5..7961e5c 100644
 --- a/src/configuration.h
