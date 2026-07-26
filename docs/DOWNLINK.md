@@ -126,6 +126,24 @@ Both flavors render signals since A1 (same piezo/LED; ONE signal owner thread).
   flag, sub-floor SETs rejected, measured floor **5590 ms at LONG_FAST** (beyond the
   settable range → every SET rejects, clamp stays flagged), full radio identity restored
   with a post-restore LoRa delivery proof.
+- **Sniffer coexistence A/B (2026-07-26, live Dronetag in its built-in flight simulation,
+  150 ms relay spacing, 120 s windows; `tools/bench/sniff_stats.py` scan-level +
+  `tools/bench/bridge_ab.py` air-level via the Base):**
+
+  | condition | scan cb/s | Location decodes/s | novel fixes/s | relayed/s |
+  |---|---|---|---|---|
+  | adv OFF (v4.3 scan-only) | 6.16 | 5.08 | ~3.75 | 2.81 |
+  | adv ON, idle (dev, 1.0 s slow adv) | 5.31 | 4.35 | ~3.40 | 2.45 |
+  | adv ON + CONNECTED BLE session | 2.96 | 2.44 | ~1.97 | 1.55 |
+
+  Reading: slow connectable advertising costs **~14 %** of scan callbacks (SoftDevice
+  scheduling around connectable adv events — well above the naive ≲0.3 % airtime estimate,
+  and the price of BLE being the deaf-bridge recovery path); a **held BLE connection costs
+  ~40–45 %** — acceptable because connections are transient by design (calibration windows),
+  and at session start the phone disconnects and the bridge goes deaf anyway. Caveat: the
+  legs are sequential and the Dronetag's simulated flight varies its fix rate (stops
+  included), so novelty deltas carry source drift; the callback/decode columns are the
+  cleaner comparators. Novel-fix rates are count-based (n/window).
 - Fleet finding (2026-07-26): the bench fleet's actual modem preset is **SHORT_TURBO**
   (500 kHz BW), not the ShortFast that `CAPACITY.md` plans for deployment — and SHORT_TURBO
   is not EU868-legal, so entering EU makes the firmware itself degrade the preset to

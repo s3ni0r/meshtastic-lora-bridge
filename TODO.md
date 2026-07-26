@@ -28,10 +28,12 @@ and the radio state.
       resumeAdvertising too).
 - [x] **DONE** — iOS Tag Setup renders cards from the capability byte (bridge targets show
       signals/radio/profiles only; pre-v4 falls back per flavor).
-- [ ] Bench: `verify_bridge.py` covers the bridge op surface (D1–D6) on USB — but the
-      sniffer-throughput A/B (advertising on/off AND during a CONNECTED BLE session)
-      still needs a live Dronetag feeding ODID adverts; run it before calling the
-      coexistence cost measured. RX-power delta (LISTENING vs DEAF) also unmeasured.
+- [x] Bench: `verify_bridge.py` covers the bridge op surface (D1–D6) on USB, and the
+      sniffer-throughput A/B is MEASURED (2026-07-26, live Dronetag sim): slow adv costs
+      ~14 % of scan callbacks, a held BLE session ~40–45 % — transient by design; numbers +
+      caveats in docs/DOWNLINK.md. Tools: tools/bench/{sniff_stats,bridge_ab}.py.
+      Still unmeasured: RX-power delta (LISTENING vs DEAF, standby µA vs RX mA) — needs a
+      current probe, not a protocol bench.
 
 ### A2. Device-type advertisement (AutoShot-facing discovery contract)
 
