@@ -10,14 +10,25 @@ import sys
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "firmware"))
+import release_identity  # noqa: E402
 from release_identity import (  # noqa: E402
     _dependency_tree_fingerprint,
+    toolchain_lock_snapshot,
     tracker_release_version,
 )
 from release_build import _release_environment, preflight_release  # noqa: E402
+import release_build  # noqa: E402
 
 
 class ReleaseIdentityTests(unittest.TestCase):
+    # The toolchain lock fingerprints the REAL machine's PlatformIO trees; snapshot once for
+    # the whole suite (it also purges derived bytecode, which is idempotent).
+    TOOLCHAIN_SNAPSHOT = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.TOOLCHAIN_SNAPSHOT = json.dumps(toolchain_lock_snapshot()) + "\n"
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.repo = Path(self.temp.name)
@@ -89,15 +100,28 @@ class ReleaseIdentityTests(unittest.TestCase):
         )
         (firmware / "meshtastic-fork.patch").write_bytes(patch)
 
+        # The fixture vendor repo has its own history: point the pinned base OID at ITS tag
+        # target — both in the imported module (direct calls) and in the copies committed to
+        # the fixture repo (preflight executes those via `git show`).
+        self.vendor_oid = subprocess.check_output(
+            ["git", "-C", str(self.build), "rev-parse", "v2.7.15.567b8ea^{commit}"],
+            text=True,
+        ).strip().lower()
+        self._real_base_oid = release_identity.FIRMWARE_BASE_COMMIT
+        release_identity.FIRMWARE_BASE_COMMIT = self.vendor_oid
+
         (firmware / "src/demo.cpp").write_text("tracked overlay\n")
         (firmware / "vendor/bin/readprops.py").write_text("# tracked readprops\n")
         (firmware / "patch_bluefruit_ext.py").write_text("# tracked hook\n")
         (firmware / "release_identity.py").write_bytes(
-            (REPO / "firmware/release_identity.py").read_bytes()
+            (REPO / "firmware/release_identity.py")
+            .read_bytes()
+            .replace(self._real_base_oid.encode(), self.vendor_oid.encode())
         )
         (firmware / "release_build.py").write_bytes(
             (REPO / "firmware/release_build.py").read_bytes()
         )
+        (firmware / "platformio-toolchain.lock.json").write_text(self.TOOLCHAIN_SNAPSHOT)
         (self.build / "src/demo.cpp").write_text("tracked overlay\n")
         (self.build / "bin/readprops.py").write_text("# tracked readprops\n")
         (self.build / "patch_bluefruit_ext.py").write_text("# tracked hook\n")
@@ -136,6 +160,7 @@ class ReleaseIdentityTests(unittest.TestCase):
         ).strip()
 
     def tearDown(self):
+        release_identity.FIRMWARE_BASE_COMMIT = self._real_base_oid
         self.temp.cleanup()
 
     def test_development_build_has_no_override(self):
@@ -245,7 +270,8 @@ class ReleaseIdentityTests(unittest.TestCase):
             "GIT_DIR": "/tmp/forged-repository",
         }
         gps = _release_environment("v4.4", self.sha, "gps-tag", poisoned)
-        self.assertEqual(gps["PATH"], "/usr/bin")
+        # The caller's PATH is never inherited — release children get the fixed system PATH.
+        self.assertEqual(gps["PATH"], release_build.RELEASE_PATH)
         self.assertEqual(gps["PLATFORMIO_BUILD_FLAGS"], "-DGPS_TAG")
         self.assertFalse(
             any(
@@ -314,6 +340,50 @@ class ReleaseIdentityTests(unittest.TestCase):
         (self.build / "src/demo.cpp").write_text("tracked overlay\n")
         (self.build / "src/vendor.cpp").write_text("different vendor fork\n")
         with self.assertRaisesRegex(RuntimeError, "do not match"):
+            tracker_release_version(
+                self.repo,
+                {"TRACKER_RELEASE": "v4.4", "TRACKER_SOURCE_SHA": self.sha},
+            )
+
+    def test_moved_base_tag_is_rejected(self):
+        # A movable tag may not redefine the vendor base: re-point the fixture tag at a new
+        # commit while the pinned OID stays where it was.
+        (self.build / "src/vendor.cpp").write_text("tracked vendor fork\n")
+        subprocess.run(
+            ["git", "-C", str(self.build), "commit", "-aqm", "moved base"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(self.build), "tag", "-f", "v2.7.15.567b8ea"], check=True
+        )
+        with self.assertRaisesRegex(RuntimeError, "movable tag may not redefine"):
+            tracker_release_version(
+                self.repo,
+                {"TRACKER_RELEASE": "v4.4", "TRACKER_SOURCE_SHA": self.sha},
+            )
+
+    def _commit_fixture_change(self, message):
+        subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", message], check=True)
+        self.sha = subprocess.check_output(
+            ["git", "-C", str(self.repo), "rev-parse", "HEAD"], text=True
+        ).strip()
+
+    def test_missing_or_drifted_toolchain_lock_is_rejected(self):
+        # Mutations are COMMITTED so the clean-tree gate passes and the toolchain gate is
+        # what actually fires.
+        lock_path = self.repo / "firmware/platformio-toolchain.lock.json"
+        lock_path.unlink()
+        self._commit_fixture_change("drop toolchain lock")
+        with self.assertRaisesRegex(RuntimeError, "toolchain lock is missing or malformed"):
+            tracker_release_version(
+                self.repo,
+                {"TRACKER_RELEASE": "v4.4", "TRACKER_SOURCE_SHA": self.sha},
+            )
+        drifted = json.loads(self.TOOLCHAIN_SNAPSHOT)
+        drifted["trees"]["toolchain-gccarmnoneeabi"]["sha256"] = "0" * 64
+        lock_path.write_text(json.dumps(drifted) + "\n")
+        self._commit_fixture_change("drifted toolchain lock")
+        with self.assertRaisesRegex(RuntimeError, "differs from tracked toolchain lock"):
             tracker_release_version(
                 self.repo,
                 {"TRACKER_RELEASE": "v4.4", "TRACKER_SOURCE_SHA": self.sha},

@@ -1,0 +1,30 @@
+{
+  "algorithm": "sha256-path-content-symlink-v1",
+  "trees": {
+    "framework-arduinoadafruitnrf52": {
+      "file_count": 1157,
+      "root": "~/.platformio/packages/framework-arduinoadafruitnrf52",
+      "sha256": "0afad07cc20bafe6362085c6ce112b14b705d4886eef9225f11886f572ce41ca"
+    },
+    "platform-nordicnrf52": {
+      "file_count": 191,
+      "root": "~/.platformio/platforms/nordicnrf52",
+      "sha256": "6ad1d836c2d2f15d8ee51943beeec634992b5b221064156076da7a170327d749"
+    },
+    "platformio-core-venv": {
+      "file_count": 1501,
+      "root": "~/.local/pipx/venvs/platformio",
+      "sha256": "140460dd79a48591c385ac51d1a0db51bfea2a053badc63743d69acf8b9c20a1"
+    },
+    "tool-adafruit-nrfutil": {
+      "file_count": 162,
+      "root": "~/.platformio/packages/tool-adafruit-nrfutil",
+      "sha256": "081c246efba0a2c70a1b111ce1ea7d2232048b2a12dd68e6797f1d3dafbb6c86"
+    },
+    "toolchain-gccarmnoneeabi": {
+      "file_count": 3089,
+      "root": "~/.platformio/packages/toolchain-gccarmnoneeabi",
+      "sha256": "fee1cfd1a6e8c0addb31b9c804d91d5edc7fb66a39e478942d2374a446427566"
+    }
+  }
+}

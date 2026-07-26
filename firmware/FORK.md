@@ -55,9 +55,11 @@ clone). The clone also keeps a local `t1000e-fork` branch as an on-disk safety n
 pushed anywhere — never treat it as the canonical copy.
 
 **Bumping the vendor base:** check out the new tag in the clone, re-apply the patch (fix
-conflicts), rebuild all three flavors, then `sync-fork.sh` and update `TAG` in `apply-fork.sh`.
-Mind the M5 lesson: build on the lineage the devices' SoftDevice matches (2.8.0 hung this
-hardware).
+conflicts), rebuild all three flavors, then `sync-fork.sh` and update BOTH pins — `TAG` +
+`BASE_OID` in `apply-fork.sh` and `FIRMWARE_BASE_TAG` + `FIRMWARE_BASE_COMMIT` in
+`release_identity.py` (the full commit OID is authoritative; tags are movable refs and are
+only cross-checked). Mind the M5 lesson: build on the lineage the devices' SoftDevice
+matches (2.8.0 hung this hardware).
 
 ## 2. Register it — `src/modules/Modules.cpp`
 

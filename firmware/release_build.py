@@ -36,6 +36,25 @@ FLAVOR_FLAGS = {
     "base-plain": None,
 }
 
+# Fixed trusted executables — release runs never resolve these through the caller's PATH
+# (a PATH-selected `git` or `pio` is unattested executable input). /usr/bin/git is the
+# Apple-managed CLT shim; the pio launcher lives inside the platformio-core venv whose whole
+# content is bound by firmware/platformio-toolchain.lock.json, so the launcher itself is
+# covered by the attestation that runs before it is ever invoked.
+TRUSTED_GIT = "/usr/bin/git"
+TRUSTED_PIO = str(Path.home() / ".local/pipx/venvs/platformio/bin/pio")
+# Minimal fixed PATH for the child build: system tool directories only, ahead of nothing.
+RELEASE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+
+def _trusted_executable(path, name):
+    path = Path(path)
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise RuntimeError(
+            "trusted {} executable missing or not executable: {}".format(name, path)
+        )
+    return str(path)
+
 
 def _git_environment(environ=None):
     inherited = os.environ if environ is None else environ
@@ -62,8 +81,9 @@ def _clean_outer_head(repo_root, source_sha):
         character not in "0123456789abcdef" for character in requested
     ):
         raise RuntimeError("source SHA must contain 7-40 hexadecimal digits")
+    git = _trusted_executable(TRUSTED_GIT, "git")
     actual = subprocess.check_output(
-        ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+        [git, "-C", str(repo_root), "rev-parse", "HEAD"],
         text=True,
         env=_git_environment(),
     ).strip().lower()
@@ -73,7 +93,7 @@ def _clean_outer_head(repo_root, source_sha):
         )
     status = subprocess.check_output(
         [
-            "git",
+            git,
             "-C",
             str(repo_root),
             "status",
@@ -92,7 +112,7 @@ def _execute_committed_source(repo_root, commit, relative_path, module_name):
     """Execute source read from the attested Git object, never a working-tree cache."""
     source = subprocess.check_output(
         [
-            "git",
+            _trusted_executable(TRUSTED_GIT, "git"),
             "-C",
             str(repo_root),
             "show",
@@ -169,6 +189,10 @@ def _release_environment(release, source_sha, flavor, environ=None):
         for key, value in inherited.items()
         if not key.startswith(("PLATFORMIO_", "PYTHON", "SCONS", "GIT_"))
     }
+    # Fixed PATH: the caller's PATH must not be able to place a different compiler, git, or
+    # helper ahead of the attested toolchain (whose tools PlatformIO invokes by absolute
+    # package path anyway).
+    child_env["PATH"] = RELEASE_PATH
     child_env["PYTHONDONTWRITEBYTECODE"] = "1"
     child_env["TRACKER_RELEASE"] = release
     child_env["TRACKER_SOURCE_SHA"] = source_sha
@@ -186,9 +210,9 @@ def build_release_flavor(repo_root, release, source_sha, flavor):
     build_root = repo_root / "firmware/meshtastic-firmware"
     identity = preflight_release(repo_root, release, source_sha)
 
-    pio = shutil.which("pio")
-    if not pio:
-        raise RuntimeError("PlatformIO executable `pio` is not on PATH")
+    # Fixed trusted launcher — never PATH-resolved. Its bytes are covered by the toolchain
+    # lock (platformio-core-venv tree), which preflight_release just attested.
+    pio = _trusted_executable(TRUSTED_PIO, "pio")
     child_env = _release_environment(release, source_sha, flavor)
 
     command = [pio, "run", "-e", "tracker-t1000-e"]

@@ -22,6 +22,22 @@ description: Edit fork firmware correctly (clone vs tracked artifacts), build th
   `bin/platformio-custom.py` executes `readprops.py` source explicitly, and `readprops.py`
   does the same for the outer release helper. Release builds still remove project bytecode,
   set `PYTHONDONTWRITEBYTECODE=1`, and fail attestation if any ignored `.pyc`/`.pyo` remains.
+- `firmware/platformio-toolchain.lock.json` content-locks the EXTERNAL build inputs: the
+  nordicnrf52 platform, the Arduino framework (in its Bluefruit-patched state), the GCC
+  toolchain, adafruit-nrfutil, and the PlatformIO core venv that supplies `pio`. Attestation
+  purges derived bytecode under those trees, then fingerprints them (symlinks hash as their
+  literal targets). The lock is machine-local by design (absolute `~` roots) — a different
+  machine fails closed until it deliberately regenerates and reviews the lock:
+  `python3 -I firmware/release_identity.py write-toolchain-lock` (after a PlatformIO
+  platform/toolchain update, review the diff before committing).
+  `write-dependencies-lock` regenerates the libdeps lock the same way.
+- The vendor base is pinned by **full commit OID** (`FIRMWARE_BASE_COMMIT` in
+  `release_identity.py`, `BASE_OID` in `apply-fork.sh` — update BOTH when bumping): every
+  attestation diff measures against the immutable object, and a moved
+  `v2.7.15.567b8ea` tag fails closed instead of silently redefining the base.
+- Release runs never resolve executables through PATH: Git is pinned to `/usr/bin/git`
+  (Apple CLT shim), `pio` to the locked pipx venv launcher, and the child build gets a
+  fixed system PATH.
 - **Export** after editing: `firmware/sync-fork.sh` → refreshes the TRACKED
   `firmware/src/` source drop-ins, project-owned `firmware/vendor/` build-hook drop-ins, and
   `firmware/meshtastic-fork.patch`. Commit those.

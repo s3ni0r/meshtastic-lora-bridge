@@ -42,12 +42,15 @@ Tag B: GPS tag (onboard AG3335, 4 Hz target → LoRa) ─┘
   the patch to vendor files. `firmware/sync-fork.sh` exports clone → repo after editing;
   `firmware/apply-fork.sh` reconstructs a fresh clone from vendor tag + patch + drop-ins.
   **Edit in the clone, then run `sync-fork.sh`. Never let the two drift.**
-- `firmware/platformio-dependencies.lock.json` — the path/content fingerprint for every
-  resolved `.pio/libdeps/tracker-t1000-e` input. Release identity fails closed on an ignored
-  cached-library edit or injection. Ignored Python bytecode is executable input too: release
-  builds must follow the cache-free, `PYTHONDONTWRITEBYTECODE=1` procedure in
-  `.claude/skills/firmware-release/SKILL.md`. Never stamp a release by invoking `pio`
-  directly; the trusted entry point is `python3 -I firmware/release_build.py`.
+- `firmware/platformio-dependencies.lock.json` + `firmware/platformio-toolchain.lock.json` —
+  path/content fingerprints for every resolved `.pio/libdeps` input AND the external
+  platform/framework/toolchain/nrfutil/pio-venv trees. Release identity fails closed on an
+  ignored cached edit or injection anywhere in them; the vendor base is pinned by full
+  commit OID (movable tags are only cross-checked); release runs use the pinned
+  `/usr/bin/git` and pipx `pio` with a fixed PATH. Ignored Python bytecode is executable
+  input too: release builds must follow the cache-free, `PYTHONDONTWRITEBYTECODE=1`
+  procedure in `.claude/skills/firmware-release/SKILL.md`. Never stamp a release by
+  invoking `pio` directly; the trusted entry point is `python3 -I firmware/release_build.py`.
 - `firmware/releases/vX.Y/` — versioned artifacts (`<flavor>.uf2`, `<flavor>-dfu.zip`,
   `SHA256SUMS`, `RELEASE.md` with pinned source commit). `firmware/known-good/restore.sh`
   reflashes the validated v3.0 fleet state (rollback).

@@ -10,7 +10,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-TAG=v2.7.15.567b8ea   # build base — matches the patch; see FORK.md before bumping
+TAG=v2.7.15.567b8ea   # human-readable name only — the OID below is the actual build base
+# Full commit OID the fork is based on. Tags are movable refs: a re-pointed upstream (or
+# local) tag must never silently change what "the vendor base" means, so checkout and
+# release attestation both pin the immutable object id (release_identity.py holds the same
+# constant — update BOTH when bumping the base; see FORK.md).
+BASE_OID=567b8ea1c2b2d100c24b0d6cbc437ec89fae0a56
 CLONE=meshtastic-firmware
 
 if [ -d "$CLONE" ]; then
@@ -23,7 +28,13 @@ else
 fi
 
 git -C "$CLONE" fetch --tags --quiet
-git -C "$CLONE" checkout --quiet "$TAG"
+git -C "$CLONE" checkout --quiet "$BASE_OID"
+# Belt and braces: the named tag must still describe this OID — a mismatch means upstream
+# (or someone local) moved the tag, and docs/patch context would silently lie about the base.
+if [ "$(git -C "$CLONE" rev-parse "$TAG^{commit}" 2>/dev/null)" != "$BASE_OID" ]; then
+    echo "ERROR: tag $TAG no longer points at pinned base $BASE_OID — refusing." >&2
+    exit 1
+fi
 git -C "$CLONE" submodule update --init --recursive --quiet
 
 # Project-owned drop-ins: mirror the ENTIRE tracked src/ tree into the clone. Copying the whole
