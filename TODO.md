@@ -124,9 +124,13 @@ The endgame for fleet operations: no USB, no double-tap — update a tag from th
       reads); `.claude/skills/<name>` are symlinks into it — one source of truth, zero
       duplication (harness skill loading verified through the links).
 - [x] AGENTS.md and every living doc reference the standard paths.
-- **Standing rule in force**: anything written for agents (procedures, onboarding,
-  contracts) lands in the shared standard layout (`AGENTS.md` + `.agents/`); tool-specific
-  directories only ever contain links or shims into it.
+- [x] `CLAUDE.md` is a SYMLINK to `AGENTS.md` (no vendor-specific content anywhere), and
+      the whole rule is ENFORCED by `tools/tests/test_agent_files_layout.py`: vendor entry
+      files must be symlinks, `.claude/skills` entries must resolve inside
+      `.agents/skills`, frontmatter must match directory names, ad-hoc locations fail.
+- **Standing rule in force (now a failing test, not prose)**: anything written for agents
+  lands in the shared standard layout (`AGENTS.md` + `.agents/`); tool-specific
+  files/directories only ever contain links into it.
 
 ### C2. Repo noise cleanup — DONE 2026-07-26
 

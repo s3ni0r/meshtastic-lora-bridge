@@ -1,11 +1,18 @@
 # AGENTS.md — meshtastic-tracker
 
-Guidance for ANY coding agent working in this repository (Claude Code reads it via
-`CLAUDE.md`, which imports this file). It encodes the architecture you'd otherwise need to
-read many files to learn, the exact commands that work on this machine, and the operational
-hazards that have already burned real time on real hardware. Repeatable procedures live in
-`.agents/skills/*/SKILL.md` — the agent-neutral home (standing rule: anything written for agents lands
-vendor-neutral; `.claude/skills/` contains only Claude Code shims pointing there).
+Guidance for ANY coding agent working in this repository. It encodes the architecture you'd
+otherwise need to read many files to learn, the exact commands that work on this machine,
+and the operational hazards that have already burned real time on real hardware. Repeatable
+procedures live in `.agents/skills/*/SKILL.md`.
+
+**Agent-files genericity rule (ENFORCED by `tools/tests/test_agent_files_layout.py`):**
+everything written for agents lives in the shared standard layout — this file at the repo
+root plus `.agents/skills/<name>/SKILL.md` (standard frontmatter). Tool-specific entry
+points are SYMLINKS into it, never copies and never their own content: `CLAUDE.md →
+AGENTS.md`, `.claude/skills/<name> → .agents/skills/<name>`, and any future vendor file
+(`.cursorrules`, `.github/copilot-instructions.md`, `GEMINI.md`, …) follows the same
+pattern. The layout test fails closed on ad-hoc locations, duplicated content, or a skill
+whose frontmatter drifts from its directory name — run it with the other host gates.
 
 ## What this project is
 
