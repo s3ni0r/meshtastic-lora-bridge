@@ -723,23 +723,61 @@ struct TagSetupView: View {
 
     private enum DeliverOutcome { case confirmed, refused, timedOut }
 
+    /// The transport for SIGNAL/RADIO commands. Close-range rule (RADIO_STATES): a DIRECT BLE
+    /// path is preferred whenever one exists — phone-injected frames are delivered locally and
+    /// work in ANY radio state. The Base-relayed LoRa path only ever reaches a LISTENING tag,
+    /// so routing a "restore listening" through it at a deaf tag is guaranteed failure.
+    private struct CommandLink {
+        let via: String
+        let send: (Data) -> Void
+        let ackQueue: () -> [SmallAck]
+        let generationOK: () -> Bool
+    }
+
+    private func commandLink() -> CommandLink? {
+        guard let t = target else { return nil }
+        if ble.directTag, ble.connectedNodeNum == t {
+            let gen = ble.linkGeneration
+            return CommandLink(via: "direct Bluetooth",
+                               send: { ble.sendGnssCommand(to: t, payload: $0) },
+                               ackQueue: { ble.smallAcks },
+                               generationOK: { ble.linkGeneration == gen && ble.connectedNodeNum == t })
+        }
+        if mgr.stage == .ready || mgr.stage == .applying, mgr.linkNodeNum == t {
+            let gen = mgr.linkGeneration
+            return CommandLink(via: "the tag's Bluetooth link",
+                               send: { mgr.sendRaw($0) },
+                               ackQueue: { mgr.smallAcks },
+                               generationOK: { mgr.linkGeneration == gen && mgr.linkNodeNum == t })
+        }
+        guard ble.connectedNodeNum != 0 else { return nil }
+        let gen = ble.linkGeneration
+        return CommandLink(via: "the Base over LoRa",
+                           send: { ble.sendGnssCommand(to: t, payload: $0) },
+                           ackQueue: { ble.smallAcks },
+                           generationOK: { ble.linkGeneration == gen })
+    }
+
     /// At-least-once delivery: retransmit the SAME frame (same u32 cid) until a correlated ACK
     /// {ackOp, echo, cid} arrives from the target node — the tag dedupes on the cid, so
     /// re-sends never replay. A NAK stops the retries immediately (the tag actively refused).
+    /// Budget: 8 sends, 0.6 s apart (~5 s) — the Base-relay round-trip alone is ~1 s, so a
+    /// tighter window produced false "not confirmed" alarms for signals that DID play.
     /// `streamConfirm` is GO-DEAF's second layer: even if every ACK is lost, a fresh stream
     /// packet whose v5 status matches the commanded state proves the transition.
-    private func deliverAcked(frame: Data, ackOp: UInt8, echo: UInt8, cid: UInt32, to node: UInt32,
+    private func deliverAcked(link: CommandLink, frame: Data, ackOp: UInt8, echo: UInt8,
+                              cid: UInt32, to node: UInt32,
                               streamConfirm: (() -> Bool)?) async -> DeliverOutcome {
-        let gen = ble.linkGeneration
-        var seen = ble.smallAcks.count // only ACKs appended after our first send may count
-        for _ in 0..<6 {
-            if Task.isCancelled || ble.linkGeneration != gen { return .timedOut }
-            ble.sendGnssCommand(to: node, payload: frame)
-            let deadline = Date().addingTimeInterval(0.35)
+        var seen = link.ackQueue().count // only ACKs appended after our first send may count
+        for _ in 0..<8 {
+            if Task.isCancelled || !link.generationOK() { return .timedOut }
+            link.send(frame)
+            let deadline = Date().addingTimeInterval(0.6)
             while Date() < deadline {
                 try? await Task.sleep(for: .milliseconds(50))
-                if Task.isCancelled || ble.linkGeneration != gen { return .timedOut }
-                let q = ble.smallAcks
+                if Task.isCancelled || !link.generationOK() { return .timedOut }
+                let q = link.ackQueue()
+                if seen > q.count { seen = q.count } // queue reset mid-flight (relink) — resync
                 while seen < q.count {
                     let a = q[seen]
                     seen += 1
@@ -755,7 +793,7 @@ struct TagSetupView: View {
             let deadline = Date().addingTimeInterval(6.0)
             while Date() < deadline {
                 try? await Task.sleep(for: .milliseconds(200))
-                if Task.isCancelled || ble.linkGeneration != gen { return .timedOut }
+                if Task.isCancelled { return .timedOut }
                 if confirmedByStream() { return .confirmed }
             }
         }
@@ -790,7 +828,7 @@ struct TagSetupView: View {
     // MARK: - Radio state (op 0x06 — LISTENING/DEAF with two-layer confirmation)
 
     private func sendRadio(deaf: Bool) {
-        guard let t = target else { return }
+        guard let t = target, let link = commandLink() else { return }
         radioTask?.cancel()
         let state: UInt8 = deaf ? 1 : 0
         let rid = UInt32.random(in: 1...UInt32.max)
@@ -800,7 +838,8 @@ struct TagSetupView: View {
         let label = deaf ? "radio muted (session mode)" : "listening restored"
         radioDelivery = .sending(deaf ? "go-deaf" : "restore-listening")
         radioTask = Task { @MainActor in
-            let outcome = await deliverAcked(frame: frame, ackOp: 0x86, echo: state, cid: rid, to: t,
+            let outcome = await deliverAcked(link: link, frame: frame, ackOp: 0x86, echo: state,
+                                             cid: rid, to: t,
                                              streamConfirm: { [weak model] in
                 guard let tr = model?.tracks.first(where: { $0.from == t }),
                       let at = tr.radioStatusAt, at > sentAt else { return false }
@@ -814,8 +853,8 @@ struct TagSetupView: View {
                 failureHaptic()
             case .timedOut:
                 radioDelivery = .failed(deaf
-                    ? "TAG DID NOT CONFIRM going deaf — treat the session as NOT started."
-                    : "TAG DID NOT CONFIRM listening. If it is deaf, LoRa can't reach it: connect the app directly to the tag over Bluetooth, or reboot it.")
+                    ? "TAG DID NOT CONFIRM going deaf (via \(link.via)) — treat the session as NOT started."
+                    : "TAG DID NOT CONFIRM listening (via \(link.via)). A deaf tag only hears close-range Bluetooth — open its settings link or move closer, or reboot it.")
                 failureHaptic()
             }
         }
@@ -908,14 +947,15 @@ struct TagSetupView: View {
             ble.sendGnssCommand(to: t, payload: Data([0x03, id, signalSeq]))
             return
         }
+        guard let link = commandLink() else { return }
         signalTask?.cancel()
         let sid = UInt32.random(in: 1...UInt32.max)
         var frame = Data([0x03, id])
         frame += withUnsafeBytes(of: sid.littleEndian) { Data($0) }
         signalDelivery = .sending(signalName(id))
         signalTask = Task { @MainActor in
-            let outcome = await deliverAcked(frame: frame, ackOp: 0x83, echo: id, cid: sid, to: t,
-                                             streamConfirm: nil)
+            let outcome = await deliverAcked(link: link, frame: frame, ackOp: 0x83, echo: id,
+                                             cid: sid, to: t, streamConfirm: nil)
             guard !Task.isCancelled else { return }
             switch outcome {
             case .confirmed: signalDelivery = .confirmed("\(signalName(id)) played")
@@ -923,7 +963,7 @@ struct TagSetupView: View {
                 signalDelivery = .failed("Tag REFUSED the \(signalName(id)) signal.")
                 failureHaptic()
             case .timedOut:
-                signalDelivery = .failed("TAG DID NOT CONFIRM the \(signalName(id)) signal — assume it did NOT play.")
+                signalDelivery = .failed("TAG DID NOT CONFIRM the \(signalName(id)) signal after 8 tries via \(link.via) — assume it did NOT play.")
                 failureHaptic()
             }
         }

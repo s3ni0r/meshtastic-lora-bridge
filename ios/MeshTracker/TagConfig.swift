@@ -27,6 +27,8 @@ final class TagConfigManager: NSObject, @preconcurrency CBCentralManagerDelegate
     var lastReplyStatus: UInt8 = 0
     var trackAcks: [TrackAck] = []  // SEQUENCED 0x85 ACK queue (R4 f7) — cleared per link,
                                     // append-only within one, consumers scan by index
+    var smallAcks: [SmallAck] = []  // SEQUENCED 7-byte SIGNAL/RADIO ACK queue — the direct
+                                    // config link is the close-range command path (A4)
     var linkGeneration = 0          // bumps on every (re)connect/stop — uploads bind to one generation
     var linkNodeNum: UInt32 = 0     // my_node_num of the CONNECTED peripheral (identity proof)
 
@@ -56,6 +58,7 @@ final class TagConfigManager: NSObject, @preconcurrency CBCentralManagerDelegate
         lastReplyOp = 0
         lastReplyStatus = 0
         trackAcks = []
+        smallAcks = []
         handshakeDone = false
         linkNodeNum = 0
         central = CBCentralManager(delegate: self, queue: nil)
@@ -136,6 +139,7 @@ final class TagConfigManager: NSObject, @preconcurrency CBCentralManagerDelegate
         linkNodeNum = 0
         handshakeDone = false
         trackAcks = []
+        smallAcks = []
         linkGeneration &+= 1
         guard let c = central, c.state == .poweredOn else {
             stage = .failed("Bluetooth unavailable")
@@ -162,6 +166,7 @@ final class TagConfigManager: NSObject, @preconcurrency CBCentralManagerDelegate
             handshakeDone = false
             linkNodeNum = 0
             trackAcks = []
+            smallAcks = []
             settings = nil
             lastStatus = nil
             linkGeneration &+= 1
@@ -211,6 +216,7 @@ final class TagConfigManager: NSObject, @preconcurrency CBCentralManagerDelegate
         configRequestGeneration = nil
         configRequestExpectedOp = nil
         trackAcks = []
+        smallAcks = []
         linkGeneration &+= 1
         activeAttemptGeneration = linkGeneration
         peripheral = p
@@ -317,6 +323,9 @@ final class TagConfigManager: NSObject, @preconcurrency CBCentralManagerDelegate
             }
             if let ta = parseTrackAck(v) {
                 trackAcks.append(ta) // sequenced queue — consumers scan by index (R4 f7)
+            }
+            if let sa = parseSmallAck(v) {
+                smallAcks.append(sa) // same discipline for SIGNAL/RADIO ACKs
             }
             if let fr = fromRadio { p.readValue(for: fr) } // keep draining
         } else if !handshakeDone {
