@@ -62,6 +62,10 @@ first) can drive identification/connection cycles without name heuristics (today
 
 ### A4. Radio states + persistent profiles — MODEL AGREED 2026-07-26 (owner sign-off)
 
+State machines locked as Mermaid diagrams in [docs/RADIO_STATES.md](docs/RADIO_STATES.md)
+(per-flavor HYBRID, PERMANENT, and the guaranteed-delivery session-start sequence — the
+implementation reference for this package).
+
 "TX-only" stops being a build flag and becomes a **runtime radio state** both tag flavors
 walk through. Portnum 260 is needed only for the calibration stage; the session runs deaf.
 
