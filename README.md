@@ -1,46 +1,10 @@
 # meshtastic-tracker
 
-Real-time GPS over LoRa: moving **Seeed T1000-E tags** (Meshtastic fork) stream positions to a
-T1000-E Base tethered to an **iPhone**, shown live on a map at multi-Hz. Region: **EU868**
-(deployment target); bench-validated on US/ShortTurbo.
-
-## Status (2026-07-26, branch **tag-downlink**) — bidirectional tag, adaptive TX, simulator ✅
-
-**Newest (branch `tag-downlink`, 2026-07-25/26, all bench-validated on hardware — full
-contract in [docs/DOWNLINK.md](docs/DOWNLINK.md)):**
-
-- **Four external-review rounds absorbed; firmware release v4.3 is current** (supersedes
-  v4.0–v4.2 — WIRE CHANGE on the TRACK op: u32 transfer id in every sub-op, 9-byte ACK).
-  Track storage is A/B generation slots (cap 800 records): the committed track is never
-  opened for writing, so no power loss / torn write / CRC failure can destroy it, and a
-  failed COMMIT keeps NAKing on retry. Verified by the hardware regression suite
-  ([tools/bench/](tools/bench/README.md)) at 22/22 (exit 0) against the RELEASED gps-tag
-  binary; the shipped MeshTracker build speaks the same wire (identity-bound settings,
-  sequenced ACK queue). Agent onboarding + repeatable procedures: [AGENTS.md](AGENTS.md) and
-  `.claude/skills/` (flashing, bench, deploy, release).
-
-- **The GPS tag listens now** (RX enabled; CLIENT_MUTE still bars rebroadcast): mode switching,
-  signals and the simulator ride portnum 260 through the Base at LoRa range or a direct link.
-  Command latency phone→tag ≈ **0.2–0.35 s** (Base fast-lane + API-poll fixes, measured).
-- **Adaptive TX** (boot default, EU-duty-safe): full rate above 5 km/h instantly, 1 pkt/3 s
-  when quasi-stationary (15 s sustain) — all four knobs phone-tunable (settings wire v3) and
-  the tag echoes mode/tier in every packet's flags. **CALIBRATION mode** (fixed max rate for
-  AutoShot) is TTL-dead-man guarded: forgotten = auto-revert, reboot = adaptive.
-- **Beep-first operator signals** (AutoShot's grammar): 1–8 counted beeps = progress, long
-  high beep = recording started (+ silent LED heartbeat), low repeating beep = problem, 0 =
-  cancel. Test panel in the app.
-- **Payload v4 (19 B)**: byte 18 = raw QMA6100P motion-energy envelope + flags bit1 `moving` —
-  zero added airtime; sessions record it (the dataset that will tune the surf thresholds).
-- **Indoor simulator ON the tag**: parametric speed programs, accel-coupled "shake to move",
-  and **GPX / recorded-session track replay** (upload once over direct BLE, replay anywhere)
-  — synthetic fixes drive the *real* firmware path and self-declare via flags bit4.
-
-**v2.0 baseline (2026-07-07) = the outdoor-validated release.** Field-approved GNSS profile
-shipped as default: Fitness nav mode (the mode that actually ran during the approval test —
-this unit rejects Swimming, ACK 4), 0.3 m/s static freeze, 14 dB SNR mask, 10° elevation mask,
-4 Hz GNSS, 150 ms TX spacing (~6.7 Hz cap; switch to the EU868 2 Hz profile from the app for
-legal sustained use in France). Rollback to the pre-downlink fleet state:
-`firmware/known-good/restore.sh` (v3.0 firmware).
+Real-time GPS over LoRa: moving **Seeed T1000-E tags** (custom Meshtastic fork) stream
+19-byte positions at multi-Hz to a T1000-E **Base** tethered to an **iPhone**, shown live on
+a map. Since branch `tag-downlink` the link is **bidirectional**: the phone switches the
+tag's TX mode, drives operator beeps and an on-tag indoor simulator through the Base at LoRa
+range (~0.2–0.35 s). Region: **EU868** (deployment target); bench-validated on hardware.
 
 ```
 Tag A: BLE5/LoRa bridge (Dronetag Remote ID → LoRa)  ─┐
@@ -48,110 +12,73 @@ Tag A: BLE5/LoRa bridge (Dronetag Remote ID → LoRa)  ─┐
 Tag B: GPS tag (onboard AG3335 @ 4 Hz → LoRa)        ─┘
 ```
 
-- **Two interchangeable tag firmwares**, same 19-byte `PRIVATE_APP(256)` payload (v4: battery
-  byte 17, motion-energy byte 18); flags bits 5–7 identify the source (1 = bridge, 2 = GPS tag)
-  on top of the LoRa `from` node id ([firmware/FORK.md](firmware/FORK.md); external-consumer
-  byte map: [docs/BATTERY_INTEGRATION.md](docs/BATTERY_INTEGRATION.md)).
-- **Live battery everywhere** (v3, 2026-07-13): every stream packet carries the sending tag's own
-  cell % (byte 17; 101 = USB-powered), so tag battery updates at the position rate; the Base —
-  which never streams — pushes stock DeviceMetrics over BLE every 15 s (fork tweak) and the app
-  decodes portnum 67 (also the fallback for tags on pre-v3 firmware). Badges in the status
-  capsule, tag rows and Tag Setup; recorded per point in sessions (`bt`) for %/hour drain
-  analysis.
-- **AG3335 GNSS unlocked to 10 Hz** — the historical "1 Hz firmware lock" was a misdiagnosis (the
-  command CPU auto-sleeps post-boot; the fix is a boot-window `$PAIR382,1` latch + `$PAIR050`).
-  Deployed at a **4 Hz target**, steered per boot by `GnssRateProbe`, with a France/Europe GNSS
-  preset (GPS+GLONASS+Galileo+BDS, **EGNOS SBAS verified active**). Full story:
-  [docs/gnss/UNLOCK_NOTES.md](docs/gnss/UNLOCK_NOTES.md).
-- **GPS tag runs `role=CLIENT_MUTE`**; since `tag-downlink` its radio RX is enabled for the
-  command channel (it still never rebroadcasts mesh traffic). The bridge tag remains TX-only.
-- **iOS app v2**: per-tag colored trails + heading arrows, favorites (persisted), per-tag
-  show/hide, stable focus with pin/follow, map styles (standard/hybrid/satellite), fit-all, metric
-  tiles (speed/heading/alt/accuracy/SNR/RSSI), CSV logging, app icon.
-- **Live GNSS tuning from the phone** (no reflash): gear on a GPS-tag row → BLE settings sheet —
-  nav mode (Normal/Fitness/Stationary/Drone/Bike; Swimming rejected by our unit), static-freeze
-  threshold, SNR mask, elevation mask, GNSS fix rate, LoRa TX spacing, France/US one-tap
-  profiles. Persisted on the tag (`/prefs/gnsstag.dat`), applied live via `GnssConfigModule`
-  (portnum 260).
-- **Direct-to-tag mode**: no Base alive? The app falls back to the tag's own BLE within ~6 s and
-  receives the stream directly (that tag only, BLE range); the settings sheet rides the same link.
-- **Honest accuracy**: the payload's ±m now carries the receiver's own GST 1-σ error estimate
-  (HDOP heuristic as fallback). Boot diagnostics verified: AIC on, jamming-detect on, EASY
-  genuinely unsupported on this build (TTFF assist = future EPO injection, see TODO).
-- **Session recording & analysis** (measurement-grade): record button captures EVERY received
-  packet verbatim (crash-safe JSONL under `Documents/sessions/`, background-BLE keeps capturing
-  pocketed); sessions library (rename/delete/stats); **full-resolution projection** of any number
-  of past sessions on the map (zero smoothing — raw fixes as received); **moment explorer**:
-  slider/playback with per-tag exact-fix markers, reported-accuracy circles, ±15 s fix scatter,
-  and raw packet readouts; exports: GPX 1.1 + analysis CSV (every packet, all fields); everything
-  visible in the Files app.
-- **Versioned releases**: [firmware/releases/](firmware/releases/) v1.0 → v1.2 (uf2 + DFU zip +
-  checksums per flavor); flash any T1000-E with `tools/flash_t1000e.sh <flavor> [port|role]`.
+**Current state (2026-07-26):** firmware **v4.3** deployed (four external-review rounds
+absorbed; TRACK wire = u32 transfer id + A/B slot storage), payload **v4** (position +
+battery + motion), adaptive speed-gated TX, beep-first calibration signals, GPX/session
+track replay on the tag, hardware regression suite green (22/22, exit 0) against the
+released binary. Dated narrative: [docs/HISTORY.md](docs/HISTORY.md).
 
-Numbers & raw results: [docs/results.md](docs/results.md). Plan/constraints: [PLAN.md](PLAN.md).
-Worldwide capacity study (presets × regions × distance × fleet size): [docs/CAPACITY.md](docs/CAPACITY.md).
-Sensor-fusion roadmap: [TODO.md](TODO.md). GNSS deep-dive: [docs/gnss/UNLOCK_NOTES.md](docs/gnss/UNLOCK_NOTES.md).
+## The aspects, and where each is documented
 
-## Layout
+| Aspect | Authoritative doc |
+|---|---|
+| Uplink stream payload (19 B v4: position, battery, motion, flags) | [docs/BATTERY_INTEGRATION.md](docs/BATTERY_INTEGRATION.md) |
+| Downlink command channel (modes, signals, simulator, track upload) | [docs/DOWNLINK.md](docs/DOWNLINK.md) — **the wire contract** |
+| Firmware fork (architecture, flavors, build matrix, GNSS unlock) | [firmware/FORK.md](firmware/FORK.md) + [docs/gnss/UNLOCK_NOTES.md](docs/gnss/UNLOCK_NOTES.md) |
+| iOS app (map, tag setup, sessions, simulator UI, BLE model) | [docs/IOS_APP.md](docs/IOS_APP.md) |
+| Radio & regulatory (EU868 duty math, presets × regions × fleet) | [docs/CAPACITY.md](docs/CAPACITY.md) + [PLAN.md](PLAN.md) |
+| Hardware verification (the shipping gate) | [tools/bench/README.md](tools/bench/README.md); raw numbers in [docs/results.md](docs/results.md) |
+| Operations (flashing, releases, rollback, TestFlight) | [firmware/releases/](firmware/releases/) · `tools/flash_t1000e.sh` · [docs/testflight-release.md](docs/testflight-release.md) |
+| Agent onboarding + step-by-step procedures | [AGENTS.md](AGENTS.md) + `.claude/skills/` |
+| Roadmap (sensor fusion, sea-threshold tuning) | [TODO.md](TODO.md); history: [docs/HISTORY.md](docs/HISTORY.md) |
+| BLE observer subproject (Zephyr sniffer experiments) | [observer/](observer/) (own AGENTS.md) |
 
-- [`PLAN.md`](PLAN.md) — verified build plan, RF/firmware constraints (EU868), milestones M0–M9.
-- [`firmware/`](firmware/) — the Meshtastic fork: [`FORK.md`](firmware/FORK.md) (apply/build/flash) +
-  `src/modules/HighRatePositionModule.{h,cpp}`. The full clone lives in
-  `firmware/meshtastic-firmware/` (gitignored).
-- [`ios/`](ios/) — **MeshTracker**, a minimal SwiftUI + CoreBluetooth app (`project.yml` → xcodegen),
-  with a dependency-free protobuf decoder (no SPM deps).
-- [`tools/`](tools/) — `m2_stream_poc.py` (stream + measure), `m1_gps_rate_check.md`,
-  `flash_uf2.py`, `serial_monitor.py`.
-- [`docs/`](docs/) — `results.md` (measured milestones), `CAPACITY.md` (worldwide planning),
-  `gnss/` (AG3335 unlock notes + LC29H protocol spec PDF); raw CSV logs gitignored.
-- [`firmware/releases/`](firmware/releases/) — versioned, checksummed binaries (v1.0–v1.2) for
-  fleet flashing via `tools/flash_t1000e.sh`.
-- [`TODO.md`](TODO.md) — accelerometer/battery fusion roadmap + GNSS follow-ups.
+## Quick start
 
-## Build & run
+### Firmware (three flavors — full matrix in [firmware/FORK.md](firmware/FORK.md))
 
-### Firmware fork
-Full steps + the three-flavor build matrix in [firmware/FORK.md](firmware/FORK.md). Summary:
 ```bash
 cd firmware/meshtastic-firmware
-# GPS tag (onboard AG3335, 4 Hz target; 100 = 10 Hz):
-PLATFORMIO_BUILD_FLAGS="-DGPS_TAG" pio run -e tracker-t1000-e
-# BLE5/LoRa bridge tag:
+PLATFORMIO_BUILD_FLAGS="-DGPS_TAG" pio run -e tracker-t1000-e          # GPS tag
 PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER \
-  -DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY" pio run -e tracker-t1000-e
-# Base: plain build. Flash: tools/flash_uf2.py, or serial DFU via adafruit-nrfutil.
+  -DHIGHRATE_POSITION_INTERVAL_MS=250 -DHIGHRATE_TX_ONLY" pio run -e tracker-t1000-e  # bridge
+pio run -e tracker-t1000-e                                             # base
 ```
 
-**Flashing more T1000-Es:** versioned, checksummed binaries live in
-[`firmware/releases/`](firmware/releases/) (v1.0 = all three flavors) — flash any board with
-`tools/flash_t1000e.sh <flavor> [port|role]` (`--list` shows releases + connected boards).
-> Build on the device's **installed** Meshtastic version (v2.7.15 here). Master 2.8.0 **hangs** this
-> hardware via single-bank DFU (SoftDevice mismatch). `meshtastic --enter-dfu` puts a node in DFU.
+Flash **released**, checksummed binaries by role (fail-closed: manifest checksums +
+hardware-serial pinning):
+
+```bash
+tools/flash_t1000e.sh gps-tag gpstag        # latest release; VERSION=vX.Y pins one
+```
+
+Rollback of the whole fleet to the validated v3.0 state: `firmware/known-good/restore.sh`.
+> Build against the device's **installed** Meshtastic version (v2.7.15 here) — master 2.8.0
+> hangs this hardware via single-bank DFU (SoftDevice mismatch).
 
 ### iOS app
+
 ```bash
 cd ios && xcodegen generate
-xcodebuild -project MeshTracker.xcodeproj -scheme MeshTracker \
-  -destination 'id=<iphone-udid>' -allowProvisioningUpdates build
+xcodebuild -project MeshTracker.xcodeproj -scheme MeshTracker -configuration Debug \
+  -destination 'id=<iphone-udid>' -derivedDataPath build -allowProvisioningUpdates build
 xcrun devicectl device install app --device <iphone-udid> \
-  "$(ls -d ~/Library/Developer/Xcode/DerivedData/MeshTracker-*/Build/Products/Debug-iphoneos/MeshTracker.app | head -1)"
+  build/Build/Products/Debug-iphoneos/MeshTracker.app
 ```
-> Requires your Apple ID in **Xcode → Settings → Accounts**, and trusting the dev profile on the
-> phone (Settings → General → VPN & Device Management) on first launch.
+> First run: Apple ID in Xcode → Settings → Accounts; trust the dev profile on the phone.
+> TestFlight: `ios/scripts/release.sh` ([docs/testflight-release.md](docs/testflight-release.md)).
 
-### Measurement tools (laptop ↔ node over USB)
+### Verify on hardware (before shipping any firmware change)
+
 ```bash
-pip install meshtastic
-# host-injected stream test:
-python tools/m2_stream_poc.py both --send-port <a> --recv-port <b> --rate 2 --count 60 --csv run.csv
-# capture an on-device stream on the receiver:
-python tools/m2_stream_poc.py recv --port <base-port> --duration 60 --csv run.csv
+~/.local/pipx/venvs/meshtastic/bin/python -u tools/bench/verify_fixes.py   # exit 0 or it doesn't ship
 ```
 
 ## Identifying the nodes
 
-Port names (`usbmodemXXXX`) can shuffle on replug, so address boards by **role**, resolved from the
-stable nRF52 **USB serial** (survives reboot/reflash/DFU) via `tools/nodes.py`:
+Port names shuffle on replug — address boards by **role**, resolved from the stable nRF52
+USB serial via `tools/nodes.py` (`python tools/nodes.py` lists live ports; tools accept
+`tag`/`base`/`gpstag` anywhere a port is expected):
 
 | Role | USB serial (physical ID) | Node ID | Node num |
 |---|---|---|---|
@@ -159,26 +86,18 @@ stable nRF52 **USB serial** (survives reboot/reflash/DFU) via `tools/nodes.py`:
 | **GpsTag** (onboard GPS @ 4 Hz) | `15B20E7A7AAD8AF0` | `!18e77545` | 417822021 |
 | **Base** (receiver, visually tagged) | `4A8693CC387EBD66` | `!b0bb9cda` | 2965085402 |
 
-```bash
-python tools/nodes.py               # show which port is which right now
-python tools/nodes.py --port gpstag # -> /dev/cu.usbmodemXXXX (for scripting)
-```
-`flash_uf2.py` and `m2_stream_poc.py` accept `tag`/`base` anywhere a port is expected, e.g.
-`python tools/m2_stream_poc.py recv --port base` or `python tools/flash_uf2.py tag firmware.uf2`.
+## Constraints (EU868) — details in [PLAN.md](PLAN.md) / [docs/CAPACITY.md](docs/CAPACITY.md)
 
-## Constraints (EU868) — see [PLAN.md](PLAN.md)
-- **2 Hz sustained** is the legal EU868 target (ShortFast); 3–4 Hz sustained exceeds the 10% duty
-  cycle (bench-only). **ShortTurbo is unusable in EU868** (firmware reverts it to LongFast).
-- Bench used **US/ShortTurbo** (no firmware duty cycle) — the devices' as-found config.
-
-## Phase 2 (not started)
-Bridge an **Apple Watch** GPS through the tracker (Watch → WatchConnectivity → iPhone → BLE →
-node) if the onboard GNSS proves inadequate. Notes in [PLAN.md](PLAN.md) §8 / firmware design.
+- **2 Hz sustained** is the legal EU868 target (ShortFast, ~9.5% duty with the 19 B payload);
+  higher sustained rates are bench-only. ShortTurbo is unusable in EU868.
+- The adaptive TX mode exists to spend that budget where it matters: full rate while
+  moving, 1 pkt/3 s when quasi-stationary; CALIBRATION bursts are TTL-dead-man guarded.
 
 ## License
 
 **GPL-3.0** (see [LICENSE](LICENSE)). The firmware under `firmware/` is a derivative of
 [Meshtastic firmware](https://github.com/meshtastic/firmware) (GPL-3.0); the complete
 corresponding source for every binary in `firmware/releases/` is this repository itself
-(`firmware/meshtastic-fork.patch` + `firmware/src/` drop-ins applied to the pinned upstream tag
-via `firmware/apply-fork.sh`). The iOS app, tools and docs are released under the same license.
+(`firmware/meshtastic-fork.patch` + `firmware/src/` drop-ins applied to the pinned upstream
+tag via `firmware/apply-fork.sh`). The iOS app, tools and docs are released under the same
+license.

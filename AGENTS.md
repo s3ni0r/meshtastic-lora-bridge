@@ -29,7 +29,9 @@ Tag B: GPS tag (onboard AG3335, 4 Hz target → LoRa) ─┘
 | `docs/BATTERY_INTEGRATION.md` | Uplink payload byte map (19 B v4) for external consumers |
 | `firmware/FORK.md` | Fork architecture, per-flavor build flags, GNSS unlock story |
 | `docs/CAPACITY.md` | Airtime / EU868 duty math |
-| `PLAN.md`, `TODO.md`, `README.md` | Goals, roadmap state, current status |
+| `docs/IOS_APP.md` | MeshTracker features + architecture (BLE model, screens, upload machinery) |
+| `docs/HISTORY.md` | Dated milestone narrative (what shipped when, and why) |
+| `PLAN.md`, `TODO.md`, `README.md` | Goals, roadmap state, current status (README = aspect index) |
 | `tools/bench/README.md` | Hardware regression suite |
 
 ## Repository map
