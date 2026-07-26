@@ -119,11 +119,14 @@ The endgame for fleet operations: no USB, no double-tap — update a tag from th
 
 ### C1. Skills generic to all agents (standing rule) — DONE 2026-07-26
 
-- [x] All five procedures relocated to `skills/<name>.md`; `.claude/skills/*/SKILL.md` are
-      thin Claude Code shims pointing at the neutral files.
-- [x] AGENTS.md and every living doc reference the neutral paths.
+- [x] All five procedures live at the STANDARD agent-files location,
+      `.agents/skills/<name>/SKILL.md` (same structure and frontmatter every agent tooling
+      reads); `.claude/skills/<name>` are symlinks into it — one source of truth, zero
+      duplication (harness skill loading verified through the links).
+- [x] AGENTS.md and every living doc reference the standard paths.
 - **Standing rule in force**: anything written for agents (procedures, onboarding,
-  contracts) lands vendor-neutral first; tool-specific layouts only ever contain pointers.
+  contracts) lands in the shared standard layout (`AGENTS.md` + `.agents/`); tool-specific
+  directories only ever contain links or shims into it.
 
 ### C2. Repo noise cleanup — DONE 2026-07-26
 

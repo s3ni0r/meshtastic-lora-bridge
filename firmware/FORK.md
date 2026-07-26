@@ -141,7 +141,7 @@ fallback poll when a cross-task wake is missed.
 release** from `firmware/releases/` (checksummed, hardware-serial-pinned bootloader serial-DFU;
 the explicit `uf2` target instead copies onto a double-tapped T1000-E volume) with the
 per-flavor config cheat-sheet printed after. `--list` shows releases + connected boards.
-Procedures + wedge recovery: `skills/flash-t1000e.md`.
+Procedures + wedge recovery: `.agents/skills/flash-t1000e/SKILL.md`.
 
 Manual UF2 fallback: hold the button and connect the magnetic charge cable **twice** until the
 green LED is **solid**; a `T1000-E` USB drive mounts — drag the matching `.uf2` onto it. On a big

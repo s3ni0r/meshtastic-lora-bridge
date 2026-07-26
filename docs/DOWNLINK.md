@@ -16,7 +16,7 @@
 > storage and a u32 transfer id in every TRACK frame — v4.3 wire, incompatible with pre-v4.3).
 > Companion docs: `BATTERY_INTEGRATION.md` (uplink payload, for external consumers),
 > `../firmware/FORK.md` (build/architecture), `CAPACITY.md` (airtime/duty math),
-> `../TODO.md` (roadmap state), `../AGENTS.md` + `../skills/` (agent onboarding +
+> `../TODO.md` (roadmap state), `../AGENTS.md` + `../.agents/skills/` (agent onboarding +
 > flash/bench/release procedures). Rollback of all of it: `../firmware/known-good/restore.sh`
 > (reflashes the validated v3.0 fleet firmware).
 

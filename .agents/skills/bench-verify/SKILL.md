@@ -1,9 +1,10 @@
+---
+name: bench-verify
+description: Run (or extend) the hardware-in-the-loop regression suite that gates every firmware protocol change — adaptive TX semantics, TRACK upload/commit/reboot durability. Use before shipping firmware, after flashing, or when asked to "verify on hardware".
+---
+
 # Hardware bench verification
 
-> **Use when:** Run (or extend) the hardware-in-the-loop regression suite that gates every firmware protocol change — adaptive TX semantics, TRACK upload/commit/reboot durability. Use before shipping firmware, after flashing, or when asked to "verify on hardware".
->
-> Agent-neutral procedure (standing rule C1: anything written for agents lives
-> vendor-neutrally; `skills/bench-verify.md` is only the Claude Code shim).
 
 
 The suite is the shipping gate: **exit 0 or it does not ship.** It asserts on real hardware

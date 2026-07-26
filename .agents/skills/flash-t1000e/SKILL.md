@@ -1,9 +1,10 @@
+---
+name: flash-t1000e
+description: Flash firmware onto a Seeed T1000-E (release or dev build), verify it booted, and recover a board wedged in its bootloader. Use for any "flash the tag/base/bridge", "update firmware on device", or "board not responding after flash" task.
+---
+
 # Flashing a T1000-E (and recovering one)
 
-> **Use when:** Flash firmware onto a Seeed T1000-E (release or dev build), verify it booted, and recover a board wedged in its bootloader. Use for any "flash the tag/base/bridge", "update firmware on device", or "board not responding after flash" task.
->
-> Agent-neutral procedure (standing rule C1: anything written for agents lives
-> vendor-neutrally; `skills/flash-t1000e.md` is only the Claude Code shim).
 
 
 Ground truth measured on this fleet 2026-07-26 — trust it over intuition:

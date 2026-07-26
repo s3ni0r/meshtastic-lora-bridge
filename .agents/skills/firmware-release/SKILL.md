@@ -1,9 +1,10 @@
+---
+name: firmware-release
+description: Edit fork firmware correctly (clone vs tracked artifacts), build the three T1000-E flavors, and cut a provenance-pinned release (uf2 + dfu.zip + SHA256SUMS + RELEASE.md). Use for any firmware change or "cut release vX.Y".
+---
+
 # Firmware editing, building, and cutting a release
 
-> **Use when:** Edit fork firmware correctly (clone vs tracked artifacts), build the three T1000-E flavors, and cut a provenance-pinned release (uf2 + dfu.zip + SHA256SUMS + RELEASE.md). Use for any firmware change or "cut release vX.Y".
->
-> Agent-neutral procedure (standing rule C1: anything written for agents lives
-> vendor-neutrally; `skills/firmware-release.md` is only the Claude Code shim).
 
 
 ## The two-tree rule (get this wrong and the fork silently drifts)

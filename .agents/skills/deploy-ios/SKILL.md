@@ -1,9 +1,10 @@
+---
+name: deploy-ios
+description: Build MeshTracker and install it on the connected iPhone (the standing rule for EVERY iOS change), plus the TestFlight release path. Use for "deploy the app", "test on my phone", or after any Swift change.
+---
+
 # Deploying MeshTracker
 
-> **Use when:** Build MeshTracker and install it on the connected iPhone (the standing rule for EVERY iOS change), plus the TestFlight release path. Use for "deploy the app", "test on my phone", or after any Swift change.
->
-> Agent-neutral procedure (standing rule C1: anything written for agents lives
-> vendor-neutrally; `skills/deploy-ios.md` is only the Claude Code shim).
 
 
 **Standing rule:** every iOS change ends with build → install on the physical iPhone. A

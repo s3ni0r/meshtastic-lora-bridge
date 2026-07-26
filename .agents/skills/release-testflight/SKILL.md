@@ -1,9 +1,10 @@
+---
+name: release-testflight
+description: Ship MeshTracker to TestFlight — mainline or experiment-train releases with identifiable builds and automated "What to Test" notes. Use when asked to release, ship a beta, cut a TestFlight build, publish an experiment variant, or when a release/upload/What-to-Test step fails.
+---
+
 # Releasing MeshTracker to TestFlight
 
-> **Use when:** Ship MeshTracker to TestFlight — mainline or experiment-train releases with identifiable builds and automated "What to Test" notes. Use when asked to release, ship a beta, cut a TestFlight build, publish an experiment variant, or when a release/upload/What-to-Test step fails.
->
-> Agent-neutral procedure (standing rule C1: anything written for agents lives
-> vendor-neutrally; `skills/release-testflight.md` is only the Claude Code shim).
 
 
 Full reference: [docs/testflight-release.md](docs/testflight-release.md).

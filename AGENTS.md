@@ -4,7 +4,7 @@ Guidance for ANY coding agent working in this repository (Claude Code reads it v
 `CLAUDE.md`, which imports this file). It encodes the architecture you'd otherwise need to
 read many files to learn, the exact commands that work on this machine, and the operational
 hazards that have already burned real time on real hardware. Repeatable procedures live in
-`skills/*.md` — the agent-neutral home (standing rule: anything written for agents lands
+`.agents/skills/*/SKILL.md` — the agent-neutral home (standing rule: anything written for agents lands
 vendor-neutral; `.claude/skills/` contains only Claude Code shims pointing there).
 
 ## What this project is
@@ -50,7 +50,7 @@ Tag B: GPS tag (onboard AG3335, 4 Hz target → LoRa) ─┘
   commit OID (movable tags are only cross-checked); release runs use the pinned
   `/usr/bin/git` and pipx `pio` with a fixed PATH. Ignored Python bytecode is executable
   input too: release builds must follow the cache-free, `PYTHONDONTWRITEBYTECODE=1`
-  procedure in `skills/firmware-release.md`. Never stamp a release by
+  procedure in `.agents/skills/firmware-release/SKILL.md`. Never stamp a release by
   invoking `pio` directly; the trusted entry point is `python3 -I firmware/release_build.py`.
 - `firmware/releases/vX.Y/` — versioned artifacts (`<flavor>.uf2`, `<flavor>-dfu.zip`,
   `SHA256SUMS`, `RELEASE.md` with pinned source commit). `firmware/known-good/restore.sh`
@@ -158,8 +158,8 @@ verified and how — never claim more reproducibility or safety than was actuall
 
 ## Skills (step-by-step procedures)
 
-- `skills/flash-t1000e.md` — flashing every path + wedged-board recovery
-- `skills/bench-verify.md` — running/extending the hardware regression suite
-- `skills/deploy-ios.md` — build → install on iPhone (the standing rule for iOS changes)
-- `skills/firmware-release.md` — edit → sync → build flavors → cut a release
-- `skills/release-testflight.md` — TestFlight trains, identifiable builds, What-to-Test notes
+- `.agents/skills/flash-t1000e/SKILL.md` — flashing every path + wedged-board recovery
+- `.agents/skills/bench-verify/SKILL.md` — running/extending the hardware regression suite
+- `.agents/skills/deploy-ios/SKILL.md` — build → install on iPhone (the standing rule for iOS changes)
+- `.agents/skills/firmware-release/SKILL.md` — edit → sync → build flavors → cut a release
+- `.agents/skills/release-testflight/SKILL.md` — TestFlight trains, identifiable builds, What-to-Test notes
