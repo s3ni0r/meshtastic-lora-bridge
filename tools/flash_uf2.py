@@ -32,11 +32,20 @@ def touch_1200(port):
 def wait_for_drive(timeout=30):
     print("[2/3] waiting for UF2 bootloader drive ...")
     deadline = time.time() + timeout
-    seen_before = set(glob.glob("/Volumes/*"))
     while time.time() < deadline:
         for v in glob.glob("/Volumes/*"):
-            if os.path.isfile(os.path.join(v, "INFO_UF2.TXT")):
-                return v
+            info = os.path.join(v, "INFO_UF2.TXT")
+            if os.path.isfile(info):
+                # Only OUR device class — never flash whatever unrelated UF2 drive is mounted
+                # (review R2 finding 3).
+                try:
+                    with open(info) as f:
+                        txt = f.read().lower()
+                except OSError:
+                    continue
+                if "t1000" in txt or "nrf52" in txt:
+                    return v
+                print(f"      note: {v} is a UF2 drive but not a T1000/nRF52 — ignoring it")
         time.sleep(1)
     return None
 
@@ -90,9 +99,18 @@ def main():
         except Exception:
             pass
     except OSError as e:
-        # The drive often unmounts the instant the full image is received and the device reboots.
-        print(f"      copy ended with {e!r} — this is normal if the device rebooted after flashing.")
-    print("DONE. Device is flashing and will reboot in a few seconds.")
+        # The drive often unmounts the instant the full image is received and the device
+        # reboots — so the copy's outcome is NOT the truth signal; the unmount below is.
+        print(f"      copy ended with {e!r} (normal if the device rebooted mid-copy)")
+    # Truth signal: the bootloader unmounts the volume only when it ACCEPTED the image.
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if not os.path.isdir(drive):
+            print("DONE: bootloader accepted the image (volume unmounted); device is rebooting.")
+            sys.exit(0)
+        time.sleep(0.5)
+    print(f"ERROR: {drive} never unmounted — flash NOT confirmed. Re-enter the bootloader and retry.")
+    sys.exit(1)
 
 
 if __name__ == "__main__":

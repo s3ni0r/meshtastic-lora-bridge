@@ -9,7 +9,8 @@
 | Reconstruction | `firmware/apply-fork.sh` (now mirrors the WHOLE drop-in tree), then the FORK.md §4 build matrix |
 | Toolchain | PlatformIO Core 6.1.19, env `tracker-t1000-e`; DFU zips: vendored adafruit-nrfutil (`--dev-type 0x0052 --sd-req 0x0123`) |
 | Build date | 2026-07-26 |
-| On-device version caveat | the firmware's own version string embeds the **internal build-clone hash `7638cc2`** (a local safety branch, never pushed). It is NOT the source reference — the outer-repo commit above is. |
+| On-device version caveat | the firmware's own version string embeds the **internal build-clone hash** (a local safety branch, never pushed). It is NOT the source reference — the outer-repo commit above is. |
+| **Reproducibility scope** | **source-mapped, NOT bit-exact** (review R2 finding 8, accepted limitation): PlatformIO dependencies float, the build date is embedded, and `patch_bluefruit_ext.py` patches the *global* PlatformIO framework package (idempotent; `apply-fork.sh` now runs it so fresh machines converge before their first build). Functional reproduction: `apply-fork.sh` + the FORK.md §4 matrix on the pinned vendor tag. Bit-exact/hermetic builds are an open item. |
 
 ## What's in it (vs v3.0 — the previous tracked release)
 

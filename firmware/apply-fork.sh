@@ -34,4 +34,9 @@ cp -R src/. "$CLONE/src/"
 cp patch_bluefruit_ext.py "$CLONE/"
 git -C "$CLONE" apply ../meshtastic-fork.patch
 
+# The Bluefruit BLE extension patch mutates the GLOBAL PlatformIO framework package (~/.platformio)
+# — it's idempotent ("already patched" guard), but a fresh machine MUST run it before the first
+# build or bridge-flavor builds differ (review R2 finding 8: order-dependent builds).
+python3 "$CLONE/patch_bluefruit_ext.py" || echo "note: bluefruit patch skipped (framework package not installed yet — run it after the first 'pio run' fetches packages)"
+
 echo "fork applied on $TAG — flavors build per FORK.md §4"

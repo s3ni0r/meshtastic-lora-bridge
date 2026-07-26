@@ -19,6 +19,8 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     var connectedNodeNum: UInt32 = 0 // who this link talks to (from my_info)
     var lastConfigReply: ConfigReply? // portnum-260 replies when the tag link doubles as config
     var configReplyCount = 0          // bumps per reply — ACK tracking for bulk uploads
+    var lastTrackAck: TrackAck?       // correlated 0x85 ACKs (sub + offset echoed by the tag)
+    var trackAckCount = 0
 
     @ObservationIgnored private var central: CBCentralManager!
     @ObservationIgnored private var peripheral: CBPeripheral?
@@ -157,6 +159,10 @@ final class BLEManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
             if let cr = parseConfigReply(v) {
                 lastConfigReply = cr
                 configReplyCount += 1
+            }
+            if let ta = parseTrackAck(v) {
+                lastTrackAck = ta
+                trackAckCount += 1
             }
             if var pw = parseTelemetry(v) {                  // battery: Base every 15 s, tags via LoRa
                 if pw.from == 0 { pw.from = connectedNodeNum }

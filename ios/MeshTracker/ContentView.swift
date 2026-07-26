@@ -241,7 +241,9 @@ struct ContentView: View {
 
     // MARK: - Top status
 
-    private var connected: Bool { ble.status.hasPrefix("Connected") }
+    private var connected: Bool {
+        ble.status.hasPrefix("Connected") || ble.status.hasPrefix("Direct") // direct link IS connected
+    }
 
     private var recElapsed: String {
         guard let t0 = model.recorder.startedAt else { return "0:00" }
@@ -347,6 +349,10 @@ struct ContentView: View {
                     focusSummaryRow
                 }
                 .padding(.horizontal, 14).padding(.bottom, panelExpanded ? 4 : 12)
+                if let err = model.recorder.lastError {
+                    Text(err).font(.caption2.bold()).foregroundStyle(.red)
+                        .padding(.horizontal, 14).padding(.bottom, 6)
+                }
             }
             .contentShape(Rectangle())
             .onTapGesture { withAnimation(.spring(duration: 0.35)) { panelExpanded.toggle() } }

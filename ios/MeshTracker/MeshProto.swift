@@ -350,6 +350,48 @@ func parseConfigReply(_ data: Data) -> ConfigReply? {
     return nil
 }
 
+/// Correlated ACK for the TRACK op (0x05): `[0x85, status, sub, offLo, offHi]` — the tag echoes
+/// exactly WHICH frame it answers, so uploads never credit a stale/foreign acknowledgment.
+struct TrackAck: Equatable {
+    let status: UInt8
+    let sub: UInt8   // 0 BEGIN / 1 CHUNK / 2 COMMIT / 3 ABORT
+    let off: UInt16  // BEGIN: record count · CHUNK: offset · else 0
+}
+
+/// Parse a FromRadio frame as a track ACK (portnum 260, 5-byte 0x85 payload) — nil otherwise.
+func parseTrackAck(_ data: Data) -> TrackAck? {
+    var r = ProtoReader(data)
+    while let (field, wire) = r.readTag() {
+        if field == 2, wire == 2 {
+            guard let pkt = r.readBytes() else { return nil }
+            var pr = ProtoReader(pkt)
+            while let (f, w) = pr.readTag() {
+                if f == 4, w == 2 {
+                    guard let dec = pr.readBytes() else { return nil }
+                    var dr = ProtoReader(dec)
+                    var portnum = 0
+                    var payload: ArraySlice<UInt8>?
+                    while let (df, dw) = dr.readTag() {
+                        switch (df, dw) {
+                        case (1, 0): portnum = Int(dr.readVarint() ?? 0)
+                        case (2, 2): payload = dr.readBytes()
+                        default: dr.skip(dw)
+                        }
+                    }
+                    guard portnum == kGnssConfigPortnum, let pl = payload, pl.count == 5 else { return nil }
+                    let b = Array(pl)
+                    guard b[0] == 0x85 else { return nil }
+                    return TrackAck(status: b[1], sub: b[2], off: UInt16(b[3]) | (UInt16(b[4]) << 8))
+                }
+                pr.skip(w)
+            }
+            return nil
+        }
+        r.skip(wire)
+    }
+    return nil
+}
+
 /// Parse FromRadio.my_info.my_node_num — tells us WHICH node this BLE link talks to.
 func parseMyNodeNum(_ data: Data) -> UInt32? {
     var r = ProtoReader(data)

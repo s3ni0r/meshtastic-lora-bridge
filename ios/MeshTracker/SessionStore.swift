@@ -112,22 +112,37 @@ final class SessionRecorder {
     private(set) var pointCount = 0
     private(set) var tagCount = 0
     private(set) var writeFailures = 0 // disk-full etc. — surfaced in the REC capsule, never silent
+    private(set) var lastError: String? // start/setup failures — recording REFUSES to lie
     @ObservationIgnored private var meta: SessionMeta?
     @ObservationIgnored private var handles: [UInt32: FileHandle] = [:]
+    @ObservationIgnored private var deadHandles: Set<UInt32> = [] // failed opens: no meta dupes
     @ObservationIgnored private let encoder = JSONEncoder()
 
     func start() {
         guard !isRecording else { return }
+        lastError = nil
         let id = UUID()
-        try? FileManager.default.createDirectory(at: SessionPaths.dir(id), withIntermediateDirectories: true)
+        // Setup failures BLOCK the start — an "active" recorder that can't write is a lie
+        // (review R2 finding 5).
+        do {
+            try FileManager.default.createDirectory(at: SessionPaths.dir(id), withIntermediateDirectories: true)
+        } catch {
+            lastError = "Can't create the session folder (disk full?) — recording NOT started."
+            return
+        }
         let df = DateFormatter()
         df.dateFormat = "MMM d · HH:mm"
-        meta = SessionMeta(id: id, name: df.string(from: Date()), startedAt: Date(), endedAt: nil)
-        writeMeta()
-        startedAt = meta?.startedAt
+        let m = SessionMeta(id: id, name: df.string(from: Date()), startedAt: Date(), endedAt: nil)
+        guard let d = try? JSONEncoder().encode(m), (try? d.write(to: SessionPaths.metaURL(id), options: .atomic)) != nil else {
+            lastError = "Can't write session metadata — recording NOT started."
+            return
+        }
+        meta = m
+        startedAt = m.startedAt
         pointCount = 0
         tagCount = 0
         writeFailures = 0
+        deadHandles = []
         isRecording = true
     }
 
@@ -141,9 +156,18 @@ final class SessionRecorder {
         guard var data = try? encoder.encode(pt) else { return }
         data.append(0x0A) // newline
         if handles[sp.from] == nil {
+            if deadHandles.contains(sp.from) { // open already failed once: count, don't re-append meta
+                writeFailures += 1
+                return
+            }
             let url = SessionPaths.trackURL(m.id, from: sp.from)
             FileManager.default.createFile(atPath: url.path, contents: nil)
-            handles[sp.from] = try? FileHandle(forWritingTo: url)
+            guard let h = try? FileHandle(forWritingTo: url) else {
+                deadHandles.insert(sp.from)
+                writeFailures += 1
+                return
+            }
+            handles[sp.from] = h
             m.tags.append(SessionTagMeta(from: sp.from, source: sp.source.rawValue, title: title))
             meta = m
             tagCount = m.tags.count

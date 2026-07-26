@@ -83,25 +83,47 @@ ProcessMessage GnssConfigModule::handleReceived(const meshtastic_MeshPacket &mp)
         }
     } else if (op == 0x05) { // TRACK upload: [sub, ...] — BLE-direct/USB only by convention
         uint8_t sub = d.payload.size >= 2 ? d.payload.bytes[1] : 0xEE;
+        uint16_t echoOff = 0;
         bool ok = false;
         if (sub == 0x00 && d.payload.size >= 8) { // BEGIN: count u16, crc32 u32
             uint16_t cnt = (uint16_t)(d.payload.bytes[2] | (d.payload.bytes[3] << 8));
             uint32_t crc = (uint32_t)d.payload.bytes[4] | ((uint32_t)d.payload.bytes[5] << 8) |
                            ((uint32_t)d.payload.bytes[6] << 16) | ((uint32_t)d.payload.bytes[7] << 24);
             ok = gnssSim->trackBegin(cnt, crc);
+            echoOff = cnt;
         } else if (sub == 0x01 && d.payload.size >= 5) { // CHUNK: offRec u16, n u8, n×10B
             uint16_t off = (uint16_t)(d.payload.bytes[2] | (d.payload.bytes[3] << 8));
             uint8_t n = d.payload.bytes[4];
             if (d.payload.size >= (uint16_t)(5 + n * 10))
                 ok = gnssSim->trackChunk(off, n, &d.payload.bytes[5]);
-        } else if (sub == 0x02) { // COMMIT
+            echoOff = off;
+        } else if (sub == 0x02) { // COMMIT — idempotent (see GnssSim::trackCommit)
             ok = gnssSim->trackCommit();
         } else if (sub == 0x03) { // ABORT
             gnssSim->trackAbort();
             ok = true;
         }
-        if (!ok)
-            status = 1;
+        // Correlated ACK (review R2 finding 1): the reply ECHOES the sub-op and offset it
+        // answers — [0x85, status, sub, offLo, offHi] — so the client matches frames exactly
+        // instead of trusting "any later 0x85". Replaces the generic settings reply for op 5.
+        meshtastic_MeshPacket *tr = allocDataPacket();
+        if (tr) {
+            tr->to = mp.from;
+            tr->decoded.payload.bytes[0] = 0x85;
+            tr->decoded.payload.bytes[1] = ok ? 0 : 1;
+            tr->decoded.payload.bytes[2] = sub;
+            tr->decoded.payload.bytes[3] = (uint8_t)(echoOff & 0xFF);
+            tr->decoded.payload.bytes[4] = (uint8_t)(echoOff >> 8);
+            tr->decoded.payload.size = 5;
+            if (fromPhone) {
+                service->sendToPhone(tr);
+            } else {
+                tr->want_ack = false;
+                tr->hop_limit = 1;
+                service->sendToMesh(tr, RX_SRC_LOCAL, false);
+            }
+        }
+        return ProcessMessage::STOP;
     } else if (op == 0x03) { // SIGNAL: [pattern u8, seq u8] — LED/buzzer, AutoShot grammar
         if (d.payload.size >= 3) {
             // The latency-measurement line: host timestamps its send, this stamps the arrival.

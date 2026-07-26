@@ -113,6 +113,11 @@ struct TagSetupView: View {
                     draft = s
                 }
             }
+            .onChange(of: target) {
+                // trackReady describes ONE tag's slot — a new target starts from unknown.
+                trackReady = false
+                trackInfo = ""
+            }
         }
     }
 
@@ -166,6 +171,7 @@ struct TagSetupView: View {
                                             in: Capsule())
                         }
                         .buttonStyle(.plain)
+                        .disabled(uploadProgress != nil) // never switch targets mid-upload
                     }
                 }
             }
@@ -465,38 +471,44 @@ struct TagSetupView: View {
     /// budget). The little play/stop commands still go over any link.
     private struct UploadLink {
         let send: (Data) -> Void
-        let state: () -> (count: Int, op: UInt8, status: UInt8)
+        let ackState: () -> (count: Int, ack: TrackAck?)
     }
 
     private func trackUploadLink() -> UploadLink? {
         if ble.directTag, ble.connectedNodeNum == target {
             return UploadLink(send: { ble.sendTagConfig($0) },
-                              state: { (ble.configReplyCount,
-                                        ble.lastConfigReply?.op ?? 0,
-                                        ble.lastConfigReply?.status ?? 0) })
+                              ackState: { (ble.trackAckCount, ble.lastTrackAck) })
         }
         if mgr.stage == .ready || mgr.stage == .applying {
             return UploadLink(send: { mgr.sendRaw($0) },
-                              state: { (mgr.replyCount, mgr.lastReplyOp, mgr.lastReplyStatus) })
+                              ackState: { (mgr.trackAckCount, mgr.lastTrackAck) })
         }
         return nil
     }
 
-    /// One frame, one confirmed 0x85 status-0 ACK — no blind sleeps (review finding). Retries
-    /// once on timeout/NAK: the firmware treats a re-sent already-banked chunk as idempotent.
-    private func sendAcked(_ link: UploadLink, _ frame: Data) async -> Bool {
+    /// One frame, one CORRELATED ACK: the tag echoes (sub, offset), and only an exact match
+    /// counts — a delayed ACK from an earlier frame can never credit this one (review R2
+    /// finding 1). NAK/timeout → one retry; the firmware is idempotent for re-sent chunks
+    /// and repeated COMMITs.
+    private func sendAcked(_ link: UploadLink, _ frame: Data, sub: UInt8, off: UInt16) async -> Bool {
         for _ in 0..<2 {
-            let before = link.state().count
+            var seen = link.ackState().count
             link.send(frame)
             let deadline = Date().addingTimeInterval(2.0)
+            var verdict: Bool?
             while Date() < deadline {
                 try? await Task.sleep(for: .milliseconds(50))
-                let s = link.state()
-                if s.count > before {
-                    if s.op == 0x85 && s.status == 0 { return true }
-                    break // NAK (or an interleaved unrelated reply) — retry the frame
+                let s = link.ackState()
+                if s.count > seen {
+                    seen = s.count
+                    if let a = s.ack, a.sub == sub, a.off == off {
+                        verdict = (a.status == 0)
+                        break
+                    }
+                    // an ACK for some OTHER frame — ignore it and keep waiting for ours
                 }
             }
+            if verdict == true { return true }
         }
         return false
     }
@@ -521,6 +533,7 @@ struct TagSetupView: View {
         uploadProgress = 0
         let wire = TrackBuilder.wireData(recs)
         let crc = TrackBuilder.crc32(wire)
+        let boundTarget = target // upload is BOUND to this tag; a mid-flight switch aborts
         Task { @MainActor in
             let fail: (String) -> Void = { msg in
                 self.uploadProgress = nil
@@ -530,24 +543,29 @@ struct TagSetupView: View {
             var begin = Data([0x05, 0x00])
             begin += withUnsafeBytes(of: UInt16(recs.count).littleEndian) { Data($0) }
             begin += withUnsafeBytes(of: crc.littleEndian) { Data($0) }
-            guard await sendAcked(link, begin) else { return fail("Tag rejected the upload start.") }
+            guard await sendAcked(link, begin, sub: 0, off: UInt16(recs.count)) else {
+                return fail("Tag rejected the upload start.")
+            }
             let per = 20
             var off = 0
             while off < recs.count {
+                guard target == boundTarget else { return fail("Target changed — upload aborted.") }
                 let n = min(per, recs.count - off)
                 var p = Data([0x05, 0x01])
                 p += withUnsafeBytes(of: UInt16(off).littleEndian) { Data($0) }
                 p.append(UInt8(n))
                 p += wire.subdata(in: off * 10 ..< (off + n) * 10)
-                guard await sendAcked(link, p) else {
+                guard await sendAcked(link, p, sub: 1, off: UInt16(off)) else {
                     return fail("Upload failed at point \(off)/\(recs.count) — check the link and retry.")
                 }
                 off += n
                 uploadProgress = Double(off) / Double(recs.count)
             }
-            // COMMIT: the tag re-CRCs the stored file; status 0 here is the REAL success signal.
-            guard await sendAcked(link, Data([0x05, 0x02])) else {
-                return fail("Tag CRC check failed — track NOT stored. Retry the upload.")
+            guard target == boundTarget else { return fail("Target changed — upload aborted.") }
+            // COMMIT: the tag re-CRCs the stored file AND writes the durable marker; its
+            // correlated status-0 ACK is the only real success signal.
+            guard await sendAcked(link, Data([0x05, 0x02]), sub: 2, off: 0) else {
+                return fail("Tag CRC/commit failed — track NOT stored. Retry the upload.")
             }
             uploadProgress = nil
             trackReady = true

@@ -9,11 +9,53 @@
 #include <math.h>
 
 // Track slot on LittleFS (28 KB total internal FS shared with prefs — cap the slot well below).
+// COMMIT durability: a separate marker file carries the committed CRC — data alone, however
+// CRC-perfect, is NOT playable until the marker exists (review R2: a reboot after the last
+// chunk but before COMMIT must not leave a playable uncommitted slot). Marker create/delete is
+// plain file I/O — no reliance on LittleFS rename/mid-file-write semantics.
 static const char *kTrackPath = "/prefs/simtrack.bin";
+static const char *kTrackMarkPath = "/prefs/simtrack.ok";
 static const uint8_t kTrackMagic = 0xA9, kTrackVer = 1;
 static const uint16_t kTrackMaxRecs = 1600; // 10 B/record -> <=16 KB
 static const uint8_t kTrackHdrLen = 8;      // magic, ver, count u16, crc32 u32
 static const uint8_t kTrackRecLen = 10;
+
+static uint32_t trackHeaderCrc()
+{
+#ifdef FSCom
+    auto f = FSCom.open(kTrackPath, FILE_O_READ);
+    if (!f)
+        return 0;
+    uint8_t hdr[kTrackHdrLen];
+    bool ok = f.read(hdr, kTrackHdrLen) == kTrackHdrLen && hdr[0] == kTrackMagic;
+    f.close();
+    if (!ok)
+        return 0;
+    return (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) | ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
+#else
+    return 0;
+#endif
+}
+
+/// True only when the marker exists AND matches the data file's claimed CRC.
+static bool trackSlotCommitted()
+{
+#ifdef FSCom
+    auto m = FSCom.open(kTrackMarkPath, FILE_O_READ);
+    if (!m)
+        return false;
+    uint8_t b[4];
+    bool ok = m.read(b, 4) == 4;
+    m.close();
+    if (!ok)
+        return false;
+    uint32_t marked = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+    uint32_t claimed = trackHeaderCrc();
+    return claimed != 0 && marked == claimed;
+#else
+    return false;
+#endif
+}
 
 
 // The same stash globals GPS.cpp fills from real fixes (see GPS.cpp GPS_TAG block).
@@ -146,6 +188,8 @@ bool GnssSim::trackBegin(uint16_t count, uint32_t crc)
     if (src == TRACK)
         stop("upload replaces slot");
     FSCom.mkdir("/prefs");
+    if (FSCom.exists((char *)kTrackMarkPath))
+        FSCom.remove((char *)kTrackMarkPath); // new upload immediately invalidates the old commit
     if (FSCom.exists((char *)kTrackPath))
         FSCom.remove((char *)kTrackPath);
     auto f = FSCom.open(kTrackPath, FILE_O_WRITE);
@@ -230,13 +274,31 @@ static bool trackSlotCrcValid()
 bool GnssSim::trackCommit()
 {
 #ifdef FSCom
-    if (!upActive || upExpected != upCount)
+    // Idempotent: a repeated COMMIT (its previous reply was lost, the app retried) succeeds
+    // as long as the slot is genuinely committed and intact (review R2 finding 2).
+    if (!upActive)
+        return trackSlotCommitted() && trackSlotCrcValid();
+    if (upExpected != upCount)
         return false;
     upActive = false;
     bool ok = trackSlotCrcValid();
-    LOG_INFO("GnssSim: track COMMIT %s (%u recs)", ok ? "OK" : "CRC MISMATCH", upCount);
-    if (!ok)
+    if (ok) { // durable marker: only NOW does the slot become playable, reboot or not
+        auto m = FSCom.open(kTrackMarkPath, FILE_O_WRITE);
+        if (m) {
+            uint8_t b[4] = {(uint8_t)(upCrc & 0xFF), (uint8_t)((upCrc >> 8) & 0xFF),
+                            (uint8_t)((upCrc >> 16) & 0xFF), (uint8_t)((upCrc >> 24) & 0xFF)};
+            ok = m.write(b, 4) == 4;
+            m.close();
+        } else {
+            ok = false;
+        }
+    }
+    LOG_INFO("GnssSim: track COMMIT %s (%u recs)", ok ? "OK" : "FAILED", upCount);
+    if (!ok) {
         FSCom.remove((char *)kTrackPath);
+        if (FSCom.exists((char *)kTrackMarkPath))
+            FSCom.remove((char *)kTrackMarkPath);
+    }
     return ok;
 #else
     return false;
@@ -247,6 +309,8 @@ void GnssSim::trackAbort()
 {
 #ifdef FSCom
     upActive = false;
+    if (FSCom.exists((char *)kTrackMarkPath))
+        FSCom.remove((char *)kTrackMarkPath);
     if (FSCom.exists((char *)kTrackPath))
         FSCom.remove((char *)kTrackPath);
     LOG_INFO("GnssSim: track upload ABORTED");
@@ -303,8 +367,12 @@ bool GnssSim::startTrack(bool loopFlag, uint16_t ttlS)
         LOG_WARN("GnssSim: track upload in progress — not playable yet");
         return false;
     }
-    if (!trackSlotCrcValid()) { // shape AND content: only a committed, intact slot plays
-        LOG_WARN("GnssSim: no valid track slot (missing, partial or CRC-corrupt)");
+    if (!trackSlotCommitted()) { // durable COMMIT marker required — data alone never plays
+        LOG_WARN("GnssSim: track slot not committed");
+        return false;
+    }
+    if (!trackSlotCrcValid()) { // shape AND content re-checked at every play
+        LOG_WARN("GnssSim: track slot CRC invalid");
         return false;
     }
     auto f = FSCom.open(kTrackPath, FILE_O_READ);

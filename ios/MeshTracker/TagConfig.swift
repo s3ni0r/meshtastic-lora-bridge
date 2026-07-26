@@ -23,6 +23,8 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     var replyCount = 0              // bumps per reply — ACK tracking for bulk uploads
     var lastReplyOp: UInt8 = 0
     var lastReplyStatus: UInt8 = 0
+    var lastTrackAck: TrackAck?     // correlated 0x85 ACKs (sub + offset echoed by the tag)
+    var trackAckCount = 0
 
     @ObservationIgnored private var central: CBCentralManager?
     @ObservationIgnored private var peripheral: CBPeripheral?
@@ -86,7 +88,8 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     }
 
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) {
-        UserDefaults.standard.set(p.identifier.uuidString, forKey: rememberKey)
+        // NOTE: deliberately NOT remembered yet — only a valid portnum-260 reply proves this
+        // peripheral is the target node (see didUpdateValueFor).
         stage = .handshaking
         p.discoverServices([kService])
     }
@@ -133,6 +136,15 @@ final class TagConfigManager: NSObject, CBCentralManagerDelegate, CBPeripheralDe
                 lastReplyStatus = reply.status
                 replyCount += 1
                 stage = .ready
+                // Identity proven: this peripheral answered a frame ADDRESSED to targetNode —
+                // only now is it worth remembering (review R2: don't save unvalidated picks).
+                if let p = peripheral {
+                    UserDefaults.standard.set(p.identifier.uuidString, forKey: rememberKey)
+                }
+            }
+            if let ta = parseTrackAck(v) {
+                lastTrackAck = ta
+                trackAckCount += 1
             }
             if let fr = fromRadio { p.readValue(for: fr) } // keep draining
         } else if !handshakeDone {
