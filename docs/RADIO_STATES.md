@@ -11,6 +11,16 @@
 
 ## 1. GPS/LoRa tag — HYBRID profile (default; the AutoShot choreography)
 
+**In plain words:** you power the tag on and it is always reachable — it listens for
+commands and streams positions at the smart adaptive rate. When AutoShot starts
+calibrating, it switches the tag to full speed and drives the beeps; if the app ever
+crashes or walks away, the TTL timer quietly puts the tag back to normal on its own.
+When the session actually starts, the app tells the tag "go quiet": the tag confirms
+FIRST, then shuts its receiver — from now on it only transmits, saving battery and never
+hesitating before a packet. Nothing about that quiet state survives a restart: turn it
+off and on and you always get the reachable, adaptive tag back. If you are standing next
+to it, N button presses flip it between quiet and listening, each with its own beep.
+
 ```mermaid
 stateDiagram-v2
     state "LISTENING · ADAPTIVE<br/>(speed-gated TX, commands work at range)" as LA
@@ -34,7 +44,14 @@ available over BLE/USB in any state (phone path bypasses the radio).
 ## 2. BLE5/LoRa bridge tag — HYBRID profile
 
 Same skeleton, no GNSS modes: the bridge relays Dronetag novelty at its configured spacing
-in every state; the calibration stage only means it can HEAR (signals, config, go-deaf).
+in every state — the calibration stage only means it can HEAR (signals, config, go-deaf).
+
+**In plain words:** the bridge never stops doing its one job — repeating the Dronetag's
+positions over LoRa. The only thing that changes is whether it can hear you: after
+power-on it listens (so it can beep during calibration and take configuration at range),
+and when the session starts it goes quiet exactly like the GPS tag — transmit-only, best
+battery, deaf to radio commands until a restart, a button toggle, or a phone standing
+right next to it.
 
 ```mermaid
 stateDiagram-v2
@@ -53,6 +70,14 @@ stateDiagram-v2
 Fixed TX parameters (e.g. adaptive fallback disabled) AND a fixed radio state, persisted.
 Duty legality is enforced when the profile is SET (illegal sustained rates rejected for
 the configured region). No TTLs, no choreography.
+
+**In plain words:** you decide once, in the app, exactly how this tag behaves — for
+example "always transmit at 2 Hz, never slow down, never listen" — and it behaves that
+way every single time it powers on, forever, until you deliberately change the profile.
+The app refuses any combination that would be illegal on your radio band, and it tells
+you clearly what you are signing up for (a permanently quiet tag can only be reached by
+button, cable, or a phone next to it). The button still works as the field override, but
+it only changes the tag until the next restart — the saved profile always wins at boot.
 
 ```mermaid
 stateDiagram-v2
@@ -82,6 +107,14 @@ the correlated ACK arrives; the tag ACKs duplicate seq without replaying, so ret
 never double-beep. Every step is confirmed before the next; the one forbidden outcome is
 the operator believing a beep happened when it did not.
 
+**In plain words:** when the app sends "beep now", it keeps sending that exact same beep
+request until the tag answers "played it". If a radio packet gets lost in either
+direction, the retry fixes it — and because the tag remembers the request number, hearing
+the same request twice never produces two beeps. Only after the record-start beep is
+confirmed does the app send "go quiet", which the tag also confirms before actually going
+quiet. If the tag never answers, the app makes that failure impossible to miss — you will
+never be left believing a beep happened when it did not.
+
 ```mermaid
 sequenceDiagram
     participant A as AutoShot / MeshTracker
@@ -109,7 +142,7 @@ sequenceDiagram
     T-->>B: ACK — sent BEFORE muting
     B-->>A: ACK relayed
     T->>T: radio muted — DEAF · SESSION begins
-    Note over T: stream continues; payload v5 status byte<br/>reports DEAF + HYBRID for app visibility
+    Note over T: stream continues — payload v5 status byte<br/>reports DEAF + HYBRID for app visibility
 ```
 
 ## 5. Transition/ACK reference table
