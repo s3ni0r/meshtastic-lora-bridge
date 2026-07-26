@@ -32,7 +32,7 @@ stateDiagram-v2
     LA --> LC : MODE=CALIBRATION (ACKed, TTL armed)
     LC --> LC : TTL refresh (ACKed)<br/>SIGNAL beeps (retry-until-ACK, seq-deduped)
     LC --> LA : TTL expires (dead-man)<br/>or MODE=ADAPTIVE (ACKed)
-    LC --> DS : GO-DEAF (ACK sent FIRST, then mute;<br/>TX drops to adaptive)
+    LC --> DS : GO-DEAF (ACK sent FIRST, then mute —<br/>TX drops to adaptive)
     LA --> DS : GO-DEAF (ACK first, then mute)<br/>or button xN — "deaf" beep
     DS --> LA : reboot (deafness NEVER persists)<br/>or button xN — "listening" beep<br/>or BLE/USB RADIO=LISTENING
 ```
