@@ -117,17 +117,13 @@ The endgame for fleet operations: no USB, no double-tap — update a tag from th
 
 ## C. Repo & agent hygiene
 
-### C1. Skills generic to all agents (standing rule)
+### C1. Skills generic to all agents (standing rule) — DONE 2026-07-26
 
-- [ ] Relocate the step-by-step procedures out of `.claude/skills/` into an agent-neutral
-      home (e.g. `skills/<name>.md`), with `.claude/skills/*/SKILL.md` kept as thin
-      Claude-Code shims pointing at the neutral files (the harness needs its layout; other
-      agents shouldn't).
-- [ ] AGENTS.md references the neutral paths; observer-style per-project AGENTS.md files
-      follow the same rule.
-- [ ] **Standing rule going forward**: anything written for agents (procedures, onboarding,
-      contracts) lands vendor-neutral first; tool-specific layouts only ever contain
-      pointers.
+- [x] All five procedures relocated to `skills/<name>.md`; `.claude/skills/*/SKILL.md` are
+      thin Claude Code shims pointing at the neutral files.
+- [x] AGENTS.md and every living doc reference the neutral paths.
+- **Standing rule in force**: anything written for agents (procedures, onboarding,
+  contracts) lands vendor-neutral first; tool-specific layouts only ever contain pointers.
 
 ### C2. Repo noise cleanup
 

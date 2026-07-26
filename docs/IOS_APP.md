@@ -5,7 +5,7 @@ SwiftUI + CoreBluetooth app (`ios/`), dependency-free: Meshtastic protobufs are
 uses — nothing regenerates, wire changes are edited by hand in lockstep with firmware).
 Project is generated from `ios/project.yml` — run `xcodegen` after adding files.
 Deployment: build → install on the physical iPhone every time (see
-`.claude/skills/deploy-ios/SKILL.md`); TestFlight via `ios/scripts/release.sh`
+`skills/deploy-ios.md`); TestFlight via `ios/scripts/release.sh`
 (`docs/testflight-release.md`).
 
 ## Connectivity model

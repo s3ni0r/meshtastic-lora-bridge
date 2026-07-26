@@ -31,7 +31,7 @@ track replay on the tag. The immutable v4.3 binary passed its historical hardwar
 | Radio & regulatory (EU868 duty math, presets × regions × fleet) | [docs/CAPACITY.md](docs/CAPACITY.md) + [PLAN.md](PLAN.md) |
 | Hardware verification (the shipping gate) | [tools/bench/README.md](tools/bench/README.md); raw numbers in [docs/results.md](docs/results.md) |
 | Operations (flashing, releases, rollback, TestFlight) | [firmware/releases/](firmware/releases/) · `tools/flash_t1000e.sh` · [docs/testflight-release.md](docs/testflight-release.md) |
-| Agent onboarding + step-by-step procedures | [AGENTS.md](AGENTS.md) + `.claude/skills/` |
+| Agent onboarding + step-by-step procedures | [AGENTS.md](AGENTS.md) + `skills/` |
 | Roadmap (sensor fusion, sea-threshold tuning) | [TODO.md](TODO.md); history: [docs/HISTORY.md](docs/HISTORY.md) |
 
 ## Quick start
