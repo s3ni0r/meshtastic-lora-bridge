@@ -10,8 +10,10 @@ history: [docs/HISTORY.md](docs/HISTORY.md). Wire contract: [docs/DOWNLINK.md](d
 Today the portnum-260 channel (settings, mode, signals, simulator, naming) exists only in
 the GPS-tag flavor; the bridge is TX-only and configurable over USB alone. Bring the bridge
 to parity for every operation that is not GPS-chip-specific — its position source is the
-external Dronetag, so GNSS knobs (nav mode, fix rate, SNR/elevation masks) stay out; TX
-spacing, adaptive/calibration behavior, signals, naming and profiles all apply.
+external Dronetag, so GNSS knobs (nav mode, fix rate, SNR/elevation masks) stay out.
+Per the settled model (RADIO_STATES §2 wins, review 2026-07-26): the bridge has NO
+ADAPTIVE/CALIBRATION TX modes — its knob set is TX spacing, signals, naming, profiles
+and the radio state.
 
 - [ ] Design first, aligned with the A4 model: `HIGHRATE_TX_ONLY` becomes the runtime DEAF
       state on BOTH flavors — the bridge is LISTENING only during the calibration stage,
@@ -32,7 +34,8 @@ spacing, adaptive/calibration behavior, signals, naming and profiles all apply.
 - [ ] iOS Tag Setup: render knob groups from the capability signal instead of assuming the
       GPS-tag feature set.
 - [ ] Bench: extend `verify_fixes.py` (or a sibling) to run the non-GPS op set against the
-      bridge on USB.
+      bridge on USB; the sniffer-throughput A/B must cover a CONNECTED BLE/PhoneAPI
+      session (not just advertising on/off — connection events cost more scan time).
 
 ### A2. Device-type advertisement (AutoShot-facing discovery contract)
 
@@ -72,8 +75,9 @@ walk through. Portnum 260 is needed only for the calibration stage; the session 
 
 **The two radio states (both flavors):**
 - **LISTENING** — RX between transmissions: commands/signals/simulator work at LoRa range.
-- **DEAF** — today's TX-only: radio sleeps between TX; best battery, zero TX deferral, no
-  LoRa command can reach it. BLE/USB commands still work (phone path bypasses the radio).
+- **DEAF** — today's TX-only: radio sleeps between TX; best battery, no RX-in-progress
+  deferral (pre-TX CAD backoff on a busy channel remains — that is collision avoidance,
+  not capture), no LoRa command can reach it. BLE/USB commands still work.
 
 **HYBRID profile (default — the AutoShot choreography):**
 1. Power-on → LISTENING + adaptive TX, always (a fresh tag is always commandable at range).
@@ -86,32 +90,44 @@ walk through. Portnum 260 is needed only for the calibration stage; the session 
 
 **PERMANENT profile (explicit app consent):** boots straight into its configured behavior,
 no transitions, no TTLs: fixed TX parameters (e.g. adaptive fallback disabled) AND a fixed
-radio state (permanently LISTENING or permanently DEAF). Duty legality enforced at SET
-time (CAPACITY.md math; illegal sustained rates rejected for the configured region); app
-shows "persists across reboots" consequences explicitly.
+radio state (permanently LISTENING or permanently DEAF). Closure rules (review
+2026-07-26): radio-state commands in PERMANENT REWRITE the persisted profile — no
+temporary states; duty legality enforced at SET **and revalidated at every boot and on
+region/preset change** (illegal persisted params clamp to nearest legal spacing + a
+"profile degraded" flag — never silent illegal TX); app shows "persists across reboots"
+consequences explicitly.
 
 **Agreed decisions (2026-07-26):**
 - [ ] **Guaranteed signal delivery (the ACK's real purpose)** — a calibration SIGNAL
       (beep/flash) must REACH the tag no matter what: the user acts on hearing it, so a
       silently lost command is a calibration failure. Semantics: **at-least-once delivery,
-      exactly-once playback** — the sender retransmits with the SAME seq until a
-      correlated ACK arrives (ACK echoes op + pattern + seq; never satisfiable by a stale
-      or foreign reply); the tag's existing seq-dedupe ACKs duplicates without replaying,
-      so retries can never double-beep. Bounded retries (interval sized to the measured
-      ~0.3 s downlink), then a LOUD in-app failure — "tag did not confirm the signal" is
-      surfaced, never swallowed. The go-deaf/radio-state command gets the same
-      retry-until-ACK treatment and always ACKs BEFORE muting; ordering: record-start
-      beep (confirmed) → go-deaf.
+      at-most-once playback per signal id** (design review 2026-07-26 tightened the
+      earlier wording) — SIGNAL carries a client-chosen u32 sid (TRACK-tid discipline);
+      the sender retransmits the SAME sid until a correlated ACK arrives (echo
+      op + pattern + sid; never satisfiable by a stale or foreign reply). Tag dedupe is
+      {sid, pattern}: exact re-send re-ACKs without replaying; same-sid different-pattern
+      NAKs (the u8-seq collision hole, closed). ACK = accepted + playback scheduled
+      (≲50 ms), not "audio finished". Accepted residual: RAM-only dedupe means a reboot
+      inside the seconds-long retry window could replay one signal — documented, harmless
+      for this vocabulary. Bounded retries (~0.3 s apart), then a LOUD in-app failure.
+      GO-DEAF gets the same retry treatment with a TWO-LAYER confirmation (review fix):
+      the tag ACKs then holds a ~2 s mute-grace (duplicates re-ACKed) before muting, and
+      the app also accepts the next stream packet's v5 status byte reading DEAF — even if
+      every ACK is lost, the stream proves the transition. Ordering: record-start beep
+      (confirmed) → go-deaf.
 - [ ] **Fully deaf** — no post-TX listen window (option rejected; simplicity + max battery).
 - **Button toggle REMOVED (owner decision 2026-07-26, superseding the earlier hatch):**
   radio-state control is exclusively the iOS app — LoRa while LISTENING, BLE at close
   range in any state. Recovery ladder: LoRa → BLE → reboot (HYBRID never persists
   deafness). Accepted consequence: a PERMANENT·DEAF tag is reachable only via BLE/USB;
   the app states this at profile-set time.
-- [ ] Payload v5 status byte (radio state + active profile) for ongoing visibility after
-      app restarts — the 20-byte payload stays in the same ShortFast symbol group, zero
-      added airtime. ACK confirms transitions; the status byte answers "what state is
-      this tag in NOW".
+- [ ] Payload v5 status byte (radio state + active profile) — **REQUIRED phase 1**: it
+      is the GO-DEAF fallback confirmation (review fix), not just visibility. The
+      20-byte payload stays in the same ShortFast symbol group, zero added airtime.
+      Ship with an explicit COMPATIBILITY CHECKLIST covering every consumer of the
+      length-is-version rule (MeshTracker, tools/m2_stream_poc.py, bench decoders,
+      BATTERY_INTEGRATION.md external guidance) — same checklist covers the new
+      capability byte and profile byte.
 - [ ] Wire: settings v3 → v4 (profile byte + validation); a 260 op that restores Hybrid;
       known-good reflash remains the last-resort escape.
 - [ ] **Generic implementation (agreed)**: ONE shared radio-state module compiled into
@@ -198,8 +214,11 @@ The endgame for fleet operations: no USB, no double-tap — update a tag from th
       the phase-2 Apple Watch idea remains in PLAN §8, the dead scaffold is in git
       history). watchOS deployment option dropped from `project.yml`.
 - [x] `tools/` sweep: `m1_gps_rate_check.md` (superseded by `docs/gnss/UNLOCK_NOTES.md`)
-      and `freshness_analyze.py` (no living references) deleted; `m2_stream_poc.py` KEPT —
-      it is the reference decoder cited by `docs/BATTERY_INTEGRATION.md` and FORK.md.
+      and `freshness_analyze.py` deleted (cited only inside the dated 2026-06-25
+      measurement record in `docs/results.md`, which now notes the tool lives in git
+      history — the earlier "no references" claim was imprecise); `m2_stream_poc.py`
+      KEPT — it is the reference decoder cited by `docs/BATTERY_INTEGRATION.md` and
+      FORK.md.
 
 ## Carried over (still pending, unchanged)
 

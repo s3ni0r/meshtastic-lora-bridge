@@ -119,7 +119,8 @@ this change to protect the working firmware.
 
 After the stale-as-live bug surfaced on a walk (position frozen 66 s while reported `lock=1`), added a
 **freshness gate** (coords unchanged >2.5 s → `lock=0`) + a **heartbeat** (always stream, even pre-lock).
-Re-measured with Tag locked on the balcony (45 s / 127 packets, `tools/freshness_analyze.py`):
+Re-measured with Tag locked on the balcony (45 s / 127 packets, `tools/freshness_analyze.py`
+— tool since removed 2026-07-26, available in git history):
 
 | Metric | Value |
 |---|---|
