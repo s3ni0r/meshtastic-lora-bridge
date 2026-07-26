@@ -102,10 +102,11 @@ shows "persists across reboots" consequences explicitly.
       retry-until-ACK treatment and always ACKs BEFORE muting; ordering: record-start
       beep (confirmed) → go-deaf.
 - [ ] **Fully deaf** — no post-TX listen window (option rejected; simplicity + max battery).
-- [ ] **Button escape hatch, no BLE dependency**: pressing the T1000-E button X times
-      toggles LISTENING ↔ DEAF in the field, each direction with a DISTINCT beep
-      signature (vocabulary addition owner-approved 2026-07-26). Pick X to not collide
-      with stock Meshtastic button actions; works on both flavors even without BLE.
+- **Button toggle REMOVED (owner decision 2026-07-26, superseding the earlier hatch):**
+  radio-state control is exclusively the iOS app — LoRa while LISTENING, BLE at close
+  range in any state. Recovery ladder: LoRa → BLE → reboot (HYBRID never persists
+  deafness). Accepted consequence: a PERMANENT·DEAF tag is reachable only via BLE/USB;
+  the app states this at profile-set time.
 - [ ] Payload v5 status byte (radio state + active profile) for ongoing visibility after
       app restarts — the 20-byte payload stays in the same ShortFast symbol group, zero
       added airtime. ACK confirms transitions; the status byte answers "what state is
@@ -113,11 +114,11 @@ shows "persists across reboots" consequences explicitly.
 - [ ] Wire: settings v3 → v4 (profile byte + validation); a 260 op that restores Hybrid;
       known-good reflash remains the last-resort escape.
 - [ ] **Generic implementation (agreed)**: ONE shared radio-state module compiled into
-      both flavors (states, persistence rules, radio-state op + ACK-before-mute, button
-      toggle + beeps, signal retry discipline, BLE/USB path in every state); flavor code
-      only supplies what runs inside the states. BLE deaf-toggle works at close range in
-      ANY state on both flavors — the bridge side rides A1's slow connectable advertising
-      (≲0.3 % scan-time cost, bench A/B with the sniffer as acceptance gate).
+      both flavors (states, persistence rules, radio-state op + ACK-before-mute, signal
+      retry discipline, BLE/USB path in every state); flavor code only supplies what runs
+      inside the states. BLE deaf-toggle works at close range in ANY state on both
+      flavors — the bridge side rides A1's slow connectable advertising (≲0.3 %
+      scan-time cost, bench A/B with the sniffer as acceptance gate).
 
 ## B. Platform & architecture
 
