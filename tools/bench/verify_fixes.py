@@ -374,7 +374,11 @@ if back:
 check("device uptime restarted (reboot really happened)", uptime is not None and uptime < 90,
       f"uptime≈{uptime}s")
 iface = connect()
-n, lons = sim_plays(seconds=6)
+# 12 s, not 6: right after a reboot the GNSS boot probe and sim spin-up can delay the first
+# replay packets by several seconds — a 6 s window twice sampled only early heartbeats
+# (~3 rows, correct committed coords) and produced spurious FAILs (2026-07-27). The teeth
+# of this assertion are the generation-proof coordinates below, not the raw count.
+n, lons = sim_plays(seconds=12)
 check("committed slot survives the reboot and plays", n > 5)
 check("...and it is the COMMITTED course, not the staged one (generation proof)",
       bool(lons) and all(abs(lo - COMMIT_LON) < 0.002 for lo in lons) and
@@ -666,7 +670,11 @@ else:
             r = config_cmd([0x01] + list(settings_before))
             check("region + preset + settings restored", r is not None and r["status"] == 0)
             # PROOF the suite leaves the air path intact: a Base-relayed LoRa signal must ACK.
-            a = lora_signal(1, fresh_tid())
+            # Settle first: the tag rebooted seconds ago (GNSS boot probe still walking) and
+            # the immediate post-boot window produced one spurious no-ACK (2026-07-27, all
+            # 3 attempts inside it; rawlat 3/3 fine a minute later). 5 attempts thereafter.
+            time.sleep(10)
+            a = lora_signal(1, fresh_tid(), attempts=5)
             check("post-restore LoRa via the Base ACKs (air path proven intact)",
                   a is not None and a["status"] == 0)
         except Exception as e:  # a failed restore must be LOUD, never silent

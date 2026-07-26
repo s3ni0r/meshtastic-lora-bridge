@@ -44,6 +44,7 @@ final class BLEManager: NSObject, @preconcurrency CBCentralManagerDelegate,
     @ObservationIgnored private let model: PositionModel
     @ObservationIgnored private var candidates: [UUID: CBPeripheral] = [:]
     @ObservationIgnored private var candidateNames: [UUID: String] = [:]
+    @ObservationIgnored private var candidateTypes: [UUID: DiscoveryAd.DeviceType] = [:] // A2 typed advert
     @ObservationIgnored private var scanGeneration = 0
     @ObservationIgnored private var activeAttemptGeneration: Int?
     @ObservationIgnored private var scanFallbackTask: Task<Void, Never>?
@@ -88,7 +89,7 @@ final class BLEManager: NSObject, @preconcurrency CBCentralManagerDelegate,
             return
         }
         invalidateLink(cancelConnection: true)
-        candidates = [:]; candidateNames = [:]
+        candidates = [:]; candidateNames = [:]; candidateTypes = [:]
         scanGeneration &+= 1
         let gen = scanGeneration
         status = "Scanning…"
@@ -107,10 +108,12 @@ final class BLEManager: NSObject, @preconcurrency CBCentralManagerDelegate,
 
     private func fallbackToTag(ifStill gen: Int) {
         guard gen == scanGeneration, peripheral == nil else { return }
-        // Prefer names that look like our tags; otherwise any Meshtastic node that isn't a base.
+        // Typed tags (A2 advert) outrank every heuristic; then names that look like tags;
+        // then any Meshtastic node that isn't a base.
         let pick = candidates.keys.sorted { a, b in
+            let at = candidateTypes[a] != nil ? 0 : 1, bt = candidateTypes[b] != nil ? 0 : 1
             let an = (candidateNames[a] ?? "").lowercased(), bn = (candidateNames[b] ?? "").lowercased()
-            return (an.contains("tag") ? 0 : 1, an) < (bn.contains("tag") ? 0 : 1, bn)
+            return (at, an.contains("tag") ? 0 : 1, an) < (bt, bn.contains("tag") ? 0 : 1, bn)
         }.first
         if let id = pick, let p = candidates[id] {
             connect(p, name: candidateNames[id] ?? "tag", direct: true)
@@ -191,12 +194,17 @@ final class BLEManager: NSObject, @preconcurrency CBCentralManagerDelegate,
                         advertisementData: [String: Any], rssi: NSNumber) {
         guard c === central, peripheral == nil else { return }
         let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? p.name ?? ""
-        if isBase(name) {
+        // A2 typed discovery: the fleet's manufacturer-data advert states the device TYPE —
+        // the authoritative signal. Name heuristics remain only as the pre-A2-firmware fallback.
+        let ad = (advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data)
+            .flatMap(DiscoveryAd.parse)
+        if ad?.type == .base || (ad == nil && isBase(name)) {
             connect(p, name: name, direct: false) // Base always wins
             return
         }
         candidates[p.identifier] = p
         candidateNames[p.identifier] = name
+        candidateTypes[p.identifier] = ad?.type
         status = "Looking for Base… (\(candidates.count) node\(candidates.count == 1 ? "" : "s") nearby)"
     }
 
@@ -278,6 +286,9 @@ final class BLEManager: NSObject, @preconcurrency CBCentralManagerDelegate,
                 if pw.from == 0 { pw.from = connectedNodeNum }
                 if pw.from != 0 { model.ingestPower(pw) }
             }
+            if let ni = parseNodeInfo(v) {                   // A3: persisted owner names -> labels
+                model.setName(ni.num, long: ni.longName, short: ni.shortName)
+            }
             if let fr = fromRadio { p.readValue(for: fr) }    // keep draining
         }
     }
@@ -307,6 +318,18 @@ final class BLEManager: NSObject, @preconcurrency CBCentralManagerDelegate,
                                       payload: payload, packetId: UInt32.random(in: 1...UInt32.max))
         p.writeValue(frame, for: tr, type: .withResponse)
         if let fr = fromRadio { p.readValue(for: fr) }
+    }
+
+    /// Rename the CONNECTED node (persists on-device; NodeInfo re-broadcasts follow).
+    /// LOCAL link only — phone-injected admin skips the session-passkey gate (see MeshProto).
+    func renameConnectedNode(longName: String, shortName: String) {
+        guard let p = peripheral, let tr = toRadio, connectedNodeNum != 0,
+              activeAttemptGeneration == linkGeneration else { return }
+        let frame = encodeAdminSetOwner(to: connectedNodeNum, longName: longName, shortName: shortName,
+                                        packetId: UInt32.random(in: 1...UInt32.max))
+        p.writeValue(frame, for: tr, type: .withResponse)
+        if let fr = fromRadio { p.readValue(for: fr) }
+        model.setName(connectedNodeNum, long: longName, short: shortName) // optimistic; NodeInfo confirms
     }
 
     /// GNSS command to any tag over WHATEVER link is up: through the Base it rides the LoRa

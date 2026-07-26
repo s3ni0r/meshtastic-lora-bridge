@@ -44,6 +44,7 @@ git -C "$CLONE" diff --no-ext-diff --binary --no-renames "$BASE_TAG" -- \
     src/configuration.h \
     src/gps/GPS.cpp \
     src/mesh/LR11x0Interface.cpp \
+    src/mesh/NodeDB.cpp \
     src/mesh/RadioLibInterface.cpp \
     src/mesh/StreamAPI.cpp \
     src/modules/Modules.cpp \

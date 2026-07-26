@@ -41,26 +41,30 @@ Base and tags must expose their TYPE at BLE discovery time so external apps (Aut
 first) can drive identification/connection cycles without name heuristics (today's
 "contains 'base'" matching is exactly the fragility the reviews keep flagging).
 
-- [ ] Pick the carrier: BLE advertisement manufacturer-data or service-data field carrying
-      {device type: base / gps-tag / bridge-tag, protocol version, node id short}. Must
-      coexist with the stock Meshtastic advertisement (apps that don't know us keep
-      working).
-- [ ] Implement in all three flavors (the Base too — it is the AutoShot connection target).
-- [ ] Replace MeshTracker's name heuristics with the typed advertisement (keep the
-      heuristic as fallback for pre-upgrade fleets).
-- [ ] Document the discovery contract in a new `docs/DISCOVERY.md` (external-consumer doc,
-      like BATTERY_INTEGRATION.md) for the AutoShot team.
+- [x] **DONE (2026-07-27)** — carrier: manufacturer data in the SCAN RESPONSE
+      (`FF FF 'M' 'T' ver type node-u32LE`; type 1 bridge / 2 gps / 3 base), coexisting with
+      the stock service-UUID primary advert. All three flavors; boot log prints
+      `DISC adv: ver=1 type=.. node=0x..` (verified on the GPS tag).
+- [x] **DONE** — MeshTracker keys Base selection + tag fallback on the typed advert
+      (`DiscoveryAd.parse`); name heuristics remain only for pre-A2 firmware.
+- [x] **DONE** — `docs/DISCOVERY.md` (external contract for AutoShot: layout, consumer
+      rules, node-id identity binding, slow-adv caveat for the bridge).
+- [ ] Fleet rollout: the BRIDGE still runs v4.4 (pre-A2) firmware — flash it after the
+      soak-instrument verdict; the Base needs a reflash too (v4.2 has no typed advert).
 
 ### A3. Persistent tag naming
 
-- [ ] Flash-time default names that state the FUNCTION: `TAG-GPS-<short>`, `TAG-BR-<short>`,
-      `BASE-<short>` (today naming is a manual `--set-owner` cheat-sheet step).
-- [ ] App-side rename (both tag flavors + Base) that PERSISTS on the device — decide
-      between the Meshtastic admin owner field (interoperable, shows in every Meshtastic
-      app) vs a portnum-260 field (works over the LoRa downlink at range). Leaning: owner
-      field via admin for BLE-direct, mirrored into the 260 settings for range renames.
-- [ ] Renames must propagate into MeshTracker labels, session metadata, and the A2 typed
-      advertisement.
+- [x] **DONE (2026-07-27)** — factory-default owner names state the function
+      (`TAG-GPS-xxxx` / `TAG-BR-xxxx` / `BASE-xxxx`, NodeDB patch; only a factory-fresh
+      owner gets them — renames persist over them).
+- [x] **DONE** — app-side rename via the admin owner field over the DIRECT link (tags via
+      the settings link or direct main link; the Base via its main link) — persists
+      on-device, re-broadcasts as NodeInfo. DECIDED: range renames via a 260 mirror are NOT
+      implemented — remote admin needs the passkey/PKI dance and close-range rename covers
+      the actual workflow; revisit only if field use demands it.
+- [x] **DONE** — names propagate: NodeInfo parsing on both links → PositionModel registry →
+      track titles → session metadata (recorder uses titles). The typed advertisement
+      carries the NODE ID (names are display-only by contract — DISCOVERY.md rule 3).
 
 ### A4. Radio states + persistent profiles — MODEL AGREED 2026-07-26 (owner sign-off)
 

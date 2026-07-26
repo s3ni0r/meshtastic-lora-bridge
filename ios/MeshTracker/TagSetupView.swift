@@ -66,6 +66,10 @@ struct TagSetupView: View {
     @State private var uploadTask: Task<Void, Never>? // owned: cancellable on leave/rebind (R3 f2)
     @State private var uploadGeneration = 0
     @State private var directConfigRequest: ConfigRequestToken?
+    @State private var renaming = false          // A3: inline rename editor (Direct route)
+    @State private var nameDraft = ""
+    @State private var renamingBase = false      // A3: Base rename (Via Base route)
+    @State private var baseNameDraft = ""
     private let ttlRefresh = Timer.publish(every: 45, on: .main, in: .common).autoconnect()
 
     // MARK: - Connection routing (single PhoneAPI client per node — see BLEManager)
@@ -154,7 +158,12 @@ struct TagSetupView: View {
             .navigationBarTitleDisplayMode(.large)
             .background(Color(.systemGroupedBackground))
             .safeAreaInset(edge: .bottom) { if dirty { applyBar } }
-            .onAppear { engage() }
+            .onAppear {
+                mgr.onNodeInfo = { [weak model] num, long, short in
+                    model?.setName(num, long: long, short: short)
+                }
+                engage()
+            }
             .onDisappear {
                 cancelUpload(clearUI: true)
                 signalTask?.cancel()
@@ -231,6 +240,18 @@ struct TagSetupView: View {
         }
     }
 
+    /// A3: persist a new owner name on the TARGET tag over its direct link. The name lives on
+    /// the device (NodeDB owner), re-broadcasts as NodeInfo, and every consumer (labels,
+    /// session metadata, discovery) follows.
+    private func renameTarget(_ name: String) {
+        guard let t = target else { return }
+        if ble.directTag && ble.connectedNodeNum == t {
+            ble.renameConnectedNode(longName: name, shortName: "")
+        } else if mgr.linkNodeNum == t {
+            mgr.renameNode(longName: name, shortName: "")
+        }
+    }
+
     private func requestDirectSettings() {
         guard ble.directTag, let t = target, ble.connectedNodeNum == t else {
             directConfigRequest = nil
@@ -291,6 +312,30 @@ struct TagSetupView: View {
                 }
                 Spacer()
                 connectionAccessory
+            }
+            if route == .direct && connected {
+                if renaming {
+                    HStack(spacing: 8) {
+                        TextField("New tag name (persists on the device)", text: $nameDraft)
+                            .textFieldStyle(.roundedBorder).font(.caption)
+                        Button("Save") {
+                            let name = nameDraft.trimmingCharacters(in: .whitespaces)
+                            if !name.isEmpty { renameTarget(name) }
+                            renaming = false
+                        }
+                        .font(.caption.bold()).buttonStyle(.borderedProminent).controlSize(.mini)
+                        Button("Cancel") { renaming = false }
+                            .font(.caption).buttonStyle(.plain)
+                    }
+                } else {
+                    Button {
+                        nameDraft = target.flatMap { t in knownTags.first(where: { $0.from == t })?.ownerName } ?? ""
+                        renaming = true
+                    } label: {
+                        Label("Rename tag", systemImage: "pencil").font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             // Battery: per-packet when the tag streams v3 firmware; telemetry otherwise.
             if let t = target, let pw = model.batteryInfo(t) {
@@ -908,7 +953,31 @@ struct TagSetupView: View {
         } else if ble.connectedNodeNum == 0 {
             routeStatusRow(.orange, "Waiting for the Base connection…")
         } else {
-            routeStatusRow(.green, "Relaying through the Base at LoRa range.")
+            HStack {
+                routeStatusRow(.green, "Relaying through the Base at LoRa range.")
+                Spacer()
+                Button {
+                    baseNameDraft = ""
+                    renamingBase.toggle()
+                } label: {
+                    Label("Rename Base", systemImage: "pencil").font(.caption2)
+                }
+                .buttonStyle(.plain)
+            }
+            if renamingBase {
+                HStack(spacing: 8) {
+                    TextField("New Base name (persists on the device)", text: $baseNameDraft)
+                        .textFieldStyle(.roundedBorder).font(.caption)
+                    Button("Save") {
+                        let name = baseNameDraft.trimmingCharacters(in: .whitespaces)
+                        if !name.isEmpty { ble.renameConnectedNode(longName: name, shortName: "") }
+                        renamingBase = false
+                    }
+                    .font(.caption.bold()).buttonStyle(.borderedProminent).controlSize(.mini)
+                    Button("Cancel") { renamingBase = false }
+                        .font(.caption).buttonStyle(.plain)
+                }
+            }
             if deafFresh {
                 Label("Tag reports DEAF — nothing on this route can reach it. Switch to Direct · Bluetooth to restore listening.",
                       systemImage: "speaker.slash.fill")

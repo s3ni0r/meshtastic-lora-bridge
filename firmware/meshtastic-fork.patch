@@ -260,6 +260,28 @@ index 3831a38..86d19ab 100644
      sleep();
  #else
  
+diff --git a/src/mesh/NodeDB.cpp b/src/mesh/NodeDB.cpp
+index d047bf1..fa0b3cc 100644
+--- a/src/mesh/NodeDB.cpp
++++ b/src/mesh/NodeDB.cpp
+@@ -1075,7 +1075,16 @@ void NodeDB::installDefaultDeviceState()
+ #ifdef USERPREFS_CONFIG_OWNER_LONG_NAME
+     snprintf(owner.long_name, sizeof(owner.long_name), (const char *)USERPREFS_CONFIG_OWNER_LONG_NAME);
+ #else
+-    snprintf(owner.long_name, sizeof(owner.long_name), "Meshtastic %04x", getNodeNum() & 0x0ffff);
++    // Fork (A3): factory-default names STATE THE FUNCTION, so discovery lists and app labels
++    // read sanely before any manual provisioning. Only a factory-fresh owner gets this; a
++    // set-owner rename persists over it. In this fleet the plain (non-tag) flavor IS the Base.
++#if defined(GPS_TAG)
++    snprintf(owner.long_name, sizeof(owner.long_name), "TAG-GPS-%04x", getNodeNum() & 0x0ffff);
++#elif defined(ODID_SNIFFER)
++    snprintf(owner.long_name, sizeof(owner.long_name), "TAG-BR-%04x", getNodeNum() & 0x0ffff);
++#else
++    snprintf(owner.long_name, sizeof(owner.long_name), "BASE-%04x", getNodeNum() & 0x0ffff);
++#endif
+ #endif
+ #ifdef USERPREFS_CONFIG_OWNER_SHORT_NAME
+     snprintf(owner.short_name, sizeof(owner.short_name), (const char *)USERPREFS_CONFIG_OWNER_SHORT_NAME);
 diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
 index 80e51b8..aabef58 100644
 --- a/src/mesh/RadioLibInterface.cpp
@@ -429,10 +451,49 @@ index a04837e..7fd14be 100644
  
      uint8_t tempVal;
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 4f7fb47..c86a529 100644
+index 4f7fb47..225caef 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
-@@ -127,7 +127,14 @@ void startAdv(void)
+@@ -4,6 +4,7 @@
+ #include "PowerFSM.h"
+ #include "configuration.h"
+ #include "main.h"
++#include "mesh/NodeDB.h" // fork (A2): node id for the typed discovery advert
+ #include "mesh/PhoneAPI.h"
+ #include "mesh/mesh-pb-constants.h"
+ #include <bluefruit.h>
+@@ -113,6 +114,30 @@ void startAdv(void)
+     // IncludeService UUID
+     // Bluefruit.ScanResponse.addService(meshBleService);
+     Bluefruit.ScanResponse.addTxPower();
++    // Fork (A2): typed discovery — manufacturer data in the SCAN RESPONSE (the primary advert
++    // has no room beside the 128-bit Meshtastic service UUID). Layout (docs/DISCOVERY.md is
++    // the external contract): [company 0xFFFF]['M''T'][ver=1][type][nodeNum u32 LE], where
++    // type: 1 = BLE5/LoRa bridge, 2 = GPS tag, 3 = Base. Typed consumers (MeshTracker,
++    // AutoShot) key on THIS instead of name heuristics; stock Meshtastic apps key on the
++    // service UUID in the primary advert and are untouched. Name goes LAST so it truncates
++    // into whatever room remains, never the typed field.
++    static uint8_t discAd[10];
++    discAd[0] = 0xFF; // Bluetooth SIG company id 0xFFFF: reserved for internal use — this is
++    discAd[1] = 0xFF; // a closed-fleet contract, disambiguated by the 'MT' magic + version
++    discAd[2] = 'M';
++    discAd[3] = 'T';
++    discAd[4] = 1; // discovery contract version
++#if defined(GPS_TAG)
++    discAd[5] = 2;
++#elif defined(ODID_SNIFFER)
++    discAd[5] = 1;
++#else
++    discAd[5] = 3; // the plain flavor IS the Base in this fleet
++#endif
++    uint32_t discNode = nodeDB->getNodeNum();
++    memcpy(&discAd[6], &discNode, sizeof(discNode));
++    Bluefruit.ScanResponse.addManufacturerData(discAd, sizeof(discAd));
++    LOG_INFO("DISC adv: ver=1 type=%u node=0x%08lx", discAd[5], (unsigned long)discNode);
+     Bluefruit.ScanResponse.addName();
+     // Include Name
+     // Bluefruit.Advertising.addName();
+@@ -127,7 +152,14 @@ void startAdv(void)
       * https://developer.apple.com/library/content/qa/qa1931/_index.html
       */
      Bluefruit.Advertising.restartOnDisconnect(true);
@@ -447,7 +508,7 @@ index 4f7fb47..c86a529 100644
      Bluefruit.Advertising.setFastTimeout(30);   // number of seconds in fast mode
      Bluefruit.Advertising.start(0); // 0 = Don't stop advertising after n seconds.  FIXME, we should stop advertising after X
  }
-@@ -240,13 +247,169 @@ int NRF52Bluetooth::getRssi()
+@@ -240,13 +272,169 @@ int NRF52Bluetooth::getRssi()
  {
      return 0; // FIXME figure out where to source this
  }
@@ -617,7 +678,7 @@ index 4f7fb47..c86a529 100644
      // Clear existing data.
      Bluefruit.Advertising.stop();
      Bluefruit.Advertising.clearData();
-@@ -292,15 +455,31 @@ void NRF52Bluetooth::setup()
+@@ -292,15 +480,31 @@ void NRF52Bluetooth::setup()
      // BLEService and BLECharacteristic classes
      LOG_INFO("Init the Mesh bluetooth service");
      setupMeshService();

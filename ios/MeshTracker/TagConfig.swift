@@ -30,6 +30,7 @@ final class TagConfigManager: NSObject, @preconcurrency CBCentralManagerDelegate
     var smallAcks: [SmallAck] = []  // SEQUENCED 7-byte SIGNAL/RADIO ACK queue — the direct
                                     // config link is the close-range command path (A4)
     var linkGeneration = 0          // bumps on every (re)connect/stop — uploads bind to one generation
+    var onNodeInfo: ((UInt32, String, String) -> Void)? // A3: names heard on this link
     var linkNodeNum: UInt32 = 0     // my_node_num of the CONNECTED peripheral (identity proof)
 
     @ObservationIgnored private var central: CBCentralManager?
@@ -327,6 +328,9 @@ final class TagConfigManager: NSObject, @preconcurrency CBCentralManagerDelegate
             if let sa = parseSmallAck(v) {
                 smallAcks.append(sa) // same discipline for SIGNAL/RADIO ACKs
             }
+            if let ni = parseNodeInfo(v) { // A3: names flow on this link too
+                onNodeInfo?(ni.num, ni.longName, ni.shortName)
+            }
             if let fr = fromRadio { p.readValue(for: fr) } // keep draining
         } else if !handshakeDone {
             handshakeDone = true
@@ -359,6 +363,17 @@ final class TagConfigManager: NSObject, @preconcurrency CBCentralManagerDelegate
 
     /// Raw portnum-260 frame over this direct link (track uploads etc. — DOWNLINK.md op 0x05).
     func sendRaw(_ payload: Data) { send(payload) }
+
+    /// Rename THIS link's tag (persists on-device). Local-link admin only — see MeshProto.
+    func renameNode(longName: String, shortName: String) {
+        guard let p = peripheral, let tr = toRadio, linkNodeNum == targetNode,
+              activeAttemptGeneration == linkGeneration else { return }
+        let frame = encodeAdminSetOwner(to: targetNode, longName: longName, shortName: shortName,
+                                        packetId: UInt32.random(in: 1...UInt32.max))
+        p.writeValue(frame, for: tr, type: .withResponse)
+        if let fr = fromRadio { p.readValue(for: fr) }
+        onNodeInfo?(targetNode, longName, shortName) // optimistic; the NodeInfo broadcast confirms
+    }
 
     func apply(_ s: TagSettings) {
         stage = .applying

@@ -501,6 +501,85 @@ func parseSmallAck(_ data: Data) -> SmallAck? {
     return nil
 }
 
+// MARK: - Typed discovery (A2 — docs/DISCOVERY.md is the external contract)
+
+/// The fleet's BLE discovery advertisement: manufacturer data in the scan response,
+/// `[company 0xFFFF]['M']['T'][ver][type][nodeNum u32 LE]`. Stock Meshtastic nodes don't
+/// carry it — consumers use it to identify device TYPE without name heuristics.
+struct DiscoveryAd: Equatable {
+    enum DeviceType: UInt8 {
+        case bridge = 1 // BLE5/LoRa bridge (relays Dronetag Remote ID)
+        case gpsTag = 2 // self-contained GPS tag
+        case base = 3   // iPhone-side receiver — the connection target
+    }
+
+    let version: UInt8
+    let type: DeviceType
+    let nodeNum: UInt32
+
+    /// Parse CoreBluetooth's `CBAdvertisementDataManufacturerDataKey` payload.
+    static func parse(_ data: Data) -> DiscoveryAd? {
+        let b = [UInt8](data)
+        guard b.count >= 10, b[0] == 0xFF, b[1] == 0xFF, b[2] == UInt8(ascii: "M"),
+              b[3] == UInt8(ascii: "T"), let t = DeviceType(rawValue: b[5]) else { return nil }
+        return DiscoveryAd(version: b[4], type: t,
+                           nodeNum: UInt32(b[6]) | (UInt32(b[7]) << 8) | (UInt32(b[8]) << 16) | (UInt32(b[9]) << 24))
+    }
+}
+
+// MARK: - Node names (A3 — NodeInfo.user carries the persisted owner name)
+
+/// Parse a FromRadio frame as NodeInfo (field 4) → (nodeNum, longName, shortName).
+/// Nodes broadcast these on boot/rename; the Base relays them like any mesh packet.
+func parseNodeInfo(_ data: Data) -> (num: UInt32, longName: String, shortName: String)? {
+    var r = ProtoReader(data)
+    while let (field, wire) = r.readTag() {
+        if field == 4, wire == 2 { // FromRadio.node_info (NodeInfo)
+            guard let ni = r.readBytes() else { return nil }
+            var n = ProtoReader(ni)
+            var num: UInt32 = 0
+            var user: ArraySlice<UInt8>?
+            while let (nf, nw) = n.readTag() {
+                switch (nf, nw) {
+                case (1, 0): num = n.readVarint().map { UInt32(truncatingIfNeeded: $0) } ?? 0
+                case (2, 2): user = n.readBytes()
+                default: n.skip(nw)
+                }
+            }
+            guard num != 0, let u = user else { return nil }
+            var ur = ProtoReader(u)
+            var longName = "", shortName = ""
+            while let (uf, uw) = ur.readTag() {
+                switch (uf, uw) {
+                case (2, 2): if let b = ur.readBytes() { longName = String(decoding: b, as: UTF8.self) }
+                case (3, 2): if let b = ur.readBytes() { shortName = String(decoding: b, as: UTF8.self) }
+                default: ur.skip(uw)
+                }
+            }
+            return longName.isEmpty && shortName.isEmpty ? nil : (num, longName, shortName)
+        }
+        r.skip(wire)
+    }
+    return nil
+}
+
+/// Encode ToRadio{ packet{ to, decoded: Data{ portnum 6 (ADMIN), AdminMessage.set_owner } } }.
+/// Rename persists on the device (owner is flash-backed) and re-broadcasts as NodeInfo.
+/// LOCAL-LINK ONLY: phone-injected admin (from = 0) skips the session-passkey gate; remote
+/// admin over LoRa would need the passkey/PKI dance and is deliberately out of scope.
+func encodeAdminSetOwner(to: UInt32, longName: String, shortName: String, packetId: UInt32) -> Data {
+    var user = Data()
+    if let ln = longName.data(using: .utf8), !ln.isEmpty {
+        user += ptag(2, 2) + pvarint(UInt64(ln.count)) + ln // User.long_name
+    }
+    if let sn = shortName.data(using: .utf8), !sn.isEmpty {
+        user += ptag(3, 2) + pvarint(UInt64(sn.count)) + sn // User.short_name
+    }
+    var admin = Data()
+    admin += ptag(2, 2) + pvarint(UInt64(user.count)) + user // AdminMessage.set_owner
+    return encodeToRadioData(to: to, portnum: 6, payload: admin, packetId: packetId)
+}
+
 /// Parse FromRadio.my_info.my_node_num — tells us WHICH node this BLE link talks to.
 func parseMyNodeNum(_ data: Data) -> UInt32? {
     var r = ProtoReader(data)

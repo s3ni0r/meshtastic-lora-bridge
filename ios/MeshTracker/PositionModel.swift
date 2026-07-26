@@ -43,7 +43,10 @@ final class SourceTrack: Identifiable {
 
     /// Short display id, e.g. "9cda" — enough to tell two physical tags apart.
     var shortId: String { String(String(format: "%08x", from).suffix(4)) }
-    var title: String { "\(source.label) ·\(shortId)" }
+    /// A3: the node's persisted owner name (from NodeInfo / a rename) wins over the generic
+    /// source label; factory-default fleet names already state the function (TAG-GPS-xxxx).
+    var ownerName = ""
+    var title: String { ownerName.isEmpty ? "\(source.label) ·\(shortId)" : ownerName }
 
     @ObservationIgnored private var times: [Date] = []
     @ObservationIgnored private var novelTimes: [Date] = []
@@ -171,6 +174,7 @@ final class PositionModel {
             track = SourceTrack(from: sp.from, seenOrder: tracks.count)
             track.isFavorite = favorites.contains(sp.from)
             track.isVisible = !hidden.contains(sp.from)
+            track.ownerName = names[sp.from] ?? "" // a NodeInfo may have arrived before the stream
             tracks.append(track)
             resort()
         }
@@ -179,6 +183,18 @@ final class PositionModel {
         packetCount += 1
         revision &+= 1
         writeCSV(sp, now)
+    }
+
+    /// A3: persisted owner names (NodeInfo broadcasts / renames) — keyed by node id. Applies
+    /// to known tracks immediately and to late joiners at ingest time.
+    private(set) var names: [UInt32: String] = [:]
+
+    func setName(_ num: UInt32, long: String, short: String) {
+        let label = long.isEmpty ? short : long
+        guard !label.isEmpty, names[num] != label else { return }
+        names[num] = label
+        tracks.first(where: { $0.from == num })?.ownerName = label
+        revision &+= 1
     }
 
     /// Device telemetry (portnum 67) — battery/voltage for nodes that don't stream positions
