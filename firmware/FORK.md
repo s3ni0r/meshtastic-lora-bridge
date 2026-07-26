@@ -100,8 +100,9 @@ PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER
 
 # TAG flavor B — self-contained GPS tag (onboard AG3335 unlocked, §3/§9). Default GNSS target is
 # 4 Hz (-DGPSTAG_FIX_INTERVAL_MS=250; set 100 for 10 Hz — the probe STEERS to the target, e.g.
-# back down from a flash-persisted 10 Hz). GPS_TAG implies HIGHRATE_POSITION_SENDER +
-# HIGHRATE_TX_ONLY + a 100 ms GPS parser tick; the default 150 ms TX spacing passes 4 Hz untouched:
+# back down from a flash-persisted 10 Hz). GPS_TAG implies HIGHRATE_POSITION_SENDER + a 100 ms
+# GPS parser tick; since tag-downlink the radio RX stays ENABLED (portnum-260 command channel —
+# docs/DOWNLINK.md) and the default TX spacing is 500 ms (EU868-legal 2 Hz; app-tunable live):
 PLATFORMIO_BUILD_FLAGS="-DGPS_TAG" pio run -e tracker-t1000-e
 
 # Base (iPhone-side receiver): plain build — a sender-flavor Base would emit pointless heartbeats:
@@ -118,8 +119,10 @@ fallback poll when a cross-task wake is missed.
 ## 5. Flash
 
 **Preferred:** `tools/flash_t1000e.sh <flavor> [port|role]` — flashes a **versioned release** from
-`firmware/releases/` (UF2 or serial-DFU automatically, checksummed, with the per-flavor config
-cheat-sheet printed after). `--list` shows releases + connected boards.
+`firmware/releases/` (checksummed, hardware-serial-pinned bootloader serial-DFU; the explicit
+`uf2` target instead copies onto a double-tapped T1000-E volume) with the per-flavor config
+cheat-sheet printed after. `--list` shows releases + connected boards. Procedures + wedge
+recovery: `.claude/skills/flash-t1000e/SKILL.md`.
 
 Manual UF2 fallback: hold the button and connect the magnetic charge cable **twice** until the
 green LED is **solid**; a `T1000-E` USB drive mounts — drag the matching `.uf2` onto it. On a big
@@ -192,8 +195,11 @@ PLATFORMIO_BUILD_FLAGS="-DODID_SNIFFER -DODID_PHY_EXT -DHIGHRATE_POSITION_SENDER
 
 `-DGPS_TAG` turns a T1000-E into a **self-contained tag**: its own AG3335 fixes stream on
 `PRIVATE_APP(256)` in the exact bridge format, so the Base and iOS app need no per-flavor logic.
-One flag implies the whole role (`HIGHRATE_POSITION_SENDER`, `HIGHRATE_TX_ONLY`, 100 ms GPS parser
-tick); it is mutually exclusive with `ODID_SNIFFER` (compile error if combined).
+One flag implies the whole role (`HIGHRATE_POSITION_SENDER`, 100 ms GPS parser tick); it is
+mutually exclusive with `ODID_SNIFFER` (compile error if combined). Since branch `tag-downlink`
+the GPS tag does NOT use `HIGHRATE_TX_ONLY` — its radio listens for the portnum-260 downlink
+(mode switching, signals, simulator — `docs/DOWNLINK.md`); `CLIENT_MUTE` still guarantees it
+never rebroadcasts mesh traffic. The **bridge** keeps TX-only (its explicit build flag).
 
 ### Payload identity — telling the tags apart
 
@@ -291,7 +297,7 @@ The shipped defaults ARE the field-approved profile — a fresh flash needs no t
 | Min satellite SNR | **14 dB** | multipath mask |
 | Elevation mask | **10°** | low-horizon multipath cut |
 | GNSS fix rate | **250 ms (4 Hz)** | probe steers to target each boot |
-| LoRa TX spacing | **150 ms (~6.7 Hz cap)** | bench/US-legal; use the France profile (500 ms = 2 Hz) for EU868 sustained |
+| LoRa TX spacing | **500 ms (2 Hz, EU868-legal)** | shipped default since tag-downlink (external review R1); the app's bench/US profile lowers it live for testing |
 
 All remain live-tunable from the app (§ below); these are just the first-run values.
 
@@ -310,10 +316,10 @@ All remain live-tunable from the app (§ below); these are just the first-run va
 
 ### Configure + verify the GPS tag
 
-Node settings are the §6 list (same channel/PSK as Base) with **`device.role CLIENT_MUTE`**: the
-tag is a pure sender — firmware-side `HIGHRATE_TX_ONLY` already keeps the LR1110 out of RX (deaf
-to LoRa, TX untouched), CLIENT_MUTE keeps it from ever rebroadcasting, and **BLE stays fully
-usable** (unlike the bridge, the GPS tag keeps advertising, so the Meshtastic app connects
+Node settings are the §6 list (same channel/PSK as Base) with **`device.role CLIENT_MUTE`**:
+since `tag-downlink` the GPS tag's LR1110 idles in RX for the portnum-260 command channel
+(`docs/DOWNLINK.md`) — CLIENT_MUTE is what guarantees it never REBROADCASTS mesh traffic — and
+**BLE stays fully usable** (unlike the bridge, the GPS tag keeps advertising, so apps connect
 normally). At 4 Hz/ShortTurbo the ~7% channel utilization sits well under CLIENT_MUTE's gate, so
 TRACKER's 40% allowance isn't needed. Plus `position.gps_update_interval=1`, GPS **enabled**.
 Give each node a distinct name for sanity (`meshtastic --set-owner "TAG-GPS"` /

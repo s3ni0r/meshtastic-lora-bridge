@@ -1,90 +1,68 @@
-# TODO — sensor fusion roadmap (QMA6100P + battery)
+# TODO — pending work (sensor fusion + GNSS follow-ups)
 
-Findings from the 2026-07-04 brainstorm on exploiting the T1000-E's remaining sensors for better
-tag tracking. Context: GPS tag streams onboard AG3335 fixes at 4 Hz (see `firmware/FORK.md` §9);
-payload is 17 bytes on `PRIVATE_APP(256)`, flags bits 1–4 still free.
+Pending items only. Shipped milestones live in [docs/HISTORY.md](docs/HISTORY.md) (battery →
+payload v3 2026-07-13; motion energy + `moving` bit → payload v4, speed-gated ADAPTIVE TX,
+downlink/signals/simulator → tag-downlink 2026-07-26, firmware v4.3). Physics findings that
+shaped this list (why dead reckoning is impossible with the QMA6100P, why motion
+classification is near-perfect): see the findings section preserved in git history
+(`git log --follow TODO.md`) — short version: ±20–50 mg drifting bias double-integrates to
+~350 m/min, but stationary-vs-moving from acceleration variance is orientation-independent
+and rock-solid, exactly where GPS is blind (parked fixes wander 1–5 m, 70 m measured in bad
+multipath).
 
-## Findings (the physics that shaped the plan)
+Current payload: **19 B v4** on `PRIVATE_APP(256)` — byte 17 battery, byte 18 motion energy,
+flags bit1 `moving` (see `docs/BATTERY_INTEGRATION.md`).
 
-**QMA6100P accelerometer** (3-axis, 14-bit @ ±2 g ≈ 0.24 mg/LSB, ~1–3 mg RMS noise, HW
-any-motion/no-motion engines at µA cost, INT on P1.02, driver `src/motion/QMA6100PSensor.cpp`):
+## 1. Sea/surf threshold tuning → accel-gated TX  [data, then firmware]
 
-- **Dead reckoning is physically impossible with this part** — ±20–50 mg temperature-drifting
-  bias double-integrates to ~10 m error in 10 s, ~350 m in 60 s; and with no gyro/magnetometer,
-  every degree of unknown tilt leaks ~170 mg of gravity into the horizontal axes (100× signal).
-  Do NOT attempt INS-style integration between fixes.
-- **Motion classification is where it's near-perfect**: stationary-vs-moving from acceleration
-  variance (hysteresis: >~50 mg for 0.5 s → moving; <~20 mg for ~3 s → parked) is orientation-
-  independent and rock-solid. GPS is blind exactly here: a parked tag's fixes wander 1–5 m
-  (70 m measured in bad multipath) and render as fake movement.
-- GPS speed lags reality ~0.5–1 s; the accel detects start/stop instantly (polish for the
-  phone-side interpolation, minor at 4 Hz).
-- ~~Impact/free-fall bit~~ — dropped, not useful for this project.
+- [ ] Tune the sea/surf motion thresholds from recorded surf-session `me` data (sessions
+      carry per-packet motion energy since v4 — the instrument exists; needs real sessions
+      at sea). Provisional land thresholds shipped: >50 mg 0.5 s up / <20 mg 3 s down.
+- [ ] Accel-gated refinement of ADAPTIVE TX: use the `moving` classifier (flags bit1) as a
+      second gate next to speed — instant upshift on the pop-up instead of waiting ~1 s for
+      GPS speed. AFTER the sea thresholds are tuned.
+- [ ] Measure the battery win: %/hour parked vs moving, before/after (sessions carry
+      per-packet `bt` since v3 — one long parked + one long moving session gives both
+      slopes). Biggest battery lever available (700 mAh cell); also frees channel airtime.
 
-**Battery**: valuable, trivial — percent already available in firmware power status; 1 byte.
+## 2. Parked-position handling in the app (ZUPT display fusion)  [iOS only]
 
-## Roadmap (priority order)
-
-### 1. Payload v3: `moving` bit + battery byte  [firmware + iOS + tools]
-- [x] **Battery byte SHIPPED (2026-07-13, firmware v3.0)**: byte 17 = battery % (101 = USB,
-      255 = unknown) in every stream packet from both tag flavors → 18-byte payload; Base battery
-      via DeviceTelemetry-to-phone every 15 s (fork tweak); iOS badges (status capsule, tag rows,
-      Tag Setup card + voltage/age), portnum-67 fallback for pre-v3 tags; sessions record `bt`
-      per point; CSV/GPX exports + tools/m2_stream_poc.py updated. ShortFast airtime 45 → 48 ms
-      (EU 2 Hz = 9.5% duty, still legal — CAPACITY.md recomputed).
-- [x] **Motion data SHIPPED (2026-07-26, payload v4 on tag-downlink)**: QMA6100P sampled at
-      10 Hz on the stock AccelerometerThread tick; **byte 18 = raw motion-energy envelope**
-      (mg/4 — free on air: 19 B stays in the same ShortFast symbol group) + **flags bit1 =
-      moving** with PROVISIONAL land thresholds (>50 mg 0.5 s up / <20 mg 3 s down). Sessions
-      record `me` per point + the flag — recordings are now the dataset that tunes the SEA
-      thresholds. iOS shows a live motion tile (mg + moving/still); boot stability verified
-      (the old I²C init worry didn't materialize — sampling rides the existing sensor thread).
-- [ ] Tune the sea/surf thresholds from recorded surf-session `me` data, then wire the
-      classifier into motion-gated TX (#3) / the adaptive tier as a second gate next to speed.
-
-### 2. Parked-position handling in the app (ZUPT display fusion)  [iOS only]
 - [ ] While `moving == 0`: freeze the marker (stop trail growth), average incoming fixes
       (√N gain, realistically 2–3×), force speed 0, hold heading, show "parked".
 - [ ] While moving: reject fixes implying physically impossible jumps for the motion class
       (multipath spikes), e.g. >8 m step between 250 ms fixes while accel energy says walking.
 
-### 3. Motion-gated TX  [firmware]
-- [x] **Speed-gated variant SHIPPED (tag-downlink, 2026-07-25/26)** as ADAPTIVE TX mode: full
-      rate ≥5 km/h (instant), 1 pkt/3 s after 15 s below 3 km/h, hysteresis hold between; all
-      four knobs phone-tunable (settings wire v3), mode/tier echoed in stream flags, CALIBRATION
-      override with TTL dead-man. Bench-validated end-to-end via the on-tag simulator
-      (docs/DOWNLINK.md). Balcony observation: static tag = 0.1–0.3 Hz, as designed.
-- [ ] Accel-gated refinement: use the `moving` classifier (payload v4, bit1) as a second gate
-      next to speed — instant upshift on the pop-up instead of waiting ~1 s for GPS speed —
-      AFTER the sea thresholds are tuned from recorded session `me` data.
-- [ ] Biggest battery lever available (700 mAh cell); also frees channel airtime at rest.
-- [ ] Measure: %/hour parked and moving, before/after — the instrument exists since v3: session
-      recordings carry per-packet `bt`, so a long parked + long moving session gives both slopes.
+## 3. GNSS follow-ups
 
-### 3.5 GNSS field-quality follow-ups (from the 2026-07-06 outdoor test)
-- [x] Motion-tuning ACKs verified on-device ($PAIR080/070/058 all ACK 0; mode 7 Swimming
-      rejected ACK 4 on this unit). Accuracy pack shipped in v1.2: GST-backed hacc ($PAIR062,8,1
-      ACK 0), elevation-mask knob ($PAIR072 ACK 0), AIC confirmed on, jamming events enabled.
-      EASY ($PAIR490) is UNSUPPORTED on this build (ACK 3) — TTFF path is EPO injection only.
-- [x] Outdoor check folded into the 2026-07-07 approval (GST ±m live; elev 10° kept).
-- [x] Walk test APPROVED (2026-07-07): fitness(+freeze 0.3 m/s+SNR 14+elev 10°) profile is the
-      v2.0 default. (Sheet said Swimming; unit rejects mode 7 — what ran, and what shipped, is
-      Fitness.)
-- [ ] TTFF: main lever is AGNSS/EPO ephemeris injection (Airoha EPO file over UART at boot —
-      needs a download path via phone/BLE or USB; Dronetag gets assistance from its app, which
-      is why it fixes faster). Design sketch first; non-trivial.
+- [ ] TTFF: the main lever is AGNSS/EPO ephemeris injection (Airoha EPO file over UART at
+      boot — needs a download path via phone/BLE or USB; Dronetag gets assistance from its
+      app, which is why it fixes faster). EASY is genuinely unsupported on this unit
+      (ACK 3). Design sketch first; non-trivial.
 - [ ] Consider nav mode 5 (Drone) + SBAS for airborne use (fitness kills EGNOS; drone mode
-      keeps it) — flag-only change: -DGPSTAG_NAV_MODE=5.
+      keeps it) — flag-only change: `-DGPSTAG_NAV_MODE=5`.
 
-### 4. Experiments (cheap, uncertain gain — try when idle)
-- [ ] **Base-as-reference differential**: Base is static with an idle GPS; its wander is the
-      local common-mode GPS error (same sats/iono, EGNOS residuals). Subtract Base's
+## 4. Experiments (cheap, uncertain gain — try when idle)
+
+- [ ] **Base-as-reference differential**: the Base is static with an idle GPS; its wander is
+      the local common-mode GPS error (same sats/iono, EGNOS residuals). Subtract the Base's
       deviation-from-average from tag fixes on the phone. Expect 20–40% on smooth error,
       nothing on multipath spikes — measure before adopting.
 - [ ] **Orientation vs RSSI diagnostics**: quasi-static gravity vector → coarse tilt; log
       against per-packet RSSI to see if link dips correlate with antenna orientation.
 
+## Engineering debt (acknowledged, deliberately deferred — from the external reviews)
+
+- [ ] Bit-exact / hermetic firmware builds (current releases are source-mapped, not
+      bit-exact — deps float, dates embedded, global framework hook).
+- [ ] Recorder file I/O is synchronous on the main queue (measurement app, acceptable; would
+      matter at much higher packet rates).
+- [ ] Map keeps a 10 Hz UI timer while idle.
+- [ ] Host-side CI / test target (protocol coverage is the hardware bench suite only).
+- [ ] `MeshTrackerWatch` target is dormant and drifting.
+
 ## Out of scope (decided)
+
 - Inertial dead reckoning / EKF tight coupling (unsupported by hardware — see findings).
 - Impact / free-fall event bit (user decision 2026-07-04).
-- Temperature + lux telemetry (available in `T1000xSensor.cpp` if ever wanted; not valuable here).
+- Temperature + lux telemetry (available in `T1000xSensor.cpp` if ever wanted; not valuable
+  here).
