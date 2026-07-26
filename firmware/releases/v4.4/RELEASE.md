@@ -47,9 +47,12 @@ Full contract: `docs/DOWNLINK.md`; behavior: `docs/RADIO_STATES.md`; payload byt
 On this exact firmware source as dev builds (2026-07-26), then re-verified against the
 RELEASED artifacts (2026-07-27): the released `gps-tag.uf2` was flashed via
 `flash_t1000e.sh`, its `v4.4.e2b8a9e8` identity confirmed in device metadata, and the full
-suite re-run against it — **70/70 PASS (exit 0)**. The released `bridge-tag.uf2` passed
-artifact/identity validation; its on-hardware re-run (`verify_bridge.py`) is recorded below
-once flashed (the dev build of identical source content passed 20/20 on 2026-07-26):
+suite re-run against it — **70/70 PASS (exit 0)**. The released `bridge-tag.uf2` was then
+flashed the same way (2026-07-27), `v4.4.e2b8a9e8` confirmed in device metadata, and
+`verify_bridge.py` re-run against it — **20/20 PASS (exit 0)**. (First post-flash run
+surfaced radio-status 0x03: a PERMANENT-DEAF profile persisted during app-side testing —
+correct boot-per-profile behavior, restored to HYBRID over USB; recorded here because a
+boot-deaf bridge is silent on LoRa commands by design and the profile survives reflashes.)
 
 - `tools/bench/verify_fixes.py` (GPS tag `!18e77545` + Base `!b0bb9cda`): **70/70 PASS
   (exit 0)** — the full v4.3 regression surface (adaptive band, TRACK correlation/A-B

@@ -251,7 +251,10 @@ if back:
     marker = b"slow connectable adv + continuous scan" in buf
     secs = [int(x) for x in re.findall(rb"\?\?:\?\?:\?\? (\d+) ", buf)]
     uptime = max(secs) if secs else None
-check("D6: uptime restarted (real reboot)", uptime is not None and uptime < 90, f"uptime≈{uptime}s")
+# < 150 s, not 90: the capture pipeline itself (re-enumeration poll, CDC open retries, 30 s
+# marker read) can consume ~2 min before the LAST uptime token is parsed — measured 125 s on
+# a provably fresh boot (2026-07-27). A device that ignored the reboot shows hours, not minutes.
+check("D6: uptime restarted (real reboot)", uptime is not None and uptime < 150, f"uptime≈{uptime}s")
 check("bridge boot log shows slow connectable adv + continuous ODID scan", marker)
 
 print()
