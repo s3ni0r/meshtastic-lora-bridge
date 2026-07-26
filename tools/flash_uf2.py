@@ -18,9 +18,11 @@ Safety gates (all fail closed — R3 f4 + R4 f5):
   - the UF2 image is validated first: block magics + nRF52840 family id on EVERY block;
   - only a volume whose INFO_UF2.TXT / name identifies a T1000-E is a candidate — a generic
     nRF52 bootloader from another board is rejected by identity;
-  - exactly ONE candidate volume and exactly ONE T1000 bootloader USB device, else refuse;
-  - with a role/serial pinned, the bootloader USB device's serial must MATCH it — the volume
-    is attributed to specific silicon, not to whatever happens to be mounted;
+  - exactly ONE candidate volume, else refuse;
+  - with a role/serial pinned, the volume is attributed to its OWNING USB device through the
+    IORegistry (diskutil BSD name -> ancestor USB serial) and that serial must match the pin —
+    specific silicon, not whatever happens to be mounted (product strings are unreliable:
+    macOS caches them stale AND the fleet has two bootloader generations with different names);
   - success is only the bootloader unmounting the volume (image accepted).
 """
 import glob
@@ -92,17 +94,40 @@ def t1000_volumes():
     return out
 
 
-def boot_devices():
-    """USB devices currently in T1000 bootloader mode: (serial, product). NOTE: macOS can
-    serve a STALE product string for a re-enumerated path, so 'boot' naming alone is only a
-    coarse filter — the mounted-volume gate remains the primary signal."""
+def volume_owner_serial(volume):
+    """The USB hardware serial that OWNS a mounted volume, resolved through the IORegistry
+    (diskutil -> BSD name -> nearest ancestor USB serial). This is the only trustworthy
+    per-device correlation on macOS: product strings go stale across re-enumeration, and the
+    fleet carries two bootloader generations with different naming (older 'T1000-E-BOOT' /
+    VID 0x239A vs Seeed 0.9.1 'T1000-E' / VID 0x2886 — measured 2026-07-26). Returns the
+    serial, or None when it cannot be resolved."""
+    import re
+    import subprocess
     try:
-        from serial.tools import list_ports
-    except ImportError:
-        return None  # pyserial unavailable — caller degrades to volume-only gating
-    return [((p.serial_number or "").upper(), p.product or "")
-            for p in list_ports.comports()
-            if p.vid == 0x239A and "boot" in (p.product or "").lower()]
+        info = subprocess.run(["diskutil", "info", volume], capture_output=True, text=True, timeout=15)
+        m = re.search(r"Device Identifier:\s+(disk\d+)", info.stdout)
+        if not m:
+            return None
+        bsd = m.group(1)
+        reg = subprocess.run(["ioreg", "-l", "-w0"], capture_output=True, text=True, timeout=20)
+        lines = reg.stdout.splitlines()
+        target = None
+        for idx, line in enumerate(lines):
+            if f'"BSD Name" = "{bsd}"' in line:
+                target = idx
+                break
+        if target is None:
+            return None
+        # ioreg prints ancestors before descendants: the nearest PRECEDING USB serial is the
+        # device this media hangs off.
+        pat = re.compile(r'(?:kUSBSerialNumberString"="|"USB Serial Number" = ")([0-9A-Fa-f]{8,})"')
+        for line in reversed(lines[:target]):
+            mm = pat.search(line)
+            if mm:
+                return mm.group(1).upper()
+        return None
+    except Exception:
+        return None
 
 
 def main():
@@ -140,22 +165,16 @@ def main():
         sys.exit(f"ERROR: {len(vols)} candidate bootloader volumes {vols} — ambiguous, refusing.")
     drive = vols[0]
 
-    boots = boot_devices()
-    if boots is not None:
-        if len(boots) > 1:
-            sys.exit(f"ERROR: {len(boots)} T1000 bootloader USB devices {boots} — cannot tell "
-                     "which owns the mounted volume, refusing.")
-        if expect_serial:
-            if not boots:
-                sys.exit("ERROR: a volume is mounted but no T1000 bootloader USB device is "
-                         "visible — cannot verify identity, refusing.")
-            if boots[0][0] != expect_serial:
-                sys.exit(f"ERROR: bootloader device serial {boots[0][0]} != expected "
-                         f"{expect_serial} — the mounted volume belongs to ANOTHER board, refusing.")
-            print(f"   identity OK: bootloader USB serial {boots[0][0]} matches")
-    elif expect_serial:
-        sys.exit("ERROR: pyserial unavailable — cannot verify the pinned serial. Install it or "
-                 "pass '-' (single-board bench only).")
+    if expect_serial:
+        owner = volume_owner_serial(drive)
+        if owner is None:
+            sys.exit("ERROR: could not resolve which USB device owns the mounted volume — "
+                     "cannot verify the pinned serial. Pass '-' explicitly (single-board "
+                     "bench only) to flash without the identity pin.")
+        if owner != expect_serial:
+            sys.exit(f"ERROR: the mounted volume belongs to USB serial {owner}, not the pinned "
+                     f"{expect_serial} — that is ANOTHER board, refusing.")
+        print(f"   identity OK: volume owner USB serial {owner} matches the pin")
 
     _, info = volume_identity(drive)
     print(f"   bootloader volume: {drive}")
