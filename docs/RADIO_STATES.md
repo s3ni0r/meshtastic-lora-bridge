@@ -8,6 +8,19 @@
 > range); **DEAF** = runtime TX-only (radio sleeps between TX; LoRa-unreachable; BLE/USB
 > command path still works). The button toggle and reboot are the two recovery paths that
 > depend on nothing.
+>
+> **One generic machine (agreed 2026-07-26):** the radio-state machinery is a SINGLE
+> shared firmware module compiled into both tag flavors — states + persistence rules,
+> the radio-state op with ACK-before-mute, the button ×N toggle with its beep signatures,
+> the retry-until-ACK signal discipline, and the BLE/USB command path that works in every
+> state. Flavors differ only in what runs INSIDE the states (GPS tag: GNSS knobs +
+> ADAPTIVE/CALIBRATION TX modes; bridge: relay + sniffer/advertising coexistence).
+> Diagram 2 is diagram 1 minus the GNSS-specific state — same machine, fewer rooms.
+> Close-range control: the phone toggles LISTENING↔DEAF over BLE in ANY state, on both
+> flavors — the bridge gains this via always-on slow connectable advertising (~1–2 s
+> interval, ≲0.3 % scan-time cost, Dronetag's ~5 Hz re-adverts cover the gaps; bench A/B
+> of sniffer throughput with advertising on/off is the acceptance gate). Recovery ladder,
+> both flavors: LoRa (listening) → BLE (close range, any state) → button → reboot.
 
 ## 1. GPS/LoRa tag — HYBRID profile (default; the AutoShot choreography)
 

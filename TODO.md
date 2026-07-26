@@ -112,6 +112,12 @@ shows "persists across reboots" consequences explicitly.
       this tag in NOW".
 - [ ] Wire: settings v3 → v4 (profile byte + validation); a 260 op that restores Hybrid;
       known-good reflash remains the last-resort escape.
+- [ ] **Generic implementation (agreed)**: ONE shared radio-state module compiled into
+      both flavors (states, persistence rules, radio-state op + ACK-before-mute, button
+      toggle + beeps, signal retry discipline, BLE/USB path in every state); flavor code
+      only supplies what runs inside the states. BLE deaf-toggle works at close range in
+      ANY state on both flavors — the bridge side rides A1's slow connectable advertising
+      (≲0.3 % scan-time cost, bench A/B with the sniffer as acceptance gate).
 
 ## B. Platform & architecture
 
