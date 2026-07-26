@@ -221,7 +221,10 @@ check(
 )
 t0 = time.monotonic()
 transitions, last = [], None
-while time.monotonic() - t0 < 75:
+# Watch 95 s, not 75: the downshift lands ~60-65 s in (10 s fast + 35 s band + 15 s sustain,
+# plus sim-start latency) — a 75 s window put the expected event within seconds of the edge
+# and produced a spurious FAIL on 2026-07-27 (downshifts=[] with the sim running correctly).
+while time.monotonic() - t0 < 95:
     time.sleep(1)
     tag_rows = [r for r in rows if r[6] == TAG]
     if tag_rows:
