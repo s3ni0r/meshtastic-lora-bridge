@@ -197,6 +197,40 @@ final class PositionModel {
         return power[from]
     }
 
+#if targetEnvironment(simulator)
+    /// Simulator-only bench double: synthetic packets through the REAL ingest pipeline, so
+    /// every Tag Setup state renders without hardware — a LISTENING v5 GPS tag and a DEAF v5
+    /// bridge (exercises the deaf-route warning). Never compiled into device builds.
+    func seedSimulatorDemo() {
+        var gps = StreamPacket()
+        gps.from = 417_822_021 // !18e77545 — the bench GPS tag
+        gps.lat = 48.8584; gps.lon = 2.2945
+        gps.flags = 0x01 | 0x04 | (2 << 5) // lock · ADAPTIVE · source = GPS tag
+        gps.altitude = 42; gps.speedKmh = 4; gps.hacc = 3
+        gps.battery = 87; gps.motionMg = 24
+        gps.radioStatus = 0x00 // LISTENING · HYBRID
+        for i in 0..<3 {
+            gps.seq = UInt8(i)
+            gps.msInSec = UInt16(i * 250)
+            gps.lat += 0.00002
+            ingest(gps)
+        }
+        var bridge = StreamPacket()
+        bridge.from = 0xB4DB_B54C // !b4dbb54c — the bench bridge
+        bridge.lat = 48.8590; bridge.lon = 2.2952
+        bridge.flags = 0x01 | (1 << 5) // lock · source = bridge
+        bridge.altitude = 55; bridge.speedKmh = 18; bridge.hacc = 2
+        bridge.battery = 101 // externally powered
+        bridge.radioStatus = 0x01 // DEAF — the LoRa route must warn loudly
+        for i in 0..<3 {
+            bridge.seq = UInt8(i)
+            bridge.msInSec = UInt16(i * 200)
+            bridge.lon += 0.00003
+            ingest(bridge)
+        }
+    }
+#endif
+
     // MARK: - Favorites / visibility (persisted across launches)
 
     func toggleFavorite(_ t: SourceTrack) {

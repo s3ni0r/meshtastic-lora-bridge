@@ -39,6 +39,13 @@ struct TagSetupView: View {
     @State private var baseline: TagSettings? // last state confirmed by the tag
     @State private var target: UInt32?
     @State private var signalSeq = UInt8.random(in: 0...255) // legacy op 0x03 dedupe (pre-v4 tags)
+    // The COMMAND ROUTE is an explicit operator choice, never a silent fallback: field tests
+    // need to know exactly which transport a command took. Via Base = LoRa range (reaches a
+    // LISTENING tag; leaves the tag's own Bluetooth free). Direct = close-range Bluetooth
+    // (works in ANY radio state — the recovery path for a deaf tag, and the only route for
+    // settings editing / track upload).
+    enum CommandRoute: String { case viaBase, direct }
+    @State private var route = CommandRoute.viaBase
     // A4 guaranteed delivery: one in-flight signal + one in-flight radio command, each with a
     // visible outcome — the one forbidden result is a silently lost command (RADIO_STATES §4).
     @State private var signalDelivery = DeliveryState.idle
@@ -110,29 +117,34 @@ struct TagSetupView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     deviceCard
-                    // Mode + signals ride the MAIN link (Base-relayed LoRa downlink, or direct) —
-                    // they don't need the settings handshake, only a link and a target.
-                    if target != nil && ble.connectedNodeNum != 0 {
+                    if target != nil {
+                        routeCard
+                    }
+                    // Command cards render only when the CHOSEN route is actually usable —
+                    // never quietly on a different transport than the operator selected.
+                    if routeReady {
                         if v4Wire { radioCard }
                         if showModes { modeCard }
                         if showSimTrack { simulatorCard }
                         if showSignals { signalsCard }
                     }
-                    if baseline != nil {
-                        if draft.isV4 && draft.capProfiles { persistenceCard }
-                        if showGnssKnobs {
-                            profilesCard
-                            navModeCard
-                            filtersCard
-                            ratesCard
+                    if route == .direct {
+                        if baseline != nil {
+                            if draft.isV4 && draft.capProfiles { persistenceCard }
+                            if showGnssKnobs {
+                                profilesCard
+                                navModeCard
+                                filtersCard
+                                ratesCard
+                            }
+                            if draft.isV3 && showModes {
+                                adaptiveCard
+                            }
+                            onTagFooter
+                        } else if connected {
+                            ProgressView("Reading settings from the tag…")
+                                .padding(.vertical, 30)
                         }
-                        if draft.isV3 && showModes {
-                            adaptiveCard
-                        }
-                        onTagFooter
-                    } else if connected {
-                        ProgressView("Reading settings from the tag…")
-                            .padding(.vertical, 30)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -173,9 +185,16 @@ struct TagSetupView: View {
                 directConfigRequest = nil
             }
             .onChange(of: ble.connectedNodeNum) {
-                if ble.directTag, let t = target, ble.connectedNodeNum == t {
+                if ble.directTag, let t = target, ble.connectedNodeNum == t, route == .direct {
                     requestDirectSettings()
                 }
+            }
+            .onChange(of: route) {
+                signalTask?.cancel()
+                radioTask?.cancel()
+                signalDelivery = .idle
+                radioDelivery = .idle
+                applyRoute()
             }
         }
     }
@@ -185,12 +204,30 @@ struct TagSetupView: View {
         target = newTarget
         ui.setupTarget = nil
         baseline = nil
-        guard let t = newTarget else { return }
-        if ble.directTag && ble.connectedNodeNum == t {
-            requestDirectSettings()
-        } else {
+        guard newTarget != nil else { return }
+        // Sensible opening route: with no Base in the picture the direct link is the only
+        // transport; through a Base, range control is the normal field posture.
+        route = ble.directTag ? .direct : route
+        applyRoute()
+    }
+
+    /// Make reality match the chosen route: Direct engages the settings link (main-direct or
+    /// the TagConfig scanner); Via Base RELEASES the tag's Bluetooth entirely — commands go
+    /// over LoRa only, and the tag's own PhoneAPI stays free (bench-friendly, honest testing).
+    private func applyRoute() {
+        guard let t = target else { return }
+        switch route {
+        case .direct:
+            if ble.directTag && ble.connectedNodeNum == t {
+                requestDirectSettings()
+            } else {
+                directConfigRequest = nil
+                mgr.begin(targetNode: t)
+            }
+        case .viaBase:
             directConfigRequest = nil
-            mgr.begin(targetNode: t)
+            baseline = nil
+            if mgr.stage != .idle { mgr.stop() }
         }
     }
 
@@ -241,7 +278,7 @@ struct TagSetupView: View {
             }
             HStack(spacing: 10) {
                 Circle()
-                    .fill(connected ? .green : (mgr.stage == .scanning || mgr.stage == .connecting ? .orange : .red))
+                    .fill((connected || routeReady) ? .green : (mgr.stage == .scanning || mgr.stage == .connecting ? .orange : .red))
                     .frame(width: 10, height: 10)
                 VStack(alignment: .leading, spacing: 1) {
                     if let t = target {
@@ -279,6 +316,11 @@ struct TagSetupView: View {
 
     private var connectionSubtitle: String {
         if direct { return "Direct BLE link (shared with the live stream)" }
+        if route == .viaBase {
+            return ble.connectedNodeNum != 0 && !ble.directTag
+                ? "Commanding at LoRa range through the Base"
+                : "No Base link for the LoRa route"
+        }
         switch mgr.stage {
         case .ready, .applying: return "Config link via \(mgr.deviceName)"
         case .scanning: return "Scanning for the tag over Bluetooth…"
@@ -312,11 +354,11 @@ struct TagSetupView: View {
     }
 
     private func sendMode(_ m: UInt8) {
-        guard let t = target else { return }
+        guard let link = commandLink() else { return }
         heldMode = m == 0 ? 0 : nil
         // CALIBRATION carries a 120 s dead-man TTL; this screen refreshes it every 45 s while
         // held, so leaving the screen (or the app dying) always lands the tag back in ADAPTIVE.
-        ble.sendGnssCommand(to: t, payload: m == 0 ? Data([0x02, 0, 120, 0]) : Data([0x02, 1]))
+        link.send(m == 0 ? Data([0x02, 0, 120, 0]) : Data([0x02, 1]))
     }
 
     private var modeCard: some View {
@@ -348,8 +390,8 @@ struct TagSetupView: View {
         .onReceive(ttlRefresh) { _ in
             if heldMode == 0 { sendMode(0) }
             // Sim keep-alive: extend the dead-man WITHOUT restarting playback (sub-op 0xFF).
-            if simCommanded != 0, simActive, let t = target {
-                ble.sendGnssCommand(to: t, payload: Data([0x04, 0xFF, 0, 0x58, 0x02]))
+            if simCommanded != 0, simActive, let link = commandLink() {
+                link.send(Data([0x04, 0xFF, 0, 0x58, 0x02]))
             }
         }
         .onDisappear { heldMode = nil } // stop refreshing: the tag's TTLs take over
@@ -416,7 +458,7 @@ struct TagSetupView: View {
     private var simActive: Bool { targetTrack?.simulated == true }
 
     private func sendSim(_ source: UInt8) {
-        guard let t = target else { return }
+        guard let link = commandLink() else { return }
         simCommanded = source
         var p = Data([0x04, source, simLoop ? 1 : 0, 0x58, 0x02]) // TTL 600 s (0x0258)
         if source == 1 {
@@ -425,7 +467,7 @@ struct TagSetupView: View {
                 p += Data([UInt8(s.speedKmh), UInt8(s.durS)])
             }
         }
-        ble.sendGnssCommand(to: t, payload: p)
+        link.send(p)
         SimSeg.save(simSegs)
     }
 
@@ -697,9 +739,9 @@ struct TagSetupView: View {
     }
 
     private func sendSimTrack() {
-        guard let t = target else { return }
+        guard let link = commandLink() else { return }
         simCommanded = 3
-        ble.sendGnssCommand(to: t, payload: Data([0x04, 3, simLoop ? 1 : 0, 0x58, 0x02]))
+        link.send(Data([0x04, 3, simLoop ? 1 : 0, 0x58, 0x02]))
     }
 
     private func simButtonLabel(_ label: String, _ icon: String, _ tint: Color) -> some View {
@@ -734,29 +776,39 @@ struct TagSetupView: View {
         let generationOK: () -> Bool
     }
 
+    /// STRICT routing: only the operator-chosen route is ever used — a command never silently
+    /// hops onto a different transport, because a field test's whole point is knowing which
+    /// path was exercised. Returns nil while the chosen route is not usable (cards hide).
     private func commandLink() -> CommandLink? {
         guard let t = target else { return nil }
-        if ble.directTag, ble.connectedNodeNum == t {
+        switch route {
+        case .direct:
+            if ble.directTag, ble.connectedNodeNum == t {
+                let gen = ble.linkGeneration
+                return CommandLink(via: "direct Bluetooth",
+                                   send: { ble.sendGnssCommand(to: t, payload: $0) },
+                                   ackQueue: { ble.smallAcks },
+                                   generationOK: { ble.linkGeneration == gen && ble.connectedNodeNum == t })
+            }
+            if mgr.stage == .ready || mgr.stage == .applying, mgr.linkNodeNum == t {
+                let gen = mgr.linkGeneration
+                return CommandLink(via: "the tag's Bluetooth link",
+                                   send: { mgr.sendRaw($0) },
+                                   ackQueue: { mgr.smallAcks },
+                                   generationOK: { mgr.linkGeneration == gen && mgr.linkNodeNum == t })
+            }
+            return nil
+        case .viaBase:
+            guard ble.connectedNodeNum != 0, !ble.directTag else { return nil }
             let gen = ble.linkGeneration
-            return CommandLink(via: "direct Bluetooth",
+            return CommandLink(via: "the Base over LoRa",
                                send: { ble.sendGnssCommand(to: t, payload: $0) },
                                ackQueue: { ble.smallAcks },
-                               generationOK: { ble.linkGeneration == gen && ble.connectedNodeNum == t })
+                               generationOK: { ble.linkGeneration == gen })
         }
-        if mgr.stage == .ready || mgr.stage == .applying, mgr.linkNodeNum == t {
-            let gen = mgr.linkGeneration
-            return CommandLink(via: "the tag's Bluetooth link",
-                               send: { mgr.sendRaw($0) },
-                               ackQueue: { mgr.smallAcks },
-                               generationOK: { mgr.linkGeneration == gen && mgr.linkNodeNum == t })
-        }
-        guard ble.connectedNodeNum != 0 else { return nil }
-        let gen = ble.linkGeneration
-        return CommandLink(via: "the Base over LoRa",
-                           send: { ble.sendGnssCommand(to: t, payload: $0) },
-                           ackQueue: { ble.smallAcks },
-                           generationOK: { ble.linkGeneration == gen })
     }
+
+    private var routeReady: Bool { commandLink() != nil }
 
     /// At-least-once delivery: retransmit the SAME frame (same u32 cid) until a correlated ACK
     /// {ackOp, echo, cid} arrives from the target node — the tag dedupes on the cid, so
@@ -822,6 +874,98 @@ struct TagSetupView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
                 .background(Color.red, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    // MARK: - Command route (operator-chosen transport — the test cockpit's master switch)
+
+    private var deafFresh: Bool {
+        guard let tr = targetTrack, tr.radioStatus >= 0, tr.isDeaf,
+              let at = tr.radioStatusAt else { return false }
+        return Date().timeIntervalSince(at) < 60
+    }
+
+    private var routeCard: some View {
+        card {
+            sectionHeader("Command route", "arrow.triangle.branch")
+            Picker("", selection: $route) {
+                Text("Via Base · LoRa").tag(CommandRoute.viaBase)
+                Text("Direct · Bluetooth").tag(CommandRoute.direct)
+            }
+            .pickerStyle(.segmented)
+            switch route {
+            case .viaBase: viaBaseStatus
+            case .direct: directStatus
+            }
+        }
+    }
+
+    @ViewBuilder private var viaBaseStatus: some View {
+        if ble.directTag {
+            routeStatusRow(.red, "No Base on this connection — the app is linked straight to a tag.")
+            Text("Reconnect the app through the Base to exercise the LoRa path, or use Direct · Bluetooth.")
+                .font(.caption2).foregroundStyle(.secondary)
+        } else if ble.connectedNodeNum == 0 {
+            routeStatusRow(.orange, "Waiting for the Base connection…")
+        } else {
+            routeStatusRow(.green, "Relaying through the Base at LoRa range.")
+            if deafFresh {
+                Label("Tag reports DEAF — nothing on this route can reach it. Switch to Direct · Bluetooth to restore listening.",
+                      systemImage: "speaker.slash.fill")
+                    .font(.footnote.bold()).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(Color.orange, in: RoundedRectangle(cornerRadius: 10))
+            }
+            Text("Range control while the tag LISTENS: TX mode, signals, simulator, go-deaf. The tag's own Bluetooth stays free. Settings editing and track upload live on the Direct route.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var directStatus: some View {
+        if ble.directTag && ble.connectedNodeNum == target {
+            routeStatusRow(.green, "Direct link (the app's main connection) — no Base involved.")
+        } else {
+            switch mgr.stage {
+            case .ready, .applying:
+                HStack {
+                    routeStatusRow(.green, "Connected to \(mgr.deviceName) over Bluetooth.")
+                    Spacer()
+                    Button("Disconnect") { mgr.stop() }
+                        .font(.caption.bold()).buttonStyle(.bordered).controlSize(.mini)
+                }
+            case .scanning:
+                HStack {
+                    routeStatusRow(.orange, "Scanning — bring the phone near the tag…")
+                    Spacer()
+                    ProgressView().controlSize(.small)
+                }
+            case .connecting, .handshaking:
+                routeStatusRow(.orange, "Connecting to \(mgr.deviceName)…")
+            case .failed(let why):
+                HStack {
+                    routeStatusRow(.red, "Connection failed — \(why)")
+                    Spacer()
+                    Button("Retry") { applyRoute() }
+                        .font(.caption.bold()).buttonStyle(.bordered).controlSize(.mini)
+                }
+            case .idle:
+                HStack {
+                    routeStatusRow(.red, "Not connected to the tag.")
+                    Spacer()
+                    Button("Connect") { applyRoute() }
+                        .font(.caption.bold()).buttonStyle(.borderedProminent).controlSize(.mini)
+                }
+            }
+        }
+        Text("Close-range control + full configuration. Works in ANY radio state — this is the recovery path for a deaf tag (LoRa can't reach one).")
+            .font(.caption2).foregroundStyle(.secondary)
+    }
+
+    private func routeStatusRow(_ color: Color, _ text: String) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(text).font(.caption.bold())
         }
     }
 
@@ -941,13 +1085,13 @@ struct TagSetupView: View {
 
     private func sendSignal(_ id: UInt8) {
         guard let t = target else { return }
+        guard let link = commandLink() else { return }
         guard v4Wire else {
             // Pre-v4 firmware: the old fire-and-forget wire (u8 seq, no ACK to await).
             signalSeq &+= 1
-            ble.sendGnssCommand(to: t, payload: Data([0x03, id, signalSeq]))
+            link.send(Data([0x03, id, signalSeq]))
             return
         }
-        guard let link = commandLink() else { return }
         signalTask?.cancel()
         let sid = UInt32.random(in: 1...UInt32.max)
         var frame = Data([0x03, id])
@@ -972,9 +1116,9 @@ struct TagSetupView: View {
     private var signalsCard: some View {
         card {
             sectionHeader("Operator signals (test)", "bell.and.waves.left.and.right")
-            Text(ble.directTag
-                 ? "Plays on the tag you're directly linked to."
-                 : "Sent through the Base over LoRa — expect a fraction of a second.")
+            Text(route == .direct
+                 ? "Sent over the direct Bluetooth link — works in any radio state."
+                 : "Sent through the Base over LoRa — reaches the tag while it listens.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 ForEach([1, 2, 3], id: \.self) { n in

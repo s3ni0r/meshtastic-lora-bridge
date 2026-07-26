@@ -20,6 +20,14 @@ struct RootView: View {
         let m = PositionModel()
         _model = State(initialValue: m)
         _ble = State(initialValue: BLEManager(model: m))
+#if targetEnvironment(simulator)
+        // The simulator has no Bluetooth, so the whole cockpit would render empty. Seed a
+        // believable bench so UI work can iterate without hardware: a Base link, a LISTENING
+        // GPS tag and a DEAF bridge (exercises the deaf-route warning path). Guarded to the
+        // simulator target only — device builds never contain this.
+        m.seedSimulatorDemo()
+        _ble.wrappedValue.seedSimulatorDemo()
+#endif
     }
 
     var body: some View {

@@ -155,8 +155,24 @@ final class BLEManager: NSObject, @preconcurrency CBCentralManagerDelegate,
 
     // MARK: - CBCentralManagerDelegate
 
+#if targetEnvironment(simulator)
+    /// Simulator-only bench double: presents a plausible connected Base link so Tag Setup's
+    /// full cockpit renders for UI work. Never compiled into device builds.
+    @ObservationIgnored private var simulatorDemo = false
+    func seedSimulatorDemo() {
+        simulatorDemo = true
+        connectedNodeNum = 0xB0BB_9CDA // the bench Base's node id — familiar in screenshots
+        nodeName = "BASE-1"
+        directTag = false
+        status = "Simulator demo — synthetic Base link"
+    }
+#endif
+
     func centralManagerDidUpdateState(_ c: CBCentralManager) {
         guard c === central else { return }
+#if targetEnvironment(simulator)
+        if simulatorDemo { return } // the (absent) sim Bluetooth must not wipe the demo bench
+#endif
         switch c.state {
         case .poweredOn: startScan()
         case .poweredOff:
