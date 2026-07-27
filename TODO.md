@@ -261,6 +261,25 @@ silently DISABLED; channel/PSK/role wiped) — restored from the Base's channel 
 a config-wiped node is INVISIBLE on LoRa while looking perfectly alive on USB, and the A3
 factory-default name installing itself is the wipe's fingerprint.
 
+### RESOLVED — stale PKI key after factory reset killed Via-Base commands (2026-07-27)
+
+Second collateral of the same config wipe, found in the field: Via-Base LoRa commands to
+the bridge got NO ACK (honest red banners) while tracking kept working. Root cause chain:
+the factory reset regenerated the bridge's PKI keypair; the Base's NodeDB kept the OLD
+public key by design (anti-impersonation on key change); Meshtastic encrypts every
+DIRECT-addressed packet with PKI when a pubkey is on file — so commands died at the bridge
+(`packet decoding failed or skipped (no PSK?)`, on-air Ch=0x0 = the PKI marker) while
+broadcasts (stream, NodeInfo) rode the channel PSK untouched. Removing the stale node
+entry on the Base fixed the FORWARD leg only (PSK fallback): the bridge's ACKs are PKI too
+and the Base couldn't decrypt them without the bridge's CURRENT key — resolved by
+rebooting the bridge so its boot NodeInfo broadcast (PSK-readable) re-registered the new
+key. Proven end-to-end after: SIGNAL via Base ACKed on attempt 1 (<0.8 s round-trip).
+**Fleet rule: after ANY factory reset/config restore of a node, remove that node from its
+peers' NodeDB and reboot the restored node to force the key re-exchange — until then every
+direct-addressed packet in BOTH directions silently dies.** Bench gap noted: no suite leg
+covers Base→bridge commands over the air (verify_bridge is USB-local; verify_fixes C3
+targets the GPS tag), which is why 20/20 passed while the field path was dead.
+
 ## Carried over (still pending, unchanged)
 
 - [ ] Tune sea/surf motion thresholds from recorded session `me` data, then accel-gate the

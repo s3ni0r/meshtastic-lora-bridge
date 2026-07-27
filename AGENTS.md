@@ -178,6 +178,16 @@ ios/scripts/release.sh [version] --note "text"
    `~/.appstoreconnect/private_keys/` must never be committed.
 8. **`lora.override_duty_cycle` is bench-only.** EU868 deployment must respect duty math in
    `docs/CAPACITY.md` (ShortFast 2 Hz sustained ≈ 9.5%... only legal per the plan's rules).
+9. **A factory reset regenerates the node's PKI keypair — and peers keep the OLD key.**
+   Meshtastic PKI-encrypts every DIRECT-addressed packet when a pubkey is on file, and
+   NodeDB refuses key updates on mismatch (anti-impersonation). After a config wipe the
+   node still STREAMS fine (broadcasts ride the channel PSK) while every direct packet in
+   BOTH directions — commands AND their ACKs — silently dies. Log fingerprint on the
+   receiver: `packet decoding failed or skipped (no PSK?)` with on-air `Ch=0x0` (the PKI
+   marker) on to=<node> packets. Recovery, both steps required: remove the node from its
+   peers' NodeDB (drops the stale key; forward leg falls back to PSK), then REBOOT the
+   restored node so its boot NodeInfo broadcast re-registers the new key (heals the
+   return/ACK leg). Full story: TODO.md "RESOLVED — stale PKI key" (2026-07-27).
 
 ## Verification culture
 
