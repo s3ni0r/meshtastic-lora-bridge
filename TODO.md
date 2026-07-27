@@ -246,10 +246,20 @@ idle (a 3 h instrumented soak stayed clean; 29.8 MB, zero faults). New data (lat
 same night): after a power-cycle recovery, a plain software reboot left the board OFF the
 USB bus entirely while streaming normally on LoRa — so the failure is enumeration-level,
 not just CDC-TX. The GPS tag and Base ran DOZENS of identical reboot cycles cleanly on the
-same firmware, which shifts suspicion to THIS BOARD's USB hardware (cable, hub port, or
-connector). NEXT STEP (cheap discriminator): swap the bridge's cable/hub-port with the GPS
-tag's known-good ones — if the lottery follows the cable/port it's hardware, case closed;
-if it follows the board, inspect the board's connector, then TinyUSB CDC/enumeration paths.
+same firmware. Cable ELIMINATED (owner swapped it; failures continued). Refined root-cause
+theory (2026-07-27): the bridge is the only board running the A1 BLE peripheral on top of a
+ZERO-SLACK radio schedule — the ODID scanner ran window==interval (100 % scan duty, a
+deliberate scan-only-era choice); adding advertising + PhoneAPI sessions into a schedule
+with no free slots fits every symptom (progressive host/USB starvation while the radio
+keeps working). FIX APPLIED (commit d1d020d): scanner 160/136 = 85 % duty — measured sniff
+cost only ~3 % (5.16 vs 5.31 cb/s), verify_bridge 20/20 on the slack build. VALIDATION: a
+6 h churn soak (PhoneAPI open/close cycles — the trigger — interleaved with raw-log
+capture) delivers the verdict; if the wedge recurs anyway, next suspects are the board's
+USB connector, then TinyUSB CDC/enumeration paths. Same-night collateral, fixed: the DFU
+wrestling power-cuts factory-reset the bridge's config store (region UNSET = LoRa TX
+silently DISABLED; channel/PSK/role wiped) — restored from the Base's channel URL. Lesson:
+a config-wiped node is INVISIBLE on LoRa while looking perfectly alive on USB, and the A3
+factory-default name installing itself is the wipe's fingerprint.
 
 ## Carried over (still pending, unchanged)
 
