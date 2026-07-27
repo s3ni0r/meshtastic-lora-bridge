@@ -235,6 +235,22 @@ The endgame for fleet operations: no USB, no double-tap — update a tag from th
       KEPT — it is the reference decoder cited by `docs/BATTERY_INTEGRATION.md` and
       FORK.md.
 
+### TRACKED BUG — bridge USB-CDC mute wedge (open, 2026-07-27)
+
+Signature (caught in the act twice): the bridge stays ENUMERATED on USB and fully alive on
+LoRa/BLE (streams at rate, app loop + LED normal), but its USB CDC goes permanently MUTE —
+zero log bytes on the raw serial, PhoneAPI handshake times out. Recovery: physical
+power-cycle only (a wedged CDC ignores the 1200-baud touch). Correlation: follows USB
+CHURN (flash + PhoneAPI open/close cycles — recurred ~10 min after a flash), NOT long
+idle (a 3 h instrumented soak stayed clean; 29.8 MB, zero faults). New data (later the
+same night): after a power-cycle recovery, a plain software reboot left the board OFF the
+USB bus entirely while streaming normally on LoRa — so the failure is enumeration-level,
+not just CDC-TX. The GPS tag and Base ran DOZENS of identical reboot cycles cleanly on the
+same firmware, which shifts suspicion to THIS BOARD's USB hardware (cable, hub port, or
+connector). NEXT STEP (cheap discriminator): swap the bridge's cable/hub-port with the GPS
+tag's known-good ones — if the lottery follows the cable/port it's hardware, case closed;
+if it follows the board, inspect the board's connector, then TinyUSB CDC/enumeration paths.
+
 ## Carried over (still pending, unchanged)
 
 - [ ] Tune sea/surf motion thresholds from recorded session `me` data, then accel-gate the
