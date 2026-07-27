@@ -451,7 +451,7 @@ index a04837e..7fd14be 100644
  
      uint8_t tempVal;
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 4f7fb47..225caef 100644
+index 4f7fb47..941d728 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
 @@ -4,6 +4,7 @@
@@ -508,7 +508,7 @@ index 4f7fb47..225caef 100644
      Bluefruit.Advertising.setFastTimeout(30);   // number of seconds in fast mode
      Bluefruit.Advertising.start(0); // 0 = Don't stop advertising after n seconds.  FIXME, we should stop advertising after X
  }
-@@ -240,13 +272,169 @@ int NRF52Bluetooth::getRssi()
+@@ -240,13 +272,176 @@ int NRF52Bluetooth::getRssi()
  {
      return 0; // FIXME figure out where to source this
  }
@@ -642,7 +642,14 @@ index 4f7fb47..225caef 100644
 +{
 +    Bluefruit.Scanner.setRxCallback(odidScanCb);
 +    Bluefruit.Scanner.useActiveScan(false);     // ODID is in the primary/extended advert, not scan-rsp
-+    Bluefruit.Scanner.setInterval(160, 160);    // CONTINUOUS scan (window==interval) — catch every advert
++    // Fork (stability, 2026-07-27): 85 % scan duty, NOT window==interval. The scan-only era ran
++    // a deliberate 100 % duty; once A1 added connectable advertising + PhoneAPI sessions, that
++    // zero-slack SoftDevice schedule correlated with progressive USB/CDC death on the bridge
++    // (mute CDC, failed re-enumeration — app alive on LoRa throughout; cable eliminated by
++    // swap). window < interval leaves the scheduler real gaps for adv events, connections and
++    // housekeeping. Measured cost is bounded by the same order as the accepted adv cost
++    // (~15 %), and the Dronetag's redundant re-adverts absorb scan gaps.
++    Bluefruit.Scanner.setInterval(160, 136);    // 100 ms interval, 85 ms window = 85 % duty
 +    Bluefruit.Scanner.restartOnDisconnect(true);
 +    // PHY/extended selection on the live scan-params pointer (Bluefruit exposes no setter for these).
 +    ble_gap_scan_params_t *sp = Bluefruit.Scanner.getParams();
@@ -678,7 +685,7 @@ index 4f7fb47..225caef 100644
      // Clear existing data.
      Bluefruit.Advertising.stop();
      Bluefruit.Advertising.clearData();
-@@ -292,15 +480,31 @@ void NRF52Bluetooth::setup()
+@@ -292,15 +487,31 @@ void NRF52Bluetooth::setup()
      // BLEService and BLECharacteristic classes
      LOG_INFO("Init the Mesh bluetooth service");
      setupMeshService();
