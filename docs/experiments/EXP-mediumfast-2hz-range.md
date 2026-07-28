@@ -49,5 +49,11 @@ impressions. Expected from the +8 dB preset step alone: solid to ~170–200 m, m
 
 ## Results
 
-- Bench stress: _(pending)_
-- Field session: _(pending)_
+- **Bench stress (2026-07-28): PASS.** 30 min, live Dronetag source (~3.3 fixes/s sniffed,
+  relayed at the cap): **3532/3532 matched packets = 100.00 % delivery** at 1.96 Hz
+  sustained; median airtime **160 ms** (SF9/250 confirmed on the wire — duty at 2 Hz ≈ 31 %,
+  slightly above the 28 % estimate); rxSNR min 11.5 / mean 13.1 dB at bench distance; TX
+  queue never piled up. The 500 ms spacing cap held exactly. Two harness lessons are
+  encoded in `exp_stress.py`: base RadioIf lines have no rxRSSI field, and readers must
+  prove they're capturing bytes (a silent reader once mimicked 0 % delivery).
+- Field session: _(pending — protocol above; margin curve from base rxSNR vs distance)_
